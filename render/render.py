@@ -54,6 +54,12 @@ details{background:var(--card);border:1px solid var(--border);border-radius:var(
 summary{cursor:pointer;padding:16px 20px;font-weight:700;font-size:15px;list-style:none;display:flex;gap:10px;align-items:center}summary::-webkit-details-marker{display:none}
 summary .arw{margin-left:auto;color:var(--muted);font-size:13px}details[open] summary .arw{transform:rotate(90deg)}
 details .in{padding:0 20px 18px;color:var(--ink2);font-size:14px}details ol,details ul{padding-left:20px;display:flex;flex-direction:column;gap:6px}
+.rv{background:var(--card);border:1px solid var(--border);border-left:3px solid var(--warn);border-radius:12px;padding:16px 18px;margin-top:12px}
+.rv-h{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.rv-n{font-size:12px;font-weight:800;color:var(--warn);background:var(--ww);padding:3px 9px;border-radius:6px}
+.rv-tc{font-size:12px;font-weight:700;color:var(--acci)}.rv-b{font-size:13.5px;font-weight:700;color:var(--ink)}
+.rv-say{font-size:14px;color:var(--ink2);font-weight:500;margin-top:9px;line-height:1.65}
+.rv-ox{font-size:13px;color:var(--muted);font-weight:600;margin-top:11px;padding-top:10px;border-top:1px dashed var(--border)}
 .disc{max-width:var(--maxw);margin:32px auto 0;padding:18px 20px;background:var(--surface2);border-radius:var(--radius-sm);font-size:12.5px;color:var(--muted);font-weight:500;line-height:1.7}
 footer{padding:48px 24px;border-top:1px solid var(--border);color:var(--muted);text-align:center;font-size:13px;margin-top:20px}
 html{scroll-behavior:smooth}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
@@ -96,6 +102,23 @@ def render(pkg, meta=None):
     if pkg.get("pinned_comment") or pkg.get("description"):
         extra = f'<details><summary>고정 댓글 · 설명란<span class="arw">▶</span></summary><div class="in"><p><b>고정 댓글</b><br>{esc(pkg.get("pinned_comment",""))}</p><p style="margin-top:12px"><b>설명란</b><br>{esc(pkg.get("description",""))}</p></div></details>'
 
+    # 원장 검수 항목 추출 (say에 【검수】/검수 표시된 씬)
+    rv = ""
+    for i, b in enumerate(script, 1):
+        say = b.get("say","") or ""
+        if "검수" in say:
+            clean = say.replace("【검수】","").replace("[검수]","").strip()
+            rv += f"""<div class="rv"><div class="rv-h"><span class="rv-n">씬 {i}</span>
+              <span class="rv-tc">{esc(b.get('tc',''))}</span><span class="rv-b">{esc(b.get('block',''))}</span></div>
+              <div class="rv-say">{esc(clean)}</div>
+              <div class="rv-ox">☐ 맞음(O)　　☐ 수정 필요(X): ________________________</div></div>"""
+    review_sec = ""
+    if rv:
+        review_sec = f"""<section class="sec wrap" id="review"><div class="sec-tag">Doctor Check</div>
+        <h2>원장 검수 — 촬영 전 O/X</h2>
+        <p class="lead">아래는 원장님 임상 판단·설명 방식이 걸린 문장입니다(논문 근거와 별개). 촬영 전에 맞으면 O, 다르면 X 하고 원장 방식으로 고쳐주세요.</p>
+        {rv}</section>"""
+
     title = pkg.get("episode_title","본큐어 유튜브 패키지")
     host = meta.get("host","송정현")
     files_n = meta.get("files_n","—")
@@ -103,11 +126,11 @@ def render(pkg, meta=None):
     return f"""<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{esc(title)} · 본큐어 유튜브</title><style>{CSS}</style></head><body>
 <nav class="nav"><div class="nav-in"><div class="brand"><span class="dot">본</span>본큐어 유튜브 · 대본 패키지</div>
-<div class="nav-links"><a href="#hook">기획</a><a href="#script">대본</a><a href="#deliverables">산출물</a></div>
+<div class="nav-links"><a href="#hook">기획</a><a href="#review">원장 검수</a><a href="#script">대본</a><a href="#deliverables">산출물</a></div>
 <button class="toggle" id="tg" aria-label="테마 전환">◐</button></div></nav>
 <header class="hero wrap"><span class="eyebrow">Episode Package · 콘텐츠 디렉터 시스템</span>
 <h1>{esc(title)}</h1>
-<p class="sub">파이프라인이 KB를 근거로 생성한 대본 패키지입니다. 화자는 항상 <b style="color:var(--ink)">{esc(host)} 대표원장</b>. 발행 전 원장 의학검수·의료광고 심의 필요.</p>
+<p class="sub">화자는 항상 <b style="color:var(--ink)">{esc(host)} 대표원장</b>. 발행 전 원장 의학 검수와 의료광고 심의가 필요합니다.</p>
 <div class="stats">
 <div class="stat"><div class="n">{len(script)}<small>비트</small></div><div class="l">대본 블록</div></div>
 <div class="stat"><div class="n">{mins}<small>분</small></div><div class="l">예상 러닝타임(발화 {say_chars}자)</div></div>
@@ -116,12 +139,13 @@ def render(pkg, meta=None):
 </div></header>
 <section class="sec wrap" id="hook"><div class="sec-tag">Episode Brief</div><h2>이 영상의 클릭 포인트</h2>
 <div class="hook"><div class="l">Hook</div><div class="q">{esc(pkg.get('hook',''))}</div></div></section>
+{review_sec}
 <section class="sec wrap" id="script"><div class="sec-tag">Script</div><h2>대본 · 화면 + 대사</h2>
 <p class="lead">타임코드마다 🎬화면(무엇이 보이나) + 🎙대사(원장이 말하는 완성 문장). 스토리보드 프레임은 자동 생성.</p>
 <div class="script">{beats}</div></section>
 <section class="sec wrap" id="deliverables"><div class="sec-tag">Deliverables</div><h2>산출물 12종</h2>{dels}{extra}</section>
 <div class="disc">본 페이지는 본큐어한의원 유튜브 대본 패키지입니다. 대본 속 의학 정보는 교육·정보 제공 목적이며, 효과는 개인마다 다르고 부작용 가능성이 있습니다. 논문 증례는 단일 증례일 수 있으며 모든 환자에게 동일 결과를 보장하지 않습니다. 발행 전 원장 의학검수와 의료광고 심의 확인이 필요합니다.</div>
-<footer>본큐어 유튜브 · 화자 {esc(host)} · 파이프라인 자동 생성 (render.py)</footer>
+<footer>본큐어 유튜브 · 화자 {esc(host)}</footer>
 <script>(function(){{var r=document.documentElement,b=document.getElementById('tg');function c(){{return r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light')}}b.addEventListener('click',function(){{r.setAttribute('data-theme',c()==='dark'?'light':'dark')}})}})();</script>
 </body></html>"""
 
