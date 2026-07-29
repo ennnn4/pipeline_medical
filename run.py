@@ -116,10 +116,10 @@ def cmd_compliance(a):
     return report(check(txt, ed))
 
 def cmd_render(a):
-    from render.render import render
+    from render.render import render, _meta
     pkg = json.load(open(a.file, encoding="utf-8"))
     out = os.path.splitext(a.file)[0] + ".html"
-    open(out,"w",encoding="utf-8").write(render(pkg))
+    open(out,"w",encoding="utf-8").write(render(pkg, _meta()))
     print("대시보드 →", out)
 
 def cmd_all(a):
