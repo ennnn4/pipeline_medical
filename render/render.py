@@ -68,6 +68,7 @@ details .in{padding:0 20px 18px;color:var(--ink2);font-size:14px}details ol,deta
 .btn.pri{background:var(--accent);color:#fff;border-color:transparent}
 .rv-status{font-size:12.5px;color:var(--muted);font-weight:600}
 .rv.done-o{border-left-color:var(--good)}.rv.done-x{border-left-color:var(--danger)}
+.rv-flag{font-size:10.5px;font-weight:800;color:var(--acci);background:var(--accw);padding:2px 7px;border-radius:5px}
 .disc{max-width:var(--maxw);margin:32px auto 0;padding:18px 20px;background:var(--surface2);border-radius:var(--radius-sm);font-size:12.5px;color:var(--muted);font-weight:500;line-height:1.7}
 footer{padding:48px 24px;border-top:1px solid var(--border);color:var(--muted);text-align:center;font-size:13px;margin-top:20px}
 html{scroll-behavior:smooth}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
@@ -110,25 +111,32 @@ def render(pkg, meta=None):
     if pkg.get("pinned_comment") or pkg.get("description"):
         extra = f'<details><summary>고정 댓글 · 설명란<span class="arw">▶</span></summary><div class="in"><p><b>고정 댓글</b><br>{esc(pkg.get("pinned_comment",""))}</p><p style="margin-top:12px"><b>설명란</b><br>{esc(pkg.get("description",""))}</p></div></details>'
 
-    # 원장 검수 항목 추출 (say에 【검수】/검수 표시된 씬)
+    # 원장 검수 대상 = AI가 【검수】 표시한 씬 + 모든 본론(의학 설명) 블록.
+    # 태그가 안 붙어도 검수 공간이 사라지지 않게 본론 블록은 항상 포함.
+    MED = ("본론","원인","진단","치료","도침","증례","논문")
     rv = ""
     for i, b in enumerate(script, 1):
         say = b.get("say","") or ""
-        if "검수" in say:
-            clean = say.replace("【검수】","").replace("[검수]","").strip()
-            rv += f"""<div class="rv" data-scene="{i}"><div class="rv-h"><span class="rv-n">씬 {i}</span>
-              <span class="rv-tc">{esc(b.get('tc',''))}</span><span class="rv-b">{esc(b.get('block',''))}</span></div>
-              <div class="rv-say">{esc(clean)}</div>
-              <div class="rv-ox">
-                <label><input type="radio" name="rv{i}" value="O"> 맞음(O)</label>
-                <label><input type="radio" name="rv{i}" value="X"> 수정 필요(X)</label>
-                <input class="rv-fix" type="text" placeholder="수정 내용(선택)">
-              </div></div>"""
+        block = b.get("block","") or ""
+        flagged = "검수" in say
+        is_med = flagged or any(k in block for k in MED)
+        if not is_med:
+            continue
+        clean = say.replace("【검수】","").replace("[검수]","").strip()
+        badge = '<span class="rv-flag">AI 표시</span>' if flagged else ""
+        rv += f"""<div class="rv" data-scene="{i}"><div class="rv-h"><span class="rv-n">씬 {i}</span>
+          <span class="rv-tc">{esc(b.get('tc',''))}</span><span class="rv-b">{esc(block)}</span>{badge}</div>
+          <div class="rv-say">{esc(clean)}</div>
+          <div class="rv-ox">
+            <label><input type="radio" name="rv{i}" value="O"> 맞음(O)</label>
+            <label><input type="radio" name="rv{i}" value="X"> 수정 필요(X)</label>
+            <input class="rv-fix" type="text" placeholder="수정 내용(선택)">
+          </div></div>"""
     review_sec = ""
     if rv:
         review_sec = f"""<section class="sec wrap" id="review"><div class="sec-tag">Doctor Check</div>
         <h2>원장 검수 — 촬영 전 O/X</h2>
-        <p class="lead">아래는 원장님 임상 판단·설명 방식이 걸린 문장입니다(논문 근거와 별개). 맞으면 O, 다르면 X 하고 수정 내용을 적으세요. <b>저장</b>하면 이 브라우저에 남고, <b>내보내기</b>로 결과 파일을 팀에 보낼 수 있어요.</p>
+        <p class="lead">AI가 <b>AI 표시</b>한 문장과 모든 <b>본론(의학 설명)</b> 블록입니다 — 원장님 임상 판단이 걸린 부분. 맞으면 O, 다르면 X 하고 수정 내용을 적으세요. <b>저장</b>하면 이 브라우저에 남고, <b>내보내기</b>로 결과 파일을 팀에 보낼 수 있어요.</p>
         {rv}
         <div class="rv-tools"><button class="btn pri" id="rvSave">💾 저장</button><button class="btn" id="rvExport">⬇ 내보내기(.txt)</button><span class="rv-status" id="rvStatus"></span></div>
         </section>"""
