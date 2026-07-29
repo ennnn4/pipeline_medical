@@ -17,6 +17,17 @@ except Exception: pass
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 
+# .env 로더 (의존성 없이)
+def _load_env():
+    p = os.path.join(ROOT, ".env")
+    if os.path.exists(p):
+        for line in open(p, encoding="utf-8"):
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                os.environ.setdefault(k.strip(), v.strip())
+_load_env()
+
 def _cfg(h):
     import yaml
     return yaml.safe_load(open(os.path.join(ROOT, "config", f"{h}.yaml"), encoding="utf-8"))
@@ -35,8 +46,7 @@ def cmd_classify(a):
     corpus = corpus_text()
     if not corpus.strip():
         print("코퍼스가 비었습니다. 먼저 ingest 하세요."); return
-    res = generate(load_prompt("classify.md"), "코퍼스:\n" + corpus,
-                   json_schema={"type":"object","additionalProperties":True})
+    res = generate(load_prompt("classify.md"), "코퍼스:\n" + corpus, parse_json=True)
     json.dump(res, open(os.path.join(_kbdir(),"classify.json"),"w",encoding="utf-8"), ensure_ascii=False, indent=1)
     print("분류 완료 → data/kb/classify.json")
 
@@ -46,20 +56,20 @@ def cmd_kb(a):
     js = {"type":"object","additionalProperties":True}
     # 원장 프로파일
     prof_src = corpus_text(categories=["원장설문지","원장인터뷰","기존유튜브대본","원장강의자료"]) or corpus_text()
-    prof = generate(load_prompt("profile.md"), "자료:\n"+prof_src, json_schema=js)
+    prof = generate(load_prompt("profile.md"), "자료:\n"+prof_src, parse_json=True)
     json.dump(prof, open(os.path.join(kb,"profile.json"),"w",encoding="utf-8"), ensure_ascii=False, indent=1)
     print("원장 프로파일 → data/kb/profile.json")
     # 논문 근거표
-    ev = generate(load_prompt("evidence.md"), "논문:\n"+(corpus_text(categories=["논문"]) or ""), json_schema=js)
+    ev = generate(load_prompt("evidence.md"), "논문:\n"+(corpus_text(categories=["논문"]) or ""), parse_json=True)
     json.dump(ev, open(os.path.join(kb,"evidence.json"),"w",encoding="utf-8"), ensure_ascii=False, indent=1)
     print("논문 근거표 → data/kb/evidence.json")
     # 경쟁 분석
-    comp = generate(load_prompt("competitor.md"), "경쟁자막:\n"+(corpus_text(categories=["경쟁유튜브"]) or ""), json_schema=js)
+    comp = generate(load_prompt("competitor.md"), "경쟁자막:\n"+(corpus_text(categories=["경쟁유튜브"]) or ""), parse_json=True)
     json.dump(comp, open(os.path.join(kb,"competitor.json"),"w",encoding="utf-8"), ensure_ascii=False, indent=1)
     print("경쟁 분석 → data/kb/competitor.json")
     # 질환별 KB
     for dz in (cfg.get("diseases") or []):
-        d = generate(load_prompt("disease.md"), f"질환: {dz}\n자료:\n"+corpus_text(), json_schema=js)
+        d = generate(load_prompt("disease.md"), f"질환: {dz}\n자료:\n"+corpus_text(), parse_json=True)
         json.dump(d, open(os.path.join(kb,f"disease_{dz}.json"),"w",encoding="utf-8"), ensure_ascii=False, indent=1)
         print(f"질환 KB({dz}) → data/kb/disease_{dz}.json")
 
@@ -71,7 +81,7 @@ def cmd_episode(a):
     kb_blob = ("[원장프로파일]\n"+rd("profile.json")+"\n[논문근거]\n"+rd("evidence.json")
                +"\n[경쟁분석]\n"+rd("competitor.json")+f"\n[질환KB]\n"+rd(f"disease_{a.topic}.json"))
     js = {"type":"object","additionalProperties":True}
-    pkg = generate(load_prompt("director.md"), f"주제: {a.topic}\nKB:\n"+kb_blob, json_schema=js, max_tokens=40000)
+    pkg = generate(load_prompt("director.md"), f"주제: {a.topic}\nKB:\n"+kb_blob, parse_json=True, max_tokens=40000)
     out = os.path.join(_outdir(), f"{a.topic}_package.json")
     json.dump(pkg, open(out,"w",encoding="utf-8"), ensure_ascii=False, indent=1)
     print("대본 패키지 →", out)
