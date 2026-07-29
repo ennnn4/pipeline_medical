@@ -39,9 +39,10 @@ def _yaml():
     import yaml; return yaml
 def hospitals():
     out = []
+    RESERVED = {"users", "_template"}   # 병원이 아닌 설정 파일
     for p in glob.glob(os.path.join(ROOT, "config", "*.yaml")):
         n = os.path.splitext(os.path.basename(p))[0]
-        if n.startswith("_"): continue
+        if n.startswith("_") or n in RESERVED: continue
         try:
             cfg = _yaml().safe_load(open(p, encoding="utf-8")) or {}
             out.append({"id": n, "name": cfg.get("hospital", {}).get("name", n)})
@@ -90,6 +91,10 @@ textarea{min-height:64px;resize:vertical}
 .files{list-style:none;padding:0;margin:12px 0 0;font-size:13px;color:var(--ink2)}
 .files li{padding:7px 0;border-top:1px solid var(--border)}
 .chk{display:flex;flex-wrap:wrap;gap:8px}
+.pill{font-size:12.5px;font-weight:700;padding:6px 12px;border-radius:100px;border:1px solid transparent}
+.pill.ok{background:#e6f7f0;color:var(--good)}
+.pill.no{background:#fdeaec;color:var(--danger)}
+.pill.dim{background:var(--surface2);color:var(--muted)}
 .out{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:13px 0;border-top:1px solid var(--border);font-size:14.5px;font-weight:600}
 .log{white-space:pre-wrap;font-family:ui-monospace,Menlo,monospace;font-size:12.5px;background:#12151c;color:#cbd5e1;border-radius:12px;padding:15px;max-height:280px;overflow:auto;margin-top:14px}
 .muted{color:var(--muted);font-size:12.5px}
@@ -171,6 +176,21 @@ def hospital(h):
     raw = [os.path.basename(p) for p in glob.glob(os.path.join(data_dir(h,"raw"),"*")) if os.path.isfile(p)]
     outs = sorted(glob.glob(os.path.join(data_dir(h,"out"),"*.html")))
     filelist = "".join(f"<li>{f}</li>" for f in raw) or "<li class=muted>아직 업로드된 자료가 없어요.</li>"
+    # 필요 자료 체크리스트 (config의 input_checklist 기준, 파일명 매칭)
+    from ingest.extract import categorize
+    checklist = cfg.get("input_checklist", [])
+    counts = {}
+    for fn in raw:
+        k = categorize(fn, checklist); counts[k] = counts.get(k, 0) + 1
+    chk = ""; miss = []
+    for it in checklist:
+        k = it["key"]; req = it.get("required"); n = counts.get(k, 0)
+        if k == "기타": continue
+        cls = "ok" if n else ("no" if req else "dim")
+        label = k + ("(필수)" if req else "") + (f" ✓{n}" if n else (" 없음" if req else ""))
+        chk += f'<span class="pill {cls}">{label}</span>'
+        if req and not n: miss.append(k)
+    misswarn = (f'<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 필수 자료가 빠졌어요: {", ".join(miss)} — 넣을수록 대본 품질이 올라가요.</div>' if miss else "")
     outlist = "".join(f'<div class=out><span>{os.path.basename(o)[:-5]}</span><a class=btn href="/h/{h}/view/{os.path.basename(o)}" target=_blank>대시보드 열기</a></div>' for o in outs) or '<div class=muted>아직 만든 대본이 없어요.</div>'
     dz_opts = "".join(f'<button type=button class="btn dz" onclick="setTopic(this)">{d}</button>' for d in diseases)
     job = JOBS.get(h, {})
@@ -182,6 +202,9 @@ def hospital(h):
 
     <div class=card>
       <h2 style="margin-top:0">① 자료 업로드</h2>
+      <div class=note>이런 자료를 넣어주세요 — <b>✓</b>=받음 · <b>없음</b>=필수인데 안 들어옴 · 회색=선택</div>
+      <div class=chk style="margin:11px 0 6px">{chk}</div>
+      {misswarn}
       <form id=upf method=post action="/h/{h}/upload" enctype=multipart/form-data>
         <div class=drop id=drop>파일을 여기로 끌어다 놓거나 클릭 (pdf·docx·txt·zip)
           <input id=fin type=file name=files multiple style="display:none">
