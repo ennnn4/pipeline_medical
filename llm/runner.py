@@ -48,10 +48,10 @@ def load_prompt(name):
     with open(os.path.join(here, "prompts", name), encoding="utf-8") as f:
         return f.read()
 
-def corpus_text(cids=None, categories=None, max_chars=400000):
-    """data/corpus 에서 조건에 맞는 코퍼스를 합쳐 반환 (프롬프트에 넣을 재료)."""
+def corpus_text(hospital, cids=None, categories=None, max_chars=400000):
+    """data/<병원>/corpus 에서 조건에 맞는 코퍼스를 합쳐 반환 (프롬프트에 넣을 재료)."""
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    corp = os.path.join(root, "data", "corpus")
+    corp = os.path.join(root, "data", hospital, "corpus")
     man = os.path.join(corp, "_MANIFEST.tsv")
     rows = []
     if os.path.exists(man):

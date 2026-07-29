@@ -1,0 +1,50 @@
+# 새 병원 설정 템플릿 — python run.py init --hospital <id> 가 이걸 복사해서 만든다.
+# __HOSPITAL_ID__ 는 자동으로 채워짐. 나머지는 병원에 맞게 수정하세요.
+hospital:
+  id: __HOSPITAL_ID__
+  name: "○○한의원"          # 병원명
+  specialty: "진료과/치료 특징"
+  host: "원장 이름"           # 기본 화자(편마다 다를 수 있음)
+  host_role: 대표원장
+  location: "지역"
+  tagline: "채널 슬로건 한 줄"   # 대시보드 히어로 부제
+
+# 시작 시 확인할 입력 자료 체크리스트 (진료과 따라 조정)
+input_checklist:
+  - key: 원장설문지
+    required: true
+    match: [설문, survey, 브랜딩]
+  - key: 원장인터뷰
+    required: true
+    match: [인터뷰, interview, 녹취]
+  - key: 원장강의자료
+    required: false
+    match: [강의, 강좌, lecture, ppt]
+  - key: 논문
+    required: true
+    match: [논문, 증례, 학회지, paper, pubmed]
+  - key: 기존유튜브대본
+    required: false
+    match: [대본, script]
+  - key: 병원자료
+    required: false
+    match: [홈페이지, 블로그, faq, 진료철학, 소개]
+  - key: 경쟁유튜브
+    required: false
+    match: [경쟁, 참고, competitor, 유튜브참고]
+  - key: 기타
+    required: false
+    match: []
+
+youtube:
+  own_channel: null
+  competitor_channels: []
+  competitor_videos: []
+
+episode:
+  target_minutes: [13, 20]
+  standard_skeleton: true
+  deliverables: 12
+
+# 이 병원의 주력 질환 (질환별 KB 생성 대상)
+diseases: []

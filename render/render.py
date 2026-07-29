@@ -203,22 +203,22 @@ def render(pkg, meta=None):
 {_rvjs}
 </body></html>"""
 
-def _meta():
-    """corpus/kb 개수 + config(호칭·tagline)를 모아 스탯/부제에 넣는다."""
+def _meta(hospital="boncure"):
+    """병원별 corpus/kb 개수 + config(호칭·tagline)를 모아 스탯/부제에 넣는다."""
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    m = {"host":"송정현"}
+    m = {"host":"원장"}
     try:
         import yaml
-        cfg = yaml.safe_load(open(os.path.join(root,"config","boncure.yaml"),encoding="utf-8"))
+        cfg = yaml.safe_load(open(os.path.join(root,"config",f"{hospital}.yaml"),encoding="utf-8"))
         h = cfg.get("hospital",{})
         m["host"] = h.get("host", m["host"])
         if h.get("tagline"): m["tagline"] = h["tagline"]
     except Exception:
         pass
-    man = os.path.join(root,"data","corpus","_MANIFEST.tsv")
+    man = os.path.join(root,"data",hospital,"corpus","_MANIFEST.tsv")
     if os.path.exists(man):
         m["files_n"] = max(0, len(open(man,encoding="utf-8").read().splitlines())-1)
-    kb = os.path.join(root,"data","kb")
+    kb = os.path.join(root,"data",hospital,"kb")
     if os.path.isdir(kb):
         m["kb_n"] = len([f for f in os.listdir(kb) if f.endswith(".json")])
     return m

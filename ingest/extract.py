@@ -87,8 +87,8 @@ def gather_files(raw_dir):
 def run(hospital):
     cfg = load_config(hospital)
     checklist = cfg.get("input_checklist", [])
-    raw = os.path.join(ROOT, "data", "raw")
-    corpus = os.path.join(ROOT, "data", "corpus")
+    raw = os.path.join(ROOT, "data", hospital, "raw")       # 병원별 폴더
+    corpus = os.path.join(ROOT, "data", hospital, "corpus")
     os.makedirs(raw, exist_ok=True)
     os.makedirs(corpus, exist_ok=True)
 

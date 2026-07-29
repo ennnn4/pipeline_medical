@@ -1,7 +1,7 @@
-# 작업 데이터 (자료·중간산출물)
-data/raw/*
-data/corpus/*
-data/kb/*
+# 병원별 작업 데이터 (자료·중간산출물). 최종 out/ 만 추적.
+data/*/raw/*
+data/*/corpus/*
+data/*/kb/*
 !data/**/.gitkeep
 # 비밀
 .env
