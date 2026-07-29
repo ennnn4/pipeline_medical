@@ -5,5 +5,7 @@ data/*/kb/*
 !data/**/.gitkeep
 # 비밀
 .env
+.secret
+config/users.yaml
 __pycache__/
 *.pyc
