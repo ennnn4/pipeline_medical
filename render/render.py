@@ -179,7 +179,7 @@ def render(pkg, meta=None):
     return f"""<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{esc(title)} · 본큐어 유튜브</title><style>{CSS}</style></head><body>
 <nav class="nav"><div class="nav-in"><div class="brand"><span class="dot">본</span>본큐어 유튜브 · 대본 패키지</div>
-<div class="nav-links"><a href="#hook">기획</a><a href="#review">원장 검수</a><a href="#script">대본</a><a href="#deliverables">산출물</a></div>
+<div class="nav-links"><a href="#hook">기획</a><a href="#script">대본</a><a href="#deliverables">산출물</a><a href="#review">원장 검수</a></div>
 <button class="toggle" id="tg" aria-label="테마 전환">◐</button></div></nav>
 <header class="hero wrap"><span class="eyebrow">Episode Package · 콘텐츠 디렉터 시스템</span>
 <h1>{esc(title)}</h1>
@@ -192,11 +192,11 @@ def render(pkg, meta=None):
 </div></header>
 <section class="sec wrap" id="hook"><div class="sec-tag">Episode Brief</div><h2>이 영상의 클릭 포인트</h2>
 <div class="hook"><div class="l">Hook</div><div class="q">{esc(pkg.get('hook',''))}</div></div></section>
-{review_sec}
 <section class="sec wrap" id="script"><div class="sec-tag">Script</div><h2>대본 · 화면 + 대사</h2>
 <p class="lead">타임코드마다 🎬화면(무엇이 보이나) + 🎙대사(원장이 말하는 완성 문장). 스토리보드 프레임은 자동 생성.</p>
 <div class="script">{beats}</div></section>
 <section class="sec wrap" id="deliverables"><div class="sec-tag">Deliverables</div><h2>산출물 12종</h2>{dels}{extra}</section>
+{review_sec}
 <div class="disc"><b>⚠️ 이 대본은 자동 컴플라이언스 검사를 거쳤지만, 검사 통과가 발행을 보장하지 않습니다. 최종 발행은 반드시 원장 의학 검수와 의료광고 심의 확인을 마친 뒤에만 진행하세요.</b><br>대본 속 의학 정보는 교육·정보 제공 목적이며, 효과는 개인마다 다르고 부작용 가능성이 있습니다. 논문 증례는 단일 증례일 수 있으며 모든 환자에게 동일 결과를 보장하지 않습니다.</div>
 <footer>본큐어 유튜브 · 화자 {esc(host)}</footer>
 <script>(function(){{var r=document.documentElement,b=document.getElementById('tg');function c(){{return r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light')}}b.addEventListener('click',function(){{r.setAttribute('data-theme',c()==='dark'?'light':'dark')}})}})();</script>
