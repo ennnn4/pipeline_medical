@@ -81,10 +81,16 @@ def cmd_episode(a):
     kb_blob = ("[원장프로파일]\n"+rd("profile.json")+"\n[논문근거]\n"+rd("evidence.json")
                +"\n[경쟁분석]\n"+rd("competitor.json")+f"\n[질환KB]\n"+rd(f"disease_{a.topic}.json"))
     js = {"type":"object","additionalProperties":True}
-    pkg = generate(load_prompt("director.md"), f"주제: {a.topic}\nKB:\n"+kb_blob, parse_json=True, max_tokens=40000)
+    pkg = generate(load_prompt("director.md"), f"주제: {a.topic}\nKB:\n"+kb_blob, parse_json=True, max_tokens=55000)
     out = os.path.join(_outdir(), f"{a.topic}_package.json")
     json.dump(pkg, open(out,"w",encoding="utf-8"), ensure_ascii=False, indent=1)
+    # 분량 자가검산 (발화 글자수 ÷ 450 ≈ 분)
+    say_chars = sum(len((b.get("say") or "").replace(" ", "")) for b in pkg.get("script", []))
+    mins = round(say_chars / 450, 1)
     print("대본 패키지 →", out)
+    print(f"발화 글자수 {say_chars}자 → 예상 러닝타임 ≈ {mins}분  (비트 {len(pkg.get('script',[]))}개)")
+    if say_chars < 5400:
+        print("  ⚠️ 12분 미만 — 대사가 개요 수준일 수 있음. 프롬프트 분량규칙 확인 후 재생성 권장.")
 
 def cmd_compliance(a):
     """발행되는 텍스트만 검사한다(발화 say + 고정댓글 + 설명란). 메타/촬영주의 문구는 제외해 false positive 방지."""
