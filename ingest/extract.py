@@ -98,7 +98,7 @@ def run(hospital):
     found = {item["key"]: [] for item in checklist}
     found["기타"] = found.get("기타", [])
     for p in files:
-        cat = categorize(os.path.basename(p), checklist)
+        cat = categorize(os.path.relpath(p, raw), checklist)  # 폴더 경로까지 보고 분류
         found.setdefault(cat, []).append(p)
 
     print("=" * 60)
@@ -130,7 +130,7 @@ def run(hospital):
             continue
         i += 1
         cid = f"c{i:03d}"
-        cat = categorize(os.path.basename(p), checklist)
+        cat = categorize(os.path.relpath(p, raw), checklist)
         io.open(os.path.join(corpus, cid + ".txt"), "w", encoding="utf-8").write(text)
         rel = os.path.relpath(p, raw).replace("\\", "/")
         manifest.append((cid, cat, len(text), rel))
