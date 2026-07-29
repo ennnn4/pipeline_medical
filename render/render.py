@@ -59,7 +59,15 @@ details .in{padding:0 20px 18px;color:var(--ink2);font-size:14px}details ol,deta
 .rv-n{font-size:12px;font-weight:800;color:var(--warn);background:var(--ww);padding:3px 9px;border-radius:6px}
 .rv-tc{font-size:12px;font-weight:700;color:var(--acci)}.rv-b{font-size:13.5px;font-weight:700;color:var(--ink)}
 .rv-say{font-size:14px;color:var(--ink2);font-weight:500;margin-top:9px;line-height:1.65}
-.rv-ox{font-size:13px;color:var(--muted);font-weight:600;margin-top:11px;padding-top:10px;border-top:1px dashed var(--border)}
+.rv-ox{font-size:13px;color:var(--ink2);font-weight:600;margin-top:11px;padding-top:10px;border-top:1px dashed var(--border);display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.rv-ox label{display:inline-flex;gap:5px;align-items:center;cursor:pointer}
+.rv-ox input[type=radio]{accent-color:var(--accent);width:16px;height:16px}
+.rv-fix{flex:1;min-width:180px;font-family:var(--font);font-size:13px;padding:8px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--ink)}
+.rv-tools{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:16px}
+.btn{font-family:var(--font);font-weight:700;font-size:14px;padding:10px 18px;border-radius:10px;border:1px solid var(--border);background:var(--card);color:var(--ink);cursor:pointer}
+.btn.pri{background:var(--accent);color:#fff;border-color:transparent}
+.rv-status{font-size:12.5px;color:var(--muted);font-weight:600}
+.rv.done-o{border-left-color:var(--good)}.rv.done-x{border-left-color:var(--danger)}
 .disc{max-width:var(--maxw);margin:32px auto 0;padding:18px 20px;background:var(--surface2);border-radius:var(--radius-sm);font-size:12.5px;color:var(--muted);font-weight:500;line-height:1.7}
 footer{padding:48px 24px;border-top:1px solid var(--border);color:var(--muted);text-align:center;font-size:13px;margin-top:20px}
 html{scroll-behavior:smooth}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
@@ -108,21 +116,58 @@ def render(pkg, meta=None):
         say = b.get("say","") or ""
         if "검수" in say:
             clean = say.replace("【검수】","").replace("[검수]","").strip()
-            rv += f"""<div class="rv"><div class="rv-h"><span class="rv-n">씬 {i}</span>
+            rv += f"""<div class="rv" data-scene="{i}"><div class="rv-h"><span class="rv-n">씬 {i}</span>
               <span class="rv-tc">{esc(b.get('tc',''))}</span><span class="rv-b">{esc(b.get('block',''))}</span></div>
               <div class="rv-say">{esc(clean)}</div>
-              <div class="rv-ox">☐ 맞음(O)　　☐ 수정 필요(X): ________________________</div></div>"""
+              <div class="rv-ox">
+                <label><input type="radio" name="rv{i}" value="O"> 맞음(O)</label>
+                <label><input type="radio" name="rv{i}" value="X"> 수정 필요(X)</label>
+                <input class="rv-fix" type="text" placeholder="수정 내용(선택)">
+              </div></div>"""
     review_sec = ""
     if rv:
         review_sec = f"""<section class="sec wrap" id="review"><div class="sec-tag">Doctor Check</div>
         <h2>원장 검수 — 촬영 전 O/X</h2>
-        <p class="lead">아래는 원장님 임상 판단·설명 방식이 걸린 문장입니다(논문 근거와 별개). 촬영 전에 맞으면 O, 다르면 X 하고 원장 방식으로 고쳐주세요.</p>
-        {rv}</section>"""
+        <p class="lead">아래는 원장님 임상 판단·설명 방식이 걸린 문장입니다(논문 근거와 별개). 맞으면 O, 다르면 X 하고 수정 내용을 적으세요. <b>저장</b>하면 이 브라우저에 남고, <b>내보내기</b>로 결과 파일을 팀에 보낼 수 있어요.</p>
+        {rv}
+        <div class="rv-tools"><button class="btn pri" id="rvSave">💾 저장</button><button class="btn" id="rvExport">⬇ 내보내기(.txt)</button><span class="rv-status" id="rvStatus"></span></div>
+        </section>"""
 
     title = pkg.get("episode_title","본큐어 유튜브 패키지")
     host = meta.get("host","송정현")
     files_n = meta.get("files_n","—")
     kb_n = meta.get("kb_n","—")
+
+    _rvjs = r"""<script>(function(){
+  var SAVE=document.getElementById('rvSave'); if(!SAVE) return;
+  var KEY=__KEY__, status=document.getElementById('rvStatus');
+  function collect(){var out={};document.querySelectorAll('.rv').forEach(function(el){
+    var s=el.getAttribute('data-scene');
+    var r=el.querySelector('input[type=radio]:checked');var ox=r?r.value:'';
+    var f=el.querySelector('.rv-fix');var fix=f?f.value:'';
+    out[s]={ox:ox,fix:fix};
+    el.classList.toggle('done-o',ox==='O');el.classList.toggle('done-x',ox==='X');});return out;}
+  function apply(d){Object.keys(d||{}).forEach(function(s){
+    var el=document.querySelector('.rv[data-scene="'+s+'"]');if(!el)return;var v=d[s]||{};
+    if(v.ox){var r=el.querySelector('input[value="'+v.ox+'"]');if(r)r.checked=true;}
+    var f=el.querySelector('.rv-fix');if(f&&v.fix)f.value=v.fix;
+    el.classList.toggle('done-o',v.ox==='O');el.classList.toggle('done-x',v.ox==='X');});}
+  try{var sv=localStorage.getItem(KEY);if(sv)apply(JSON.parse(sv));}catch(e){}
+  document.querySelectorAll('.rv input').forEach(function(i){i.addEventListener('change',collect);});
+  SAVE.addEventListener('click',function(){var d=collect();
+    try{localStorage.setItem(KEY,JSON.stringify(d));status.textContent='저장됨 · '+new Date().toLocaleTimeString('ko-KR');}
+    catch(e){status.textContent='이 브라우저에선 저장이 막혀 있어요 — 내보내기를 쓰세요.';}});
+  document.getElementById('rvExport').addEventListener('click',function(){var d=collect();
+    var L=['[원장 검수 결과] '+__TITLE__,''];
+    document.querySelectorAll('.rv').forEach(function(el){var s=el.getAttribute('data-scene');var v=d[s]||{};
+      var say=(el.querySelector('.rv-say')||{}).textContent||'';
+      L.push('씬 '+s+' — '+(v.ox||'미정')+(v.fix?(' / 수정: '+v.fix):''));L.push('  '+say.trim());L.push('');});
+    var b=new Blob([L.join('\n')],{type:'text/plain;charset=utf-8'});
+    var a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=__FN__;a.click();});
+})();</script>"""
+    _rvjs = (_rvjs.replace("__KEY__", json.dumps("boncure_rv_"+title))
+                  .replace("__TITLE__", json.dumps(title))
+                  .replace("__FN__", json.dumps("원장검수_"+title.replace(" ","_").replace("/","_")+".txt")))
     return f"""<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{esc(title)} · 본큐어 유튜브</title><style>{CSS}</style></head><body>
 <nav class="nav"><div class="nav-in"><div class="brand"><span class="dot">본</span>본큐어 유튜브 · 대본 패키지</div>
@@ -130,7 +175,7 @@ def render(pkg, meta=None):
 <button class="toggle" id="tg" aria-label="테마 전환">◐</button></div></nav>
 <header class="hero wrap"><span class="eyebrow">Episode Package · 콘텐츠 디렉터 시스템</span>
 <h1>{esc(title)}</h1>
-<p class="sub">화자는 항상 <b style="color:var(--ink)">{esc(host)} 대표원장</b>. 발행 전 원장 의학 검수와 의료광고 심의가 필요합니다.</p>
+<p class="sub">{esc(meta.get('tagline','구조가 답입니다. 뼈가 웃어야 인생이 웃습니다.'))}</p>
 <div class="stats">
 <div class="stat"><div class="n">{len(script)}<small>비트</small></div><div class="l">대본 블록</div></div>
 <div class="stat"><div class="n">{mins}<small>분</small></div><div class="l">예상 러닝타임(발화 {say_chars}자)</div></div>
@@ -147,12 +192,21 @@ def render(pkg, meta=None):
 <div class="disc">본 페이지는 본큐어한의원 유튜브 대본 패키지입니다. 대본 속 의학 정보는 교육·정보 제공 목적이며, 효과는 개인마다 다르고 부작용 가능성이 있습니다. 논문 증례는 단일 증례일 수 있으며 모든 환자에게 동일 결과를 보장하지 않습니다. 발행 전 원장 의학검수와 의료광고 심의 확인이 필요합니다.</div>
 <footer>본큐어 유튜브 · 화자 {esc(host)}</footer>
 <script>(function(){{var r=document.documentElement,b=document.getElementById('tg');function c(){{return r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light')}}b.addEventListener('click',function(){{r.setAttribute('data-theme',c()==='dark'?'light':'dark')}})}})();</script>
+{_rvjs}
 </body></html>"""
 
 def _meta():
-    """corpus/kb 개수를 세서 스탯에 넣는다(있으면)."""
+    """corpus/kb 개수 + config(호칭·tagline)를 모아 스탯/부제에 넣는다."""
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     m = {"host":"송정현"}
+    try:
+        import yaml
+        cfg = yaml.safe_load(open(os.path.join(root,"config","boncure.yaml"),encoding="utf-8"))
+        h = cfg.get("hospital",{})
+        m["host"] = h.get("host", m["host"])
+        if h.get("tagline"): m["tagline"] = h["tagline"]
+    except Exception:
+        pass
     man = os.path.join(root,"data","corpus","_MANIFEST.tsv")
     if os.path.exists(man):
         m["files_n"] = max(0, len(open(man,encoding="utf-8").read().splitlines())-1)

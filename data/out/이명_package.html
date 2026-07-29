@@ -47,7 +47,15 @@ details .in{padding:0 20px 18px;color:var(--ink2);font-size:14px}details ol,deta
 .rv-n{font-size:12px;font-weight:800;color:var(--warn);background:var(--ww);padding:3px 9px;border-radius:6px}
 .rv-tc{font-size:12px;font-weight:700;color:var(--acci)}.rv-b{font-size:13.5px;font-weight:700;color:var(--ink)}
 .rv-say{font-size:14px;color:var(--ink2);font-weight:500;margin-top:9px;line-height:1.65}
-.rv-ox{font-size:13px;color:var(--muted);font-weight:600;margin-top:11px;padding-top:10px;border-top:1px dashed var(--border)}
+.rv-ox{font-size:13px;color:var(--ink2);font-weight:600;margin-top:11px;padding-top:10px;border-top:1px dashed var(--border);display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.rv-ox label{display:inline-flex;gap:5px;align-items:center;cursor:pointer}
+.rv-ox input[type=radio]{accent-color:var(--accent);width:16px;height:16px}
+.rv-fix{flex:1;min-width:180px;font-family:var(--font);font-size:13px;padding:8px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--ink)}
+.rv-tools{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:16px}
+.btn{font-family:var(--font);font-weight:700;font-size:14px;padding:10px 18px;border-radius:10px;border:1px solid var(--border);background:var(--card);color:var(--ink);cursor:pointer}
+.btn.pri{background:var(--accent);color:#fff;border-color:transparent}
+.rv-status{font-size:12.5px;color:var(--muted);font-weight:600}
+.rv.done-o{border-left-color:var(--good)}.rv.done-x{border-left-color:var(--danger)}
 .disc{max-width:var(--maxw);margin:32px auto 0;padding:18px 20px;background:var(--surface2);border-radius:var(--radius-sm);font-size:12.5px;color:var(--muted);font-weight:500;line-height:1.7}
 footer{padding:48px 24px;border-top:1px solid var(--border);color:var(--muted);text-align:center;font-size:13px;margin-top:20px}
 html{scroll-behavior:smooth}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
@@ -57,7 +65,7 @@ html{scroll-behavior:smooth}@media(prefers-reduced-motion:reduce){html{scroll-be
 <button class="toggle" id="tg" aria-label="테마 전환">◐</button></div></nav>
 <header class="hero wrap"><span class="eyebrow">Episode Package · 콘텐츠 디렉터 시스템</span>
 <h1>귀 검사는 정상인데 이명은 계속됩니다 — 소리를 키우는 스위치가 목에 있는 경우</h1>
-<p class="sub">화자는 항상 <b style="color:var(--ink)">송정현 대표원장</b>. 발행 전 원장 의학 검수와 의료광고 심의가 필요합니다.</p>
+<p class="sub">구조가 답입니다. 뼈가 웃어야 인생이 웃습니다.</p>
 <div class="stats">
 <div class="stat"><div class="n">19<small>비트</small></div><div class="l">대본 블록</div></div>
 <div class="stat"><div class="n">12.9<small>분</small></div><div class="l">예상 러닝타임(발화 5806자)</div></div>
@@ -68,14 +76,24 @@ html{scroll-behavior:smooth}@media(prefers-reduced-motion:reduce){html{scroll-be
 <div class="hook"><div class="l">Hook</div><div class="q">이비인후과에서 이상 없다고 들었는데도 삐 소리가 멈추지 않는다면, 그 소리의 볼륨 스위치는 귀가 아니라 목에 있을 수 있습니다.</div></div></section>
 <section class="sec wrap" id="review"><div class="sec-tag">Doctor Check</div>
         <h2>원장 검수 — 촬영 전 O/X</h2>
-        <p class="lead">아래는 원장님 임상 판단·설명 방식이 걸린 문장입니다(논문 근거와 별개). 촬영 전에 맞으면 O, 다르면 X 하고 원장 방식으로 고쳐주세요.</p>
-        <div class="rv"><div class="rv-h"><span class="rv-n">씬 6</span>
+        <p class="lead">아래는 원장님 임상 판단·설명 방식이 걸린 문장입니다(논문 근거와 별개). 맞으면 O, 다르면 X 하고 수정 내용을 적으세요. <b>저장</b>하면 이 브라우저에 남고, <b>내보내기</b>로 결과 파일을 팀에 보낼 수 있어요.</p>
+        <div class="rv" data-scene="6"><div class="rv-h"><span class="rv-n">씬 6</span>
               <span class="rv-tc">3:25–4:35</span><span class="rv-b">본론2 — 경추는 머리와 몸이 만나는 유일한 통로, 후두하근·로터리</span></div>
               <div class="rv-say">목이 뻐근한 날 유독 소리가 크지 않으셨나요. 컴퓨터를 오래 본 날, 잠을 설친 날 유독 삐 소리가 선명해지잖아요. 목은 머리와 몸이 만나는 유일한 통로입니다. 이 좁은 통로 안으로 혈관과 신경과 근육이 전부 지나가요. 그러면 이 통로가 굳으면 무슨 일이 생길까요. 특히 뒤통수 바로 아래에 있는 후두하근이라는 작은 근육 뭉치가 굳고 주변 조직이 서로 들러붙으면, 그 자리를 지나는 신경 신호가 예민해지는 경우가 있습니다. 상부 경추는 도로로 치면 로터리예요. 사방에서 길이 다 몰려드는 자리라 여기 한 군데만 밀려도 도시 전체가 밀립니다. 우회로가 없는 자리죠. 우리 몸도 똑같습니다. 로터리가 굳으면 귀 쪽으로 가는 흐름과 신호가 같이 흔들립니다. 그대로 두면 이명 위에 어지럼과 두통, 눈 피로까지 하나씩 얹혀서 세트로 오게 됩니다. 저도 하루 진료를 마치고 나면 뒤통수 아래가 딱딱하게 굳는데, 그런 날은 제 귀도 유난히 먹먹하더라고요. 그래서 저는 진료 끝나고 5분은 꼭 목 뒤부터 풉니다. 오늘 이거 하나는 꼭 따라 해보세요, 방법은 뒤에서 정확히 알려드립니다.</div>
-              <div class="rv-ox">☐ 맞음(O)　　☐ 수정 필요(X): ________________________</div></div><div class="rv"><div class="rv-h"><span class="rv-n">씬 8</span>
+              <div class="rv-ox">
+                <label><input type="radio" name="rv6" value="O"> 맞음(O)</label>
+                <label><input type="radio" name="rv6" value="X"> 수정 필요(X)</label>
+                <input class="rv-fix" type="text" placeholder="수정 내용(선택)">
+              </div></div><div class="rv" data-scene="8"><div class="rv-h"><span class="rv-n">씬 8</span>
               <span class="rv-tc">5:45–7:00</span><span class="rv-b">본론4 — 자율신경 엑셀·브레이크, 밤에 커지는 이유</span></div>
               <div class="rv-say">밤만 되면 왜 더 크게 들릴까요. 소리가 커진 게 아니라 몸이 경계 모드에 들어가 있기 때문입니다. 자율신경은 엑셀과 브레이크예요. 낮에 일할 땐 엑셀인 교감신경이 밟히고 밤에 쉴 땐 브레이크인 부교감신경이 들어와야 하는데, 목과 어깨가 계속 굳어 있고 긴장이 쌓이면 밤에도 엑셀에서 발이 안 떨어집니다. 그러면 몸은 계속 위험 신호를 찾아요. 이 상태에서는 아주 작은 소리 신호도 크게 증폭되어 인식됩니다. 시소를 떠올려 보세요. 한쪽에만 계속 사람이 앉아 있으면 반대쪽은 영영 안 내려오잖아요. 시소는 반대쪽을 힘으로 눌러서 내리는 게 아니라 앉아 있던 사람이 일어나야 균형이 돌아옵니다. 우리 몸도 똑같습니다. 이걸 그대로 두면 이명 때문에 잠을 못 자고, 잠을 못 자니까 다음 날 소리가 더 커지는 고리가 만들어집니다. 저도 예전에 밤을 며칠씩 새우던 시기에 귀가 먹먹하고 삐 소리가 들렸던 적이 있는데, 그때 저를 돌려놓은 건 특별한 방법이 아니라 잠이었습니다. 그래서 오늘 뒤에서 잠들기 전 호흡 하나를 알려드릴 겁니다, 딱 3분입니다.</div>
-              <div class="rv-ox">☐ 맞음(O)　　☐ 수정 필요(X): ________________________</div></div></section>
+              <div class="rv-ox">
+                <label><input type="radio" name="rv8" value="O"> 맞음(O)</label>
+                <label><input type="radio" name="rv8" value="X"> 수정 필요(X)</label>
+                <input class="rv-fix" type="text" placeholder="수정 내용(선택)">
+              </div></div>
+        <div class="rv-tools"><button class="btn pri" id="rvSave">💾 저장</button><button class="btn" id="rvExport">⬇ 내보내기(.txt)</button><span class="rv-status" id="rvStatus"></span></div>
+        </section>
 <section class="sec wrap" id="script"><div class="sec-tag">Script</div><h2>대본 · 화면 + 대사</h2>
 <p class="lead">타임코드마다 🎬화면(무엇이 보이나) + 🎙대사(원장이 말하는 완성 문장). 스토리보드 프레임은 자동 생성.</p>
 <div class="script"><div class="beat"><div class="tc">0:00&lt;br&gt;0:28</div><div class="body">
@@ -191,4 +209,31 @@ html{scroll-behavior:smooth}@media(prefers-reduced-motion:reduce){html{scroll-be
 <div class="disc">본 페이지는 본큐어한의원 유튜브 대본 패키지입니다. 대본 속 의학 정보는 교육·정보 제공 목적이며, 효과는 개인마다 다르고 부작용 가능성이 있습니다. 논문 증례는 단일 증례일 수 있으며 모든 환자에게 동일 결과를 보장하지 않습니다. 발행 전 원장 의학검수와 의료광고 심의 확인이 필요합니다.</div>
 <footer>본큐어 유튜브 · 화자 송정현</footer>
 <script>(function(){var r=document.documentElement,b=document.getElementById('tg');function c(){return r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light')}b.addEventListener('click',function(){r.setAttribute('data-theme',c()==='dark'?'light':'dark')})})();</script>
+<script>(function(){
+  var SAVE=document.getElementById('rvSave'); if(!SAVE) return;
+  var KEY="boncure_rv_\uadc0 \uac80\uc0ac\ub294 \uc815\uc0c1\uc778\ub370 \uc774\uba85\uc740 \uacc4\uc18d\ub429\ub2c8\ub2e4 \u2014 \uc18c\ub9ac\ub97c \ud0a4\uc6b0\ub294 \uc2a4\uc704\uce58\uac00 \ubaa9\uc5d0 \uc788\ub294 \uacbd\uc6b0", status=document.getElementById('rvStatus');
+  function collect(){var out={};document.querySelectorAll('.rv').forEach(function(el){
+    var s=el.getAttribute('data-scene');
+    var r=el.querySelector('input[type=radio]:checked');var ox=r?r.value:'';
+    var f=el.querySelector('.rv-fix');var fix=f?f.value:'';
+    out[s]={ox:ox,fix:fix};
+    el.classList.toggle('done-o',ox==='O');el.classList.toggle('done-x',ox==='X');});return out;}
+  function apply(d){Object.keys(d||{}).forEach(function(s){
+    var el=document.querySelector('.rv[data-scene="'+s+'"]');if(!el)return;var v=d[s]||{};
+    if(v.ox){var r=el.querySelector('input[value="'+v.ox+'"]');if(r)r.checked=true;}
+    var f=el.querySelector('.rv-fix');if(f&&v.fix)f.value=v.fix;
+    el.classList.toggle('done-o',v.ox==='O');el.classList.toggle('done-x',v.ox==='X');});}
+  try{var sv=localStorage.getItem(KEY);if(sv)apply(JSON.parse(sv));}catch(e){}
+  document.querySelectorAll('.rv input').forEach(function(i){i.addEventListener('change',collect);});
+  SAVE.addEventListener('click',function(){var d=collect();
+    try{localStorage.setItem(KEY,JSON.stringify(d));status.textContent='저장됨 · '+new Date().toLocaleTimeString('ko-KR');}
+    catch(e){status.textContent='이 브라우저에선 저장이 막혀 있어요 — 내보내기를 쓰세요.';}});
+  document.getElementById('rvExport').addEventListener('click',function(){var d=collect();
+    var L=['[원장 검수 결과] '+"\uadc0 \uac80\uc0ac\ub294 \uc815\uc0c1\uc778\ub370 \uc774\uba85\uc740 \uacc4\uc18d\ub429\ub2c8\ub2e4 \u2014 \uc18c\ub9ac\ub97c \ud0a4\uc6b0\ub294 \uc2a4\uc704\uce58\uac00 \ubaa9\uc5d0 \uc788\ub294 \uacbd\uc6b0",''];
+    document.querySelectorAll('.rv').forEach(function(el){var s=el.getAttribute('data-scene');var v=d[s]||{};
+      var say=(el.querySelector('.rv-say')||{}).textContent||'';
+      L.push('씬 '+s+' — '+(v.ox||'미정')+(v.fix?(' / 수정: '+v.fix):''));L.push('  '+say.trim());L.push('');});
+    var b=new Blob([L.join('\n')],{type:'text/plain;charset=utf-8'});
+    var a=document.createElement('a');a.href=URL.createObjectURL(b);a.download="\uc6d0\uc7a5\uac80\uc218_\uadc0_\uac80\uc0ac\ub294_\uc815\uc0c1\uc778\ub370_\uc774\uba85\uc740_\uacc4\uc18d\ub429\ub2c8\ub2e4_\u2014_\uc18c\ub9ac\ub97c_\ud0a4\uc6b0\ub294_\uc2a4\uc704\uce58\uac00_\ubaa9\uc5d0_\uc788\ub294_\uacbd\uc6b0.txt";a.click();});
+})();</script>
 </body></html>
