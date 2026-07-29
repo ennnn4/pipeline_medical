@@ -105,7 +105,7 @@ def cmd_compliance(a):
                 parts.append(b.get("say",""))
                 parts.append(b.get("scene",""))   # 자막도 발행물
             parts += [pkg.get("pinned_comment",""), pkg.get("description","")]
-            parts += pkg.get("papers",[]) + pkg.get("caption_emphasis",[])
+            parts += pkg.get("caption_emphasis",[])   # 자막(발행물). papers는 '금지 표현'을 인용·경고하는 근거 메모라 검사에서 제외
             txt = "\n".join(parts)
         except Exception:
             txt = raw
