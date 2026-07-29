@@ -1,0 +1,9 @@
+# 결정론 단계는 표준 라이브러리 + pdftotext(외부 바이너리)만으로 동작.
+# 아래는 선택/LLM·API 단계용.
+anthropic>=0.116.0
+pyyaml>=6.0
+# 유튜브 수집(선택)
+youtube-transcript-api>=0.6.2
+google-api-python-client>=2.0   # YouTube Data API (조회수·길이·게시일)
+# hwp 지원(선택): pip install pyhwp  → hwp5txt
+# OCR(선택, 스캔본): tesseract 바이너리 + pytesseract

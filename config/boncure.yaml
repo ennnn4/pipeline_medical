@@ -1,0 +1,52 @@
+# 본큐어한의원 파이프라인 설정
+hospital:
+  id: boncure
+  name: 본큐어한의원
+  specialty: 한방(침도·자율신경·난치)
+  host: 송정현            # 대본 화자 = 항상 원장
+  host_role: 대표원장
+  location: 서울 강남구 청담동
+
+# ── 시작 시 반드시 확인: 입력 자료 체크리스트 ──────────────────
+# ingest가 data/raw/ 를 스캔해 아래 카테고리별 '있음/빠짐'을 리포트한다.
+# required=true 인데 빠지면 경고. match=파일명에 포함되면 그 카테고리로 인식.
+input_checklist:
+  - key: 원장설문지      # 우선순위 2
+    required: true
+    match: [설문, survey, 브랜딩]
+  - key: 원장인터뷰      # 우선순위 3 (말투·개인사 공백 메우기)
+    required: true
+    match: [인터뷰, interview, 녹취]
+  - key: 원장강의자료    # 우선순위 4
+    required: false
+    match: [강의, 강좌, 공개강좌, lecture, ppt]
+  - key: 논문
+    required: true
+    match: [논문, 증례, 학회지, paper, pubmed]
+  - key: 기존유튜브대본  # 우선순위 5 (자사)
+    required: false
+    match: [대본, script, 본큐어_대본]
+  - key: 병원자료        # 우선순위 6 (홈페이지·블로그·FAQ·진료철학)
+    required: false
+    match: [홈페이지, 블로그, faq, 진료철학, 소개]
+  - key: 경쟁유튜브       # 우선순위 9 (링크/자막)
+    required: false
+    match: [경쟁, 참고, competitor, 유튜브참고]
+  - key: 기타
+    required: false
+    match: []
+
+# 유튜브 링크(자사·경쟁) — ingest가 자막·조회수·길이 수집
+youtube:
+  own_channel: null           # 채널 URL 또는 핸들
+  competitor_channels: []     # 예: ["@정우주근막건강", "@자율신경박원장"]
+  competitor_videos: []       # 개별 영상 URL
+
+# 대본 규칙 (플레이북 요약 — director 프롬프트가 참조)
+episode:
+  target_minutes: [13, 20]    # 초반 채널이면 [12,13] 권장
+  standard_skeleton: true
+  deliverables: 12
+
+# 질환 목록 (질환별 KB 생성 대상)
+diseases: [자율신경실조증, 이명, 어지럼증, 목경추통증, 돌발성난청, 척추측만증]

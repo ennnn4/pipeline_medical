@@ -1,0 +1,9 @@
+# 작업 데이터 (자료·중간산출물)
+data/raw/*
+data/corpus/*
+data/kb/*
+!data/**/.gitkeep
+# 비밀
+.env
+__pycache__/
+*.pyc
