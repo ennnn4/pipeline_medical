@@ -47,6 +47,11 @@ h1,h2,h3{margin:0;letter-spacing:-.035em;font-weight:800;text-wrap:balance}
 .frame svg{display:block;width:100%;height:auto}.frame .chrome{position:absolute;top:9px;left:11px;font-size:9.5px;font-weight:800;color:#fff;letter-spacing:.1em;opacity:.72}
 .frame .rec{display:inline-block;width:7px;height:7px;border-radius:50%;background:#ff4d4f;margin-right:5px}.frame .ftc{position:absolute;top:9px;right:11px;font-size:9.5px;font-weight:700;color:#fff;opacity:.6}
 .frame-cap{font-size:11.5px;color:var(--muted);font-weight:600;margin:6px 0 0}
+.stage{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start}
+.refwrap{display:flex;flex-direction:column;gap:9px;margin-top:11px}
+.refimg{margin:0;max-width:230px;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--surface);box-shadow:var(--shadow)}
+.refimg img{display:block;width:100%;height:auto}
+.rcap{font-size:11px;color:var(--muted);font-weight:600;padding:7px 10px;line-height:1.4}
 .scene{display:grid;grid-template-columns:52px 1fr;gap:10px;margin-top:11px;padding:11px 13px;background:var(--surface);border:1px solid var(--border);border-radius:10px}
 .scene .lab{font-size:11px;font-weight:800;color:var(--muted)}.scene .desc{font-size:13.5px;color:var(--ink2);font-weight:500;line-height:1.62}
 .scene.talk{background:var(--card);border-left:3px solid var(--accent)}.scene.talk .lab{color:var(--acci)}.scene.talk .desc{color:var(--ink);font-size:14.5px;line-height:1.72}
@@ -98,15 +103,21 @@ def render(pkg, meta=None, evidence=None, images=None):
     mins = round(say_chars/450, 1)
     crit_words = ("응급","하지 말","119")
 
+    beat_figs = (images or {}).get("beat_figures", {})
     beats = ""
-    for b in script:
+    for idx, b in enumerate(script):
         tc = b.get("tc","")
         tc_html = tc.replace("–","<br>").replace(" - ","<br>")
         crit = " crit" if any(w in (b.get("block","")) for w in crit_words) else ""
         tags = "".join(f'<span class="tag{" bad" if "0" in t or "없음" in t else ""}">{esc(t)}</span>' for t in b.get("tags",[]))
+        # 이 장면에 매칭된 논문 그림(있으면 스토리보드 오른쪽에)
+        refs = ""
+        for g in beat_figs.get(str(idx), []):
+            refs += f'<figure class="refimg"><img src="{esc(g.get("src",""))}" loading="lazy" alt="논문 그림"><figcaption class="rcap">📄 {esc(g.get("caption",""))} · <span class="lic">라이선스 확인</span></figcaption></figure>'
+        refwrap = f'<div class="refwrap">{refs}</div>' if refs else ""
         beats += f"""<div class="beat{crit}"><div class="tc">{esc(tc_html)}</div><div class="body">
           <div class="bt">{esc(b.get('block',''))} {tags}</div>
-          {frame_html(b, esc(tc.split('–')[0].split(' - ')[0].strip()))}
+          <div class="stage">{frame_html(b, esc(tc.split('–')[0].split(' - ')[0].strip()))}{refwrap}</div>
           <div class="scene"><span class="lab">🎬 화면</span><span class="desc">{esc(b.get('scene',''))}</span></div>
           <div class="scene talk"><span class="lab">🎙 대사</span><span class="desc">{esc(b.get('say',''))}</span></div>
         </div></div>"""
@@ -184,25 +195,22 @@ def render(pkg, meta=None, evidence=None, images=None):
     # ── 시각자료(논문 추출 이미지 + 장면별 AI프롬프트·구매링크) ──
     img_sec = ""
     if images:
-        figs = ""
-        for g in images.get("figures", []):
-            lic = '<span class="lic">⚠ 라이선스/동의 확인</span>'
-            link = f'<a class="btn" style="font-size:12px;padding:6px 10px;margin-top:6px" href="{esc(g.get("license_link","#"))}" target="_blank">허가·출처</a>' if g.get("license_link") else ""
-            figs += f"""<div class="imgc"><img src="{esc(g.get('src',''))}" alt="figure" loading="lazy">
-              <div class="cap">{esc(g.get('caption',''))} · {esc(g.get('kind',''))}<br>{lic} {link}</div></div>"""
         plans = ""
         for p in images.get("plans", []):
             buy = f' · <a href="{esc(p.get("buy_link"))}" target="_blank">🛒 구매/검색</a>' if p.get("buy_link") else ""
             plans += f"""<div class="vplan"><div class="vp-h">🎬 {esc(p.get('tc',''))} · {esc(p.get('block',''))}</div>
               <div class="vp-p">🤖 AI 생성 프롬프트\n{esc(p.get('prompt',''))}</div>
               <div class="vp-l">{buy}</div></div>"""
-        zipline = (f'<p class="lead" style="margin-top:16px">📦 <a href="{esc(images.get("zip"))}" download>이미지 zip 다운로드</a> — 추출한 논문 그림 + 생성/구매 매니페스트</p>' if images.get("zip") else "")
-        figblock = f'<h3 style="margin-top:22px;font-size:17px">📄 논문에서 추출한 그림 (참고용)</h3><div class="imgs">{figs}</div>' if figs else ""
-        planblock = f'<h3 style="margin-top:26px;font-size:17px">🎬 장면별 시각자료 계획</h3>{plans}' if plans else ""
+        _zhref = images.get("zip_datauri") or images.get("zip")   # 임베드(data URI) 우선 → 어디서 열든 다운로드됨
+        _zname = images.get("zip_name") or "images.zip"
+        zipline = (f'<p class="lead" style="margin-top:16px">📦 <a href="{esc(_zhref)}" download="{esc(_zname)}">이미지 zip 다운로드</a> — 추출한 논문 그림(원본) + 생성/구매 매니페스트</p>' if _zhref else "")
+        fc = images.get("fig_count", 0); mc = images.get("matched_count", 0)
+        summary = (f'<p class="lead">📄 논문에서 그림 <b>{fc}장</b> 추출 → 관련 <b>{mc}장</b>을 위 <b>대본의 해당 장면 오른쪽</b>에 배치했어요. 전체 원본은 아래 zip에.</p>' if fc else "")
+        planblock = f'<h3 style="margin-top:22px;font-size:17px">🎬 논문에 없는 장면 — 생성/구매</h3>{plans}' if plans else ""
         img_sec = f"""<section class="sec wrap" id="assets"><div class="sec-tag">Visual Assets</div>
         <h2>시각자료 — 추출·생성·구매</h2>
-        <p class="lead">논문에서 뽑을 수 있는 그림은 추출하고, 없는 장면은 <b>AI 생성 프롬프트</b>와 <b>구매/검색 링크</b>로 넘깁니다. 추출본은 <b>참고용</b>이며, 영상에 쓰려면 학회지·환자 동의 확인이 필요합니다.</p>
-        {figblock}{planblock}{zipline}</section>"""
+        <p class="lead">논문에서 뽑은 그림은 <b>대본 장면 옆</b>에 붙였고, 없는 장면은 <b>AI 생성 프롬프트</b>와 <b>구매/검색 링크</b>로 넘깁니다. 추출본은 <b>참고용</b>이며 영상 사용엔 학회지·환자 동의 확인이 필요합니다.</p>
+        {summary}{planblock}{zipline}</section>"""
 
     title = pkg.get("episode_title","본큐어 유튜브 패키지")
     host = meta.get("host","송정현")
