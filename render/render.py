@@ -4,7 +4,7 @@
 
 사용: python -m render.render <package.json> [-o out.html]
 """
-import json, sys, argparse, os, html
+import json, sys, argparse, os, html, re
 try:
     from .frames import frame_html
 except ImportError:
@@ -116,6 +116,17 @@ html{scroll-behavior:smooth}@media(prefers-reduced-motion:reduce){html{scroll-be
 
 def esc(s): return html.escape(str(s))
 
+# 원장이 '정확히 검수해야 할 부분'을 강조: 수치·비교 데이터 주장 + 효과 단정어(흔한 단어는 제외해 오탐↓)
+_EMPH_KW = ("호전","개선","완치","효과","부작용","정상입니다","치료됩니다","낫습니다","사라집니다")
+def _emph(text):
+    t = esc(text)
+    # 데이터 주장: 단위 붙은 수치 / 54→2 / 176 대 208
+    t = re.sub(r"(\d+(?:\.\d+)?\s*(?:점|dB|데시벨|%|배|회|mm|주|개월|명|례|kHz|헤르츠))", r"<b>\1</b>", t)
+    t = re.sub(r"(\d+(?:\.\d+)?\s*(?:→|->|~|대)\s*\d+(?:\.\d+)?)", r"<b>\1</b>", t)
+    for kw in _EMPH_KW:
+        t = t.replace(kw, f"<b>{kw}</b>")
+    return t
+
 def render(pkg, meta=None, evidence=None, images=None):
     meta = meta or {}
     script = pkg.get("script", [])
@@ -186,7 +197,7 @@ def render(pkg, meta=None, evidence=None, images=None):
         badge = '<span class="rv-flag">AI 표시</span>' if flagged else ""
         rv += f"""<div class="rv" data-scene="{i}"><div class="rv-h"><span class="rv-n">씬 {i}</span>
           <span class="rv-tc">{esc(b.get('tc',''))}</span><span class="rv-b">{esc(block)}</span>{badge}</div>
-          <div class="rv-say">{esc(clean)}</div>
+          <div class="rv-say">{_emph(clean)}</div>
           <div class="rv-ox">
             <label><input type="radio" name="rv{i}" value="O"> 맞음(O)</label>
             <label><input type="radio" name="rv{i}" value="X"> 수정 필요(X)</label>
@@ -305,7 +316,7 @@ def render(pkg, meta=None, evidence=None, images=None):
     return f"""<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{esc(title)} · 본큐어 유튜브</title><style>{CSS}</style></head><body>
 <nav class="nav"><div class="nav-in"><div class="brand"><span class="dot">본</span>본큐어 유튜브 · 대본 패키지</div>
-<div class="nav-links"><a href="#hook">기획</a><a href="#script">대본</a><a href="#deliverables">산출물</a>{'<a href="#evidence-check">근거 검수</a>' if evidence else ''}{'<a href="#assets">시각자료</a>' if images else ''}<a href="#review">원장 검수</a></div>
+<div class="nav-links"><a href="#hook">기획</a><a href="#script">대본</a><a href="#deliverables">산출물</a>{'<a href="#evidence-check">근거 검수</a>' if evidence else ''}<a href="#review">원장 검수</a></div>
 <button class="toggle" id="tg" aria-label="테마 전환">◐</button></div></nav>
 <header class="hero wrap"><span class="eyebrow">Episode Package · 콘텐츠 디렉터 시스템</span>
 <h1>{esc(title)}</h1>
