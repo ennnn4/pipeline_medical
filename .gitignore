@@ -3,6 +3,10 @@ data/*/raw/*
 data/*/corpus/*
 data/*/kb/*
 data/*.db
+# 생성 사이드카·이미지 zip (파이프라인이 다시 만듦). 대시보드 html은 자기완결이라 추적.
+data/*/out/*.evidence.json
+data/*/out/*.assets.json
+data/*/out/*_images.zip
 !data/**/.gitkeep
 # 비밀
 .env

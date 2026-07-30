@@ -249,6 +249,11 @@ def hospital(h):
       <div class=chk style="margin:10px 0">{dz_opts}</div>
       <form id=runf method=post action="/h/{h}/run">
         <label>주제</label><input type=text id=topic name=topic placeholder="예: 오십견" required>
+        <label class=opt style="display:flex;gap:9px;align-items:flex-start;margin-top:14px;padding:12px 14px;background:var(--surface);border:1px solid var(--border);border-radius:10px;cursor:pointer;font-weight:600">
+          <input type=checkbox name=evidence value=1 checked style="margin-top:3px;width:17px;height:17px;accent-color:var(--accent)">
+          <span>📄 의학 논문으로 근거 강화 <span class=muted style="font-weight:500">(선택)</span><br>
+          <span class=muted style="font-weight:500;font-size:13px">업로드 자료에 논문이 있으면 대본 수치를 <b>원문과 대조</b>하고 <b>전후 그림</b>을 추출해요. 논문이 없으면 근거 없이 생성돼요(없는 논문은 절대 안 지어냄).</span></span>
+        </label>
         <div class=row style="margin-top:14px">
           <button class="btn pri" id=runbtn type=submit {'disabled' if running else ''}>{'생성 중…' if running else '대본 만들기'}</button>
           <span class=muted>수집→KB→대본→검사→대시보드까지 자동. 몇 분 걸려요.</span>
@@ -302,12 +307,13 @@ def upload(h):
         f.save(os.path.join(dest, name))
     return redirect(f"/h/{h}")
 
-def _run_pipeline(h, topic):
+def _run_pipeline(h, topic, evidence=True):
     job_set(h, topic=topic, status="running", ok=None, log="")
     log = ""; ok = False
     try:
-        proc = subprocess.Popen([PY, "run.py", "all", "--hospital", h, "--topic", topic],
-                                cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        cmd = [PY, "run.py", "all", "--hospital", h, "--topic", topic]
+        if evidence: cmd.append("--evidence")   # 논문 근거 대조 + 시각자료 추출
+        proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 env={**os.environ, "PYTHONUTF8": "1"})
         for line in io.TextIOWrapper(proc.stdout, encoding="utf-8", errors="ignore"):
             log += line
@@ -322,8 +328,9 @@ def _run_pipeline(h, topic):
 def run_ep(h):
     if not os.path.exists(cfg_path(h)): abort(404)
     topic = (request.form.get("topic","").strip() or "주제")[:60]
+    evidence = bool(request.form.get("evidence"))
     if not job_get(h).get("running"):
-        threading.Thread(target=_run_pipeline, args=(h, topic), daemon=True).start()
+        threading.Thread(target=_run_pipeline, args=(h, topic, evidence), daemon=True).start()
     return redirect(f"/h/{h}")
 
 @app.route("/h/<h>/status")

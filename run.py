@@ -119,6 +119,11 @@ def cmd_evidence(a):
     from evidence.check import run as ev_run
     ev_run(a.hospital, a.file)
 
+def cmd_assets(a):
+    """시각자료 — 논문 그림 추출 + 장면별 AI프롬프트·구매링크 + 이미지 zip."""
+    from assets.build import run as as_run
+    as_run(a.hospital, a.file)
+
 def cmd_render(a):
     from render.render import render, _meta
     pkg = json.load(open(a.file, encoding="utf-8"))
@@ -150,6 +155,13 @@ def cmd_all(a):
         # 의료광고 검수 불통과 → 결과 게시(렌더) 차단
         print("\n⛔ 의료광고 검수 불통과 — 대시보드 렌더/게시를 차단합니다. 위 위반을 수정 후 재생성하세요.")
         sys.exit(1)
+    if getattr(a, "evidence", False):
+        # 논문 근거 강화(선택): 인용 대조 1차 검수 + 논문 그림 추출·시각자료 계획
+        print("[논문 근거 강화] 인용 대조 1차 검수 + 시각자료 추출")
+        try: cmd_evidence(a)
+        except Exception as e: print(f"  · 근거 대조 건너뜀: {e}")
+        try: cmd_assets(a)
+        except Exception as e: print(f"  · 시각자료 건너뜀: {e}")
     cmd_render(a)
 
 def cmd_init(a):
@@ -182,11 +194,13 @@ def main():
     e = sub.add_parser("episode"); e.add_argument("--hospital", default="boncure"); e.add_argument("--topic", required=True)
     cp = sub.add_parser("compliance"); cp.add_argument("--file", required=True); cp.add_argument("--edition", default=None)
     ev = sub.add_parser("evidence"); ev.add_argument("--hospital", default="boncure"); ev.add_argument("--file", required=True)
+    asp = sub.add_parser("assets"); asp.add_argument("--hospital", default="boncure"); asp.add_argument("--file", required=True)
     r = sub.add_parser("render"); r.add_argument("--file", required=True); r.add_argument("--hospital", default="boncure")
     al = sub.add_parser("all"); al.add_argument("--hospital", default="boncure"); al.add_argument("--topic", required=True)
+    al.add_argument("--evidence", action="store_true", help="논문 근거 대조 1차 검수 + 시각자료 추출")
     a = ap.parse_args()
     rc = {"init":cmd_init,"ingest":cmd_ingest,"classify":cmd_classify,"kb":cmd_kb,"episode":cmd_episode,
-          "compliance":cmd_compliance,"evidence":cmd_evidence,"render":cmd_render,"all":cmd_all}[a.cmd](a)
+          "compliance":cmd_compliance,"evidence":cmd_evidence,"assets":cmd_assets,"render":cmd_render,"all":cmd_all}[a.cmd](a)
     if isinstance(rc, int) and rc != 0:
         sys.exit(rc)   # 검수 FAIL 등은 non-zero로 종료(자동화·게이트용)
 
