@@ -48,7 +48,16 @@ h1,h2,h3{margin:0;letter-spacing:-.035em;font-weight:800;text-wrap:balance}
 .frame .rec{display:inline-block;width:7px;height:7px;border-radius:50%;background:#ff4d4f;margin-right:5px}.frame .ftc{position:absolute;top:9px;right:11px;font-size:9.5px;font-weight:700;color:#fff;opacity:.6}
 .frame-cap{font-size:11.5px;color:var(--muted);font-weight:600;margin:6px 0 0}
 .stage{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start}
-.refthumbs{margin-top:11px}
+.sidecol{display:flex;flex-direction:column;gap:12px;margin-top:11px;max-width:320px}
+.planbox{border:1px dashed var(--border);border-radius:12px;padding:12px 14px;background:var(--surface)}
+.pb-h{font-size:13px;font-weight:800;color:var(--ink);display:flex;gap:7px;align-items:center}
+.pb-tag{font-size:10px;font-weight:800;color:var(--muted);background:var(--surface2);padding:2px 7px;border-radius:5px}
+.pb-d{background:transparent;border:0;margin:8px 0 0}
+.pb-d summary{padding:8px 11px;background:var(--accw);color:var(--acci);border-radius:8px;font-size:12.5px;font-weight:700;display:flex;gap:8px;align-items:center}
+.pb-copy{margin-left:auto;font-size:11px;font-weight:700;border:1px solid var(--border);background:var(--card);color:var(--ink2);border-radius:6px;padding:3px 8px;cursor:pointer}
+.pb-p{font-size:12px;color:var(--ink2);font-weight:500;line-height:1.55;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-top:7px;white-space:pre-wrap}
+.pb-buy{display:inline-block;margin-top:9px;font-size:12.5px;font-weight:700;color:var(--acci)}
+.refthumbs{margin-top:0}
 .rth-row{display:flex;gap:7px;flex-wrap:wrap;max-width:300px}
 .rth{width:66px;height:66px;object-fit:cover;border-radius:9px;border:1px solid var(--border);background:var(--surface);cursor:zoom-in;transition:border-color .12s,transform .12s}
 .rth:hover{border-color:var(--accent);transform:scale(1.04)}
@@ -115,6 +124,7 @@ def render(pkg, meta=None, evidence=None, images=None):
     crit_words = ("응급","하지 말","119")
 
     beat_figs = (images or {}).get("beat_figures", {})
+    plan_by_tc = {p.get("tc",""): p for p in (images or {}).get("plans", [])}
     gallery = []   # 라이트박스용 전체 그림 목록(순서대로 넘김)
     beats = ""
     for idx, b in enumerate(script):
@@ -130,9 +140,18 @@ def render(pkg, meta=None, evidence=None, images=None):
             thumbs += f'<img class="rth" src="{esc(g.get("src",""))}" data-i="{gi}" loading="lazy" alt="논문 그림" title="{esc(g.get("caption",""))}">'
         n = len(beat_figs.get(str(idx), []))
         refwrap = f'<div class="refthumbs"><div class="rth-row">{thumbs}</div><div class="rth-lab">📄 논문 그림 {n}장 · 클릭해 확대</div></div>' if thumbs else ""
+        # 논문사진이 없지만 시각자료가 필요한 장면 → AI 프롬프트 + 구매 칩(옆에 인라인)
+        plan = plan_by_tc.get(tc)
+        planbox = ""
+        if plan:
+            planbox = (f'<div class="planbox"><div class="pb-h">🎬 이 장면 이미지 <span class="pb-tag">논문에 없음</span></div>'
+                       f'<details class="pb-d"><summary>🤖 AI 생성 프롬프트 <button class="pb-copy" type="button">복사</button></summary>'
+                       f'<div class="pb-p">{esc(plan.get("prompt",""))}</div></details>'
+                       f'<a class="pb-buy" href="{esc(plan.get("buy_link","#"))}" target="_blank">🛒 스톡 구매·검색</a></div>')
+        sidecol = f'<div class="sidecol">{refwrap}{planbox}</div>' if (thumbs or planbox) else ""
         beats += f"""<div class="beat{crit}"><div class="tc">{esc(tc_html)}</div><div class="body">
           <div class="bt">{esc(b.get('block',''))} {tags}</div>
-          <div class="stage">{frame_html(b, esc(tc.split('–')[0].split(' - ')[0].strip()))}{refwrap}</div>
+          <div class="stage">{frame_html(b, esc(tc.split('–')[0].split(' - ')[0].strip()))}{sidecol}</div>
           <div class="scene"><span class="lab">🎬 화면</span><span class="desc">{esc(b.get('scene',''))}</span></div>
           <div class="scene talk"><span class="lab">🎙 대사</span><span class="desc">{esc(b.get('say',''))}</span></div>
         </div></div>"""
@@ -210,22 +229,18 @@ def render(pkg, meta=None, evidence=None, images=None):
     # ── 시각자료(논문 추출 이미지 + 장면별 AI프롬프트·구매링크) ──
     img_sec = ""
     if images:
-        plans = ""
-        for p in images.get("plans", []):
-            buy = f' · <a href="{esc(p.get("buy_link"))}" target="_blank">🛒 구매/검색</a>' if p.get("buy_link") else ""
-            plans += f"""<div class="vplan"><div class="vp-h">🎬 {esc(p.get('tc',''))} · {esc(p.get('block',''))}</div>
-              <div class="vp-p">🤖 AI 생성 프롬프트\n{esc(p.get('prompt',''))}</div>
-              <div class="vp-l">{buy}</div></div>"""
         _zhref = images.get("zip_datauri") or images.get("zip")   # 임베드(data URI) 우선 → 어디서 열든 다운로드됨
         _zname = images.get("zip_name") or "images.zip"
-        zipline = (f'<p class="lead" style="margin-top:16px">📦 <a href="{esc(_zhref)}" download="{esc(_zname)}">이미지 zip 다운로드</a> — 추출한 논문 그림(원본) + 생성/구매 매니페스트</p>' if _zhref else "")
-        fc = images.get("fig_count", 0); mc = images.get("matched_count", 0)
-        summary = (f'<p class="lead">📄 논문에서 그림 <b>{fc}장</b> 추출 → 관련 <b>{mc}장</b>을 위 <b>대본의 해당 장면 오른쪽</b>에 배치했어요. 전체 원본은 아래 zip에.</p>' if fc else "")
-        planblock = f'<h3 style="margin-top:22px;font-size:17px">🎬 논문에 없는 장면 — 생성/구매</h3>{plans}' if plans else ""
+        zipline = (f'<p class="lead" style="margin-top:14px">📦 <a href="{esc(_zhref)}" download="{esc(_zname)}">이미지 zip 다운로드</a> — 추출한 논문 그림(원본) + 장면별 AI프롬프트·구매링크 매니페스트</p>' if _zhref else "")
+        fc = images.get("fig_count", 0); mc = images.get("matched_count", 0); pc = len(images.get("plans", []))
         img_sec = f"""<section class="sec wrap" id="assets"><div class="sec-tag">Visual Assets</div>
-        <h2>시각자료 — 추출·생성·구매</h2>
-        <p class="lead">논문에서 뽑은 그림은 <b>대본 장면 옆</b>에 붙였고, 없는 장면은 <b>AI 생성 프롬프트</b>와 <b>구매/검색 링크</b>로 넘깁니다. 추출본은 <b>참고용</b>이며 영상 사용엔 학회지·환자 동의 확인이 필요합니다.</p>
-        {summary}{planblock}{zipline}</section>"""
+        <h2>시각자료 — 어디에 붙였나</h2>
+        <p class="lead">시각자료는 전부 <b>대본의 해당 장면 옆</b>에 붙였어요:</p>
+        <p class="lead">· 📄 논문 그림 <b>{fc}장</b> 추출 → 관련 <b>{mc}장</b>을 근거 장면 옆 썸네일로(클릭하면 크게·넘기기)<br>
+        · 🎬 논문에 없지만 그림이 필요한 <b>{pc}장면</b> → 그 장면 옆에 <b>AI 생성 프롬프트(복사) + 구매·검색 링크</b><br>
+        · 나머지(콜드오픈·인트로·실연·응급·CTA 등)는 원장 정면/실연이라 <b>스토리보드로 충분</b> — 별도 이미지 불필요</p>
+        <p class="lead" style="font-size:13px;color:var(--muted)">※ 논문 추출본은 참고용 — 영상 사용엔 학회지·환자 동의 확인 필요.</p>
+        {zipline}</section>"""
 
     title = pkg.get("episode_title","본큐어 유튜브 패키지")
     host = meta.get("host","송정현")
@@ -283,6 +298,10 @@ def render(pkg, meta=None, evidence=None, images=None):
     if(e.key==='Escape')close();else if(e.key==='ArrowLeft')show(cur-1);else if(e.key==='ArrowRight')show(cur+1);});
 })();</script>""".replace("__G__", json.dumps(gallery))
 
+    plan_js = ""
+    if plan_by_tc:
+        plan_js = r"""<script>document.querySelectorAll('.pb-copy').forEach(function(btn){btn.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();var d=btn.closest('.pb-d');var p=d&&d.querySelector('.pb-p');if(!p)return;function ok(){var o=btn.textContent;btn.textContent='복사됨';setTimeout(function(){btn.textContent='복사';},1200);}if(navigator.clipboard){navigator.clipboard.writeText(p.textContent).then(ok,function(){});}else{var ta=document.createElement('textarea');ta.value=p.textContent;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');ok();}catch(err){}document.body.removeChild(ta);}});});</script>"""
+
     return f"""<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{esc(title)} · 본큐어 유튜브</title><style>{CSS}</style></head><body>
 <nav class="nav"><div class="nav-in"><div class="brand"><span class="dot">본</span>본큐어 유튜브 · 대본 패키지</div>
@@ -311,6 +330,7 @@ def render(pkg, meta=None, evidence=None, images=None):
 <script>(function(){{var r=document.documentElement,b=document.getElementById('tg');function c(){{return r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light')}}b.addEventListener('click',function(){{r.setAttribute('data-theme',c()==='dark'?'light':'dark')}})}})();</script>
 {lb_html}
 {lb_js}
+{plan_js}
 {_rvjs}
 </body></html>"""
 
