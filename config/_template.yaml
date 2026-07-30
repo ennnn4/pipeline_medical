@@ -20,8 +20,8 @@ input_checklist:
   - key: 원장강의자료
     required: false
     match: [강의, 강좌, lecture, ppt]
-  - key: 논문
-    required: true
+  - key: 논문            # 선택 — 있으면 근거 강화(인용·수치대조·그림추출), 없어도 대본 생성
+    required: false
     match: [논문, 증례, 학회지, paper, pubmed]
   - key: 기존유튜브대본
     required: false
