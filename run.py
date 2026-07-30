@@ -114,6 +114,11 @@ def cmd_compliance(a):
     print(f"컴플라이언스 검사: {a.file} (편 {ed or '자동'}) — 발행 텍스트만")
     return report(check(txt, ed))
 
+def cmd_evidence(a):
+    """논문 근거 대조 — 자동 1차 검수(원장 최종 검수 전 단계)."""
+    from evidence.check import run as ev_run
+    ev_run(a.hospital, a.file)
+
 def cmd_render(a):
     from render.render import render, _meta
     pkg = json.load(open(a.file, encoding="utf-8"))
@@ -165,11 +170,12 @@ def main():
     kbp.add_argument("--force", action="store_true", help="이미 있는 KB도 다시 생성")
     e = sub.add_parser("episode"); e.add_argument("--hospital", default="boncure"); e.add_argument("--topic", required=True)
     cp = sub.add_parser("compliance"); cp.add_argument("--file", required=True); cp.add_argument("--edition", default=None)
+    ev = sub.add_parser("evidence"); ev.add_argument("--hospital", default="boncure"); ev.add_argument("--file", required=True)
     r = sub.add_parser("render"); r.add_argument("--file", required=True); r.add_argument("--hospital", default="boncure")
     al = sub.add_parser("all"); al.add_argument("--hospital", default="boncure"); al.add_argument("--topic", required=True)
     a = ap.parse_args()
     rc = {"init":cmd_init,"ingest":cmd_ingest,"classify":cmd_classify,"kb":cmd_kb,"episode":cmd_episode,
-          "compliance":cmd_compliance,"render":cmd_render,"all":cmd_all}[a.cmd](a)
+          "compliance":cmd_compliance,"evidence":cmd_evidence,"render":cmd_render,"all":cmd_all}[a.cmd](a)
     if isinstance(rc, int) and rc != 0:
         sys.exit(rc)   # 검수 FAIL 등은 non-zero로 종료(자동화·게이트용)
 
