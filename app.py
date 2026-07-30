@@ -40,8 +40,10 @@ def job_set(h, topic=None, status=None, ok=None, log=None):
 
 # ── 인증(세션) ──────────────────────────────────────────────
 _sk = os.path.join(ROOT, ".secret")
-app.secret_key = (open(_sk).read().strip() if os.path.exists(_sk)
-                  else (lambda s: (open(_sk,"w").write(s), s)[1])(secrets.token_hex(32)))
+# 배포(Render 등)에선 SECRET_KEY 환경변수 우선 — 재시작해도 세션 유지. 없으면 로컬 .secret 파일.
+app.secret_key = (os.environ.get("SECRET_KEY")
+                  or (open(_sk).read().strip() if os.path.exists(_sk)
+                      else (lambda s: (open(_sk,"w").write(s), s)[1])(secrets.token_hex(32))))
 def _users_path(): return os.path.join(ROOT, "config", "users.yaml")
 def load_users():
     import yaml
@@ -373,5 +375,6 @@ def logout():
 
 if __name__ == "__main__":
     load_users()  # 기본 계정 보장 + 콘솔 안내
-    print("브라우저에서 http://localhost:5000 여세요. (로그인 필요)")
-    app.run(host="127.0.0.1", port=5000, debug=False)
+    port = int(os.environ.get("PORT", 5000))   # 배포 환경은 PORT 주입, 로컬은 5000
+    print(f"브라우저에서 http://localhost:{port} 여세요. (로그인 필요)")
+    app.run(host="0.0.0.0", port=port, debug=False)

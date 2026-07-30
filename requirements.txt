@@ -3,6 +3,7 @@
 anthropic>=0.116.0
 pyyaml>=6.0
 flask>=3.0          # 웹앱(app.py) — 로그인·업로드·버튼으로 대본 생성
+gunicorn>=21.0      # 배포용 WSGI 서버(Render 등). 로컬은 python app.py 그대로.
 # 유튜브 수집(선택)
 youtube-transcript-api>=0.6.2
 google-api-python-client>=2.0   # YouTube Data API (조회수·길이·게시일)

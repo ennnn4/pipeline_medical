@@ -1,0 +1,14 @@
+# 비밀·로컬 데이터가 이미지에 안 들어가게. (Render는 git 기준이라 어차피 안 들어가지만 로컬 docker build 대비)
+.env
+.secret
+config/users.yaml
+data/*/raw
+data/*/corpus
+data/*/kb
+data/*.db
+__pycache__
+*.pyc
+.git
+.gitignore
+*.md
+!GUIDE.md

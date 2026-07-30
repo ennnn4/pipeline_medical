@@ -1,0 +1,14 @@
+# Render Blueprint — 이 파일 있으면 Render가 설정을 자동으로 읽음.
+# 대시보드: New → Blueprint → 이 레포 선택 → Apply.
+services:
+  - type: web
+    name: boncure-pipeline
+    runtime: docker           # Dockerfile 사용(pdftotext 포함)
+    plan: free                # 무료 티어(15분 후 잠, 재시작 시 업로드/생성물 사라짐)
+    envVars:
+      - key: SECRET_KEY       # 세션 서명키 — 재시작해도 로그인 유지되게 고정값 자동생성
+        generateValue: true
+      - key: ADMIN_PW         # 관리자(admin) 로그인 비번 — Render 대시보드에서 직접 입력
+        sync: false
+      - key: ANTHROPIC_API_KEY  # 대본 생성용 API 키 — Render 대시보드에서 직접 입력(비밀)
+        sync: false
