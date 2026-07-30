@@ -47,11 +47,22 @@ h1,h2,h3{margin:0;letter-spacing:-.035em;font-weight:800;text-wrap:balance}
 .frame svg{display:block;width:100%;height:auto}.frame .chrome{position:absolute;top:9px;left:11px;font-size:9.5px;font-weight:800;color:#fff;letter-spacing:.1em;opacity:.72}
 .frame .rec{display:inline-block;width:7px;height:7px;border-radius:50%;background:#ff4d4f;margin-right:5px}.frame .ftc{position:absolute;top:9px;right:11px;font-size:9.5px;font-weight:700;color:#fff;opacity:.6}
 .frame-cap{font-size:11.5px;color:var(--muted);font-weight:600;margin:6px 0 0}
-.stage{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start}
-.refwrap{display:flex;flex-direction:column;gap:9px;margin-top:11px}
-.refimg{margin:0;max-width:230px;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--surface);box-shadow:var(--shadow)}
-.refimg img{display:block;width:100%;height:auto}
-.rcap{font-size:11px;color:var(--muted);font-weight:600;padding:7px 10px;line-height:1.4}
+.stage{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start}
+.refthumbs{margin-top:11px}
+.rth-row{display:flex;gap:7px;flex-wrap:wrap;max-width:300px}
+.rth{width:66px;height:66px;object-fit:cover;border-radius:9px;border:1px solid var(--border);background:var(--surface);cursor:zoom-in;transition:border-color .12s,transform .12s}
+.rth:hover{border-color:var(--accent);transform:scale(1.04)}
+.rth-lab{font-size:11px;color:var(--muted);font-weight:600;margin-top:7px}
+.lb{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.88);display:none;align-items:center;justify-content:center;flex-direction:column;gap:16px;padding:24px}
+.lb.on{display:flex}
+.lb img{max-width:92vw;max-height:74vh;border-radius:10px;box-shadow:0 12px 48px rgba(0,0,0,.55);background:#fff}
+.lb-cap{color:#e5e8eb;font-size:13px;font-weight:600;text-align:center;max-width:82vw;line-height:1.5}
+.lb-x{position:absolute;top:14px;right:20px;background:none;border:none;color:#fff;font-size:36px;line-height:1;cursor:pointer;opacity:.8}
+.lb-x:hover{opacity:1}
+.lb-nav{position:absolute;top:50%;transform:translateY(-50%);background:rgba(255,255,255,.14);border:none;color:#fff;font-size:30px;width:54px;height:66px;border-radius:11px;cursor:pointer}
+.lb-nav:hover{background:rgba(255,255,255,.26)}
+.lb-prev{left:18px}.lb-next{right:18px}
+@media(max-width:600px){.lb-nav{width:44px;height:56px;font-size:24px}}
 .scene{display:grid;grid-template-columns:52px 1fr;gap:10px;margin-top:11px;padding:11px 13px;background:var(--surface);border:1px solid var(--border);border-radius:10px}
 .scene .lab{font-size:11px;font-weight:800;color:var(--muted)}.scene .desc{font-size:13.5px;color:var(--ink2);font-weight:500;line-height:1.62}
 .scene.talk{background:var(--card);border-left:3px solid var(--accent)}.scene.talk .lab{color:var(--acci)}.scene.talk .desc{color:var(--ink);font-size:14.5px;line-height:1.72}
@@ -104,17 +115,21 @@ def render(pkg, meta=None, evidence=None, images=None):
     crit_words = ("응급","하지 말","119")
 
     beat_figs = (images or {}).get("beat_figures", {})
+    gallery = []   # 라이트박스용 전체 그림 목록(순서대로 넘김)
     beats = ""
     for idx, b in enumerate(script):
         tc = b.get("tc","")
         tc_html = tc.replace("–","<br>").replace(" - ","<br>")
         crit = " crit" if any(w in (b.get("block","")) for w in crit_words) else ""
         tags = "".join(f'<span class="tag{" bad" if "0" in t or "없음" in t else ""}">{esc(t)}</span>' for t in b.get("tags",[]))
-        # 이 장면에 매칭된 논문 그림(있으면 스토리보드 오른쪽에)
-        refs = ""
+        # 이 장면에 매칭된 논문 그림 → 작은 썸네일 줄(클릭 시 라이트박스 확대·넘기기)
+        thumbs = ""
         for g in beat_figs.get(str(idx), []):
-            refs += f'<figure class="refimg"><img src="{esc(g.get("src",""))}" loading="lazy" alt="논문 그림"><figcaption class="rcap">📄 {esc(g.get("caption",""))} · <span class="lic">라이선스 확인</span></figcaption></figure>'
-        refwrap = f'<div class="refwrap">{refs}</div>' if refs else ""
+            gi = len(gallery)
+            gallery.append({"src": g.get("src",""), "cap": g.get("caption","")})
+            thumbs += f'<img class="rth" src="{esc(g.get("src",""))}" data-i="{gi}" loading="lazy" alt="논문 그림" title="{esc(g.get("caption",""))}">'
+        n = len(beat_figs.get(str(idx), []))
+        refwrap = f'<div class="refthumbs"><div class="rth-row">{thumbs}</div><div class="rth-lab">📄 논문 그림 {n}장 · 클릭해 확대</div></div>' if thumbs else ""
         beats += f"""<div class="beat{crit}"><div class="tc">{esc(tc_html)}</div><div class="body">
           <div class="bt">{esc(b.get('block',''))} {tags}</div>
           <div class="stage">{frame_html(b, esc(tc.split('–')[0].split(' - ')[0].strip()))}{refwrap}</div>
@@ -247,6 +262,27 @@ def render(pkg, meta=None, evidence=None, images=None):
     _rvjs = (_rvjs.replace("__KEY__", json.dumps("boncure_rv_"+title))
                   .replace("__TITLE__", json.dumps(title))
                   .replace("__FN__", json.dumps("원장검수_"+title.replace(" ","_").replace("/","_")+".txt")))
+    lb_html = ('<div id="lb" class="lb"><button class="lb-x" aria-label="닫기">&times;</button>'
+               '<button class="lb-nav lb-prev" aria-label="이전">&lsaquo;</button>'
+               '<img alt="논문 그림 확대"><button class="lb-nav lb-next" aria-label="다음">&rsaquo;</button>'
+               '<div class="lb-cap"></div></div>') if gallery else ""
+    lb_js = ""
+    if gallery:
+        lb_js = r"""<script>(function(){
+  var G=__G__,lb=document.getElementById('lb');if(!lb)return;
+  var im=lb.querySelector('img'),cap=lb.querySelector('.lb-cap'),cur=0;
+  function show(i){cur=(i+G.length)%G.length;im.src=G[cur].src;cap.textContent='📄 '+G[cur].cap+' · 참고용(라이선스 확인) — '+(cur+1)+'/'+G.length;}
+  function open(i){show(i);lb.classList.add('on');}
+  function close(){lb.classList.remove('on');im.src='';}
+  document.querySelectorAll('.rth').forEach(function(t){t.addEventListener('click',function(){open(+t.dataset.i);});});
+  lb.querySelector('.lb-x').addEventListener('click',close);
+  lb.querySelector('.lb-prev').addEventListener('click',function(e){e.stopPropagation();show(cur-1);});
+  lb.querySelector('.lb-next').addEventListener('click',function(e){e.stopPropagation();show(cur+1);});
+  lb.addEventListener('click',function(e){if(e.target===lb)close();});
+  document.addEventListener('keydown',function(e){if(!lb.classList.contains('on'))return;
+    if(e.key==='Escape')close();else if(e.key==='ArrowLeft')show(cur-1);else if(e.key==='ArrowRight')show(cur+1);});
+})();</script>""".replace("__G__", json.dumps(gallery))
+
     return f"""<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{esc(title)} · 본큐어 유튜브</title><style>{CSS}</style></head><body>
 <nav class="nav"><div class="nav-in"><div class="brand"><span class="dot">본</span>본큐어 유튜브 · 대본 패키지</div>
@@ -273,6 +309,8 @@ def render(pkg, meta=None, evidence=None, images=None):
 <div class="disc"><b>⚠️ 이 대본은 자동 컴플라이언스 검사를 거쳤지만, 검사 통과가 발행을 보장하지 않습니다. 최종 발행은 반드시 원장 의학 검수와 의료광고 심의 확인을 마친 뒤에만 진행하세요.</b><br>대본 속 의학 정보는 교육·정보 제공 목적이며, 효과는 개인마다 다르고 부작용 가능성이 있습니다. 논문 증례는 단일 증례일 수 있으며 모든 환자에게 동일 결과를 보장하지 않습니다.</div>
 <footer>본큐어 유튜브 · 화자 {esc(host)}</footer>
 <script>(function(){{var r=document.documentElement,b=document.getElementById('tg');function c(){{return r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light')}}b.addEventListener('click',function(){{r.setAttribute('data-theme',c()==='dark'?'light':'dark')}})}})();</script>
+{lb_html}
+{lb_js}
 {_rvjs}
 </body></html>"""
 
