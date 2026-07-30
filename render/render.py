@@ -72,11 +72,26 @@ details .in{padding:0 20px 18px;color:var(--ink2);font-size:14px}details ol,deta
 .disc{max-width:var(--maxw);margin:32px auto 0;padding:18px 20px;background:var(--surface2);border-radius:var(--radius-sm);font-size:12.5px;color:var(--muted);font-weight:500;line-height:1.7}
 footer{padding:48px 24px;border-top:1px solid var(--border);color:var(--muted);text-align:center;font-size:13px;margin-top:20px}
 html{scroll-behavior:smooth}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+.ev-op{font-size:13px;color:var(--ink2);font-weight:600;margin-top:9px;line-height:1.6}
+.ev-src{font-size:12px;color:var(--muted);font-weight:600;margin-top:6px}
+.ev-src b{color:var(--ink2)}
+.vb{font-size:12px;font-weight:800;padding:3px 9px;border-radius:6px}
+.vb.OK{background:var(--gw);color:var(--good)}.vb.PARTIAL{background:var(--ww);color:var(--warn)}
+.vb.EXTERNAL{background:var(--accw);color:var(--acci)}.vb.UNVERIFIED{background:var(--surface2);color:var(--muted)}
+.imgs{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-top:16px}
+.imgc{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow)}
+.imgc img{display:block;width:100%;height:130px;object-fit:cover;background:var(--surface2)}
+.imgc .cap{padding:9px 11px;font-size:11.5px;color:var(--ink2);font-weight:600}
+.imgc .lic{font-size:10.5px;font-weight:800;color:var(--warn);background:var(--ww);padding:2px 6px;border-radius:5px;display:inline-block;margin-top:5px}
+.vplan{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:13px 15px;margin-top:10px}
+.vplan .vp-h{font-size:13px;font-weight:800;color:var(--acci)}
+.vplan .vp-p{font-size:12.5px;color:var(--ink2);font-weight:500;margin-top:6px;background:var(--surface);border-radius:8px;padding:9px 11px;line-height:1.55;white-space:pre-wrap}
+.vplan .vp-l{font-size:12px;font-weight:700;margin-top:8px;display:inline-flex;gap:5px}
 """
 
 def esc(s): return html.escape(str(s))
 
-def render(pkg, meta=None):
+def render(pkg, meta=None, evidence=None, images=None):
     meta = meta or {}
     script = pkg.get("script", [])
     say_chars = sum(len((b.get("say") or "").replace(" ","")) for b in script)
@@ -141,6 +156,54 @@ def render(pkg, meta=None):
         <div class="rv-tools"><button class="btn pri" id="rvSave">💾 저장</button><button class="btn" id="rvExport">⬇ 내보내기(.txt)</button><span class="rv-status" id="rvStatus"></span></div>
         </section>"""
 
+    # ── 논문 근거 · 자동 1차 검수 (evidence/check.py 결과) ──
+    ev_sec = ""
+    if evidence:
+        vicon = {"OK":"✅ 원문 확인","PARTIAL":"⚠️ 부분확인","EXTERNAL":"🔎 원문 미확인","UNVERIFIED":"❔ 확인필요"}
+        evr = ""
+        for i, r in enumerate(evidence, 1):
+            v = r.get("verdict","UNVERIFIED")
+            src = r.get("source_name") or (r.get("source") or "—")
+            nf = ", ".join(r.get("nums_found",[])); nm = ", ".join(r.get("nums_missing",[]))
+            srcline = (f'<div class="ev-src">출처: <b>{esc(src)}</b>'
+                       + (f' · 확인수치 {esc(nf)}' if nf else "")
+                       + (f' · <span style="color:var(--warn)">미확인 {esc(nm)}</span>' if nm else "") + '</div>')
+            evr += f"""<div class="rv" data-scene="ev{i}"><div class="rv-h">
+              <span class="vb {v}">{vicon.get(v,v)}</span><span class="rv-b">근거 {i}</span></div>
+              <div class="rv-say">{esc(r.get('claim',''))}</div>{srcline}
+              <div class="ev-op">▶ 기계 1차 의견: {esc(r.get('opinion',''))}</div>
+              <div class="rv-ox">
+                <label><input type="radio" name="ev{i}" value="O"> 확인·동의</label>
+                <label><input type="radio" name="ev{i}" value="X"> 재확인 필요</label>
+                <input class="rv-fix" type="text" placeholder="원장 메모(선택)"></div></div>"""
+        ev_sec = f"""<section class="sec wrap" id="evidence-check"><div class="sec-tag">Evidence · 자동 1차 검수</div>
+        <h2>논문 근거 대조 — 1차 검수</h2>
+        <p class="lead">대본이 인용한 수치·출처를 <b>업로드된 원문 논문</b>과 자동 대조한 결과입니다. 기계는 <b>인용 실재·수치 일치</b>까지만 봅니다 — <b>의학적 타당성 판단은 원장님 몫</b>이라, 각 근거를 확인하고 동의/재확인을 표시하세요.</p>
+        {evr}</section>"""
+
+    # ── 시각자료(논문 추출 이미지 + 장면별 AI프롬프트·구매링크) ──
+    img_sec = ""
+    if images:
+        figs = ""
+        for g in images.get("figures", []):
+            lic = '<span class="lic">⚠ 라이선스/동의 확인</span>'
+            link = f'<a class="btn" style="font-size:12px;padding:6px 10px;margin-top:6px" href="{esc(g.get("license_link","#"))}" target="_blank">허가·출처</a>' if g.get("license_link") else ""
+            figs += f"""<div class="imgc"><img src="{esc(g.get('src',''))}" alt="figure" loading="lazy">
+              <div class="cap">{esc(g.get('caption',''))} · {esc(g.get('kind',''))}<br>{lic} {link}</div></div>"""
+        plans = ""
+        for p in images.get("plans", []):
+            buy = f' · <a href="{esc(p.get("buy_link"))}" target="_blank">🛒 구매/검색</a>' if p.get("buy_link") else ""
+            plans += f"""<div class="vplan"><div class="vp-h">🎬 {esc(p.get('tc',''))} · {esc(p.get('block',''))}</div>
+              <div class="vp-p">🤖 AI 생성 프롬프트\n{esc(p.get('prompt',''))}</div>
+              <div class="vp-l">{buy}</div></div>"""
+        zipline = (f'<p class="lead" style="margin-top:16px">📦 <a href="{esc(images.get("zip"))}" download>이미지 zip 다운로드</a> — 추출한 논문 그림 + 생성/구매 매니페스트</p>' if images.get("zip") else "")
+        figblock = f'<h3 style="margin-top:22px;font-size:17px">📄 논문에서 추출한 그림 (참고용)</h3><div class="imgs">{figs}</div>' if figs else ""
+        planblock = f'<h3 style="margin-top:26px;font-size:17px">🎬 장면별 시각자료 계획</h3>{plans}' if plans else ""
+        img_sec = f"""<section class="sec wrap" id="assets"><div class="sec-tag">Visual Assets</div>
+        <h2>시각자료 — 추출·생성·구매</h2>
+        <p class="lead">논문에서 뽑을 수 있는 그림은 추출하고, 없는 장면은 <b>AI 생성 프롬프트</b>와 <b>구매/검색 링크</b>로 넘깁니다. 추출본은 <b>참고용</b>이며, 영상에 쓰려면 학회지·환자 동의 확인이 필요합니다.</p>
+        {figblock}{planblock}{zipline}</section>"""
+
     title = pkg.get("episode_title","본큐어 유튜브 패키지")
     host = meta.get("host","송정현")
     files_n = meta.get("files_n","—")
@@ -179,7 +242,7 @@ def render(pkg, meta=None):
     return f"""<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{esc(title)} · 본큐어 유튜브</title><style>{CSS}</style></head><body>
 <nav class="nav"><div class="nav-in"><div class="brand"><span class="dot">본</span>본큐어 유튜브 · 대본 패키지</div>
-<div class="nav-links"><a href="#hook">기획</a><a href="#script">대본</a><a href="#deliverables">산출물</a><a href="#review">원장 검수</a></div>
+<div class="nav-links"><a href="#hook">기획</a><a href="#script">대본</a><a href="#deliverables">산출물</a>{'<a href="#evidence-check">근거 검수</a>' if evidence else ''}{'<a href="#assets">시각자료</a>' if images else ''}<a href="#review">원장 검수</a></div>
 <button class="toggle" id="tg" aria-label="테마 전환">◐</button></div></nav>
 <header class="hero wrap"><span class="eyebrow">Episode Package · 콘텐츠 디렉터 시스템</span>
 <h1>{esc(title)}</h1>
@@ -196,6 +259,8 @@ def render(pkg, meta=None):
 <p class="lead">타임코드마다 🎬화면(무엇이 보이나) + 🎙대사(원장이 말하는 완성 문장). 스토리보드 프레임은 자동 생성.</p>
 <div class="script">{beats}</div></section>
 <section class="sec wrap" id="deliverables"><div class="sec-tag">Deliverables</div><h2>산출물 12종</h2>{dels}{extra}</section>
+{ev_sec}
+{img_sec}
 {review_sec}
 <div class="disc"><b>⚠️ 이 대본은 자동 컴플라이언스 검사를 거쳤지만, 검사 통과가 발행을 보장하지 않습니다. 최종 발행은 반드시 원장 의학 검수와 의료광고 심의 확인을 마친 뒤에만 진행하세요.</b><br>대본 속 의학 정보는 교육·정보 제공 목적이며, 효과는 개인마다 다르고 부작용 가능성이 있습니다. 논문 증례는 단일 증례일 수 있으며 모든 환자에게 동일 결과를 보장하지 않습니다.</div>
 <footer>본큐어 유튜브 · 화자 {esc(host)}</footer>

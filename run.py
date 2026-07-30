@@ -122,8 +122,19 @@ def cmd_evidence(a):
 def cmd_render(a):
     from render.render import render, _meta
     pkg = json.load(open(a.file, encoding="utf-8"))
-    out = os.path.splitext(a.file)[0] + ".html"
-    open(out,"w",encoding="utf-8").write(render(pkg, _meta(getattr(a,"hospital","boncure"))))
+    base = os.path.splitext(a.file)[0]
+    def _load(suffix, key=None):
+        p = base + suffix
+        if os.path.exists(p):
+            try:
+                d = json.load(open(p, encoding="utf-8"))
+                return d.get(key) if key else d
+            except Exception: return None
+        return None
+    evidence = _load(".evidence.json", "results")   # 논문 근거 1차 검수
+    images   = _load(".assets.json")                # 시각자료(추출·프롬프트·구매링크)
+    out = base + ".html"
+    open(out,"w",encoding="utf-8").write(render(pkg, _meta(getattr(a,"hospital","boncure")), evidence=evidence, images=images))
     print("대시보드 →", out)
 
 def cmd_all(a):

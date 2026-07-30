@@ -129,6 +129,10 @@ def run(hospital, pkg_path):
     print("─" * 64)
     print(f"요약: 자료확인 {n_ok} · 외부논문 {n_ext} · 전체 {len(results)}")
     print("ℹ️ 자동 1차 검수입니다. 인용 실재·수치 대조까지만 하며, 의학적 타당성·저작권·환자동의는 원장 최종 검수가 반드시 필요합니다.")
+    # 출처 cid → 원본 파일명(대시보드 표시용)
+    for r in results:
+        if r.get("source"):
+            r["source_name"] = os.path.basename(src.get(r["source"], r["source"]))
     # render/검수용 JSON 저장
     outp = os.path.splitext(pkg_path)[0] + ".evidence.json"
     json.dump({"results": results, "summary": {"ok": n_ok, "external": n_ext, "total": len(results)}},
