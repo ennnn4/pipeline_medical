@@ -3,7 +3,7 @@ LLM 러너 — Anthropic SDK 래퍼. 분류·KB·대본 단계가 공용으로 �
 모델 claude-opus-5, adaptive thinking, effort high, 긴 출력은 streaming.
 키: ANTHROPIC_API_KEY 또는 `ant auth login` 프로파일.
 """
-import os, json
+import os, json, re
 
 MODEL = os.environ.get("BONCURE_MODEL", "claude-opus-5")
 
@@ -12,15 +12,23 @@ def _client():
     return anthropic.Anthropic()
 
 def _extract_json(text):
-    """```json 펜스/앞뒤 잡소리를 걷어내고 첫 {...} 블록을 파싱."""
-    t = text.strip()
+    """```json 펜스/앞뒤 잡소리를 걷어내고 첫 {...} 블록을 파싱. 후행 콤마 등 흔한 오류 보정."""
+    t = (text or "").strip()
     if "```" in t:
         m = re.search(r"```(?:json)?\s*(.*?)```", t, re.S)
-        if m: t = m.group(1).strip()
+        if m:
+            t = m.group(1).strip()
     s, e = t.find("{"), t.rfind("}")
-    if s != -1 and e != -1:
-        t = t[s:e+1]
-    return json.loads(t)
+    if s != -1 and e > s:
+        t = t[s:e + 1]
+    try:
+        return json.loads(t)
+    except json.JSONDecodeError:
+        t2 = re.sub(r",(\s*[}\]])", r"\1", t)          # 후행 콤마 제거
+        try:
+            return json.loads(t2)
+        except json.JSONDecodeError as err:
+            raise ValueError(f"LLM 응답을 JSON으로 파싱하지 못했습니다: {err}. 앞부분: {t[:200]}")
 
 def generate(system, user, parse_json=False, max_tokens=32000, effort="high"):
     """

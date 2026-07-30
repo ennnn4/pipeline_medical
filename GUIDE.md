@@ -59,7 +59,7 @@ python run.py init --hospital seoul-ortho
 `data/seoul-ortho/raw/` 폴더에 그 병원 자료를 **그냥 다 넣는다**:
 - 원장 설문지·인터뷰, 논문 PDF, 강의자료(PPT/PDF), 기존 영상 대본, 홈페이지·블로그 텍스트 등
 - **zip 통째로** 넣어도 알아서 풀어서 읽음
-- 지원: pdf · docx · txt · hwp(pyhwp 설치 시) · zip
+- 지원: pdf · docx · **pptx** · txt · md · csv · hwp(pyhwp 설치 시) · zip
 
 ## 4. 돌리기 (한 줄)
 

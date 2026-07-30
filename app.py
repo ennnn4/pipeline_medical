@@ -5,14 +5,38 @@ boncure-pipeline 로컬 웹앱 — 터미널·yaml 없이 브라우저로 쓴다
 기능: 병원 만들기(폼) · 자료 업로드(끌어놓기) · 대본 생성(버튼) · 대시보드 보기.
 엔진(run.py)을 그대로 호출하므로 파이프라인 로직은 재사용.
 """
-import os, sys, glob, subprocess, threading, re, io, secrets
+import os, sys, glob, subprocess, threading, re, io, secrets, sqlite3, datetime
 from flask import Flask, request, redirect, send_file, abort, render_template_string, jsonify, url_for, session
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 PY = sys.executable
 app = Flask(__name__)
-JOBS = {}   # hospital -> {"running":bool, "log":str, "done":bool}
+app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024   # 업로드 최대 500MB
+
+# ── 작업 상태: 메모리 대신 sqlite에 저장(재시작해도 유지) ──────────
+DB = os.path.join(ROOT, "data", "jobs.db")
+def _db():
+    os.makedirs(os.path.dirname(DB), exist_ok=True)
+    c = sqlite3.connect(DB, timeout=10)
+    c.execute("CREATE TABLE IF NOT EXISTS jobs (hospital TEXT PRIMARY KEY, topic TEXT, status TEXT, ok INTEGER, log TEXT, updated TEXT)")
+    return c
+def job_get(h):
+    c = _db(); r = c.execute("SELECT hospital,topic,status,ok,log,updated FROM jobs WHERE hospital=?", (h,)).fetchone(); c.close()
+    if not r: return {"running": False, "status": "idle", "ok": None, "log": "", "topic": ""}
+    return {"hospital": r[0], "topic": r[1], "status": r[2], "ok": (None if r[3] is None else bool(r[3])),
+            "log": r[4] or "", "updated": r[5], "running": r[2] == "running"}
+def job_set(h, topic=None, status=None, ok=None, log=None):
+    cur = job_get(h)
+    c = _db()
+    c.execute("REPLACE INTO jobs (hospital,topic,status,ok,log,updated) VALUES (?,?,?,?,?,?)",
+              (h, topic if topic is not None else cur.get("topic",""),
+               status if status is not None else cur.get("status","idle"),
+               (1 if ok else 0) if ok is not None else (None if cur.get("ok") is None else (1 if cur["ok"] else 0)),
+               log if log is not None else cur.get("log",""),
+               datetime.datetime.now().isoformat(timespec="seconds")))
+    c.commit(); c.close()
 
 # ── 인증(세션) ──────────────────────────────────────────────
 _sk = os.path.join(ROOT, ".secret")
@@ -23,16 +47,18 @@ def load_users():
     import yaml
     p = _users_path()
     if not os.path.exists(p):
-        pw = "boncure1234"
+        # 기본 비밀번호: ADMIN_PW 환경변수 우선, 없으면 매번 랜덤 생성(고정 기본값 금지)
+        pw = os.environ.get("ADMIN_PW") or secrets.token_urlsafe(9)
         yaml.safe_dump({"admin": generate_password_hash(pw)}, open(p,"w",encoding="utf-8"))
-        print(f"\n[초기 로그인 계정] 아이디: admin  비밀번호: {pw}   (config/users.yaml)\n")
+        print(f"\n[초기 로그인 계정] 아이디: admin  비밀번호: {pw}"
+              f"\n(config/users.yaml 에 해시로 저장됨. 바꾸려면 이 파일 지우고 ADMIN_PW 환경변수 지정 후 재시작)\n")
     return yaml.safe_load(open(p, encoding="utf-8")) or {}
 def save_users(u):
     import yaml; yaml.safe_dump(u, open(_users_path(),"w",encoding="utf-8"), allow_unicode=True)
 
 @app.before_request
 def _guard():
-    if request.endpoint in ("login","signup","static"): return
+    if request.endpoint in ("login","static"): return   # 공개 회원가입 없음
     if not session.get("user"): return redirect("/login")
 
 def _yaml():
@@ -193,7 +219,7 @@ def hospital(h):
     misswarn = (f'<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 필수 자료가 빠졌어요: {", ".join(miss)} — 넣을수록 대본 품질이 올라가요.</div>' if miss else "")
     outlist = "".join(f'<div class=out><span>{os.path.basename(o)[:-5]}</span><a class=btn href="/h/{h}/view/{os.path.basename(o)}" target=_blank>대시보드 열기</a></div>' for o in outs) or '<div class=muted>아직 만든 대본이 없어요.</div>'
     dz_opts = "".join(f'<button type=button class="btn dz" onclick="setTopic(this)">{d}</button>' for d in diseases)
-    job = JOBS.get(h, {})
+    job = job_get(h)
     running = job.get("running")
     body = f"""
     <div class=row style="justify-content:space-between">
@@ -244,51 +270,63 @@ def hospital(h):
     // 생성 상태 폴링
     var HID=%HID%;
     function poll(){fetch('/h/'+HID+'/status').then(r=>r.json()).then(j=>{
-      var s=document.getElementById('status');
-      if(j.running){document.getElementById('runbtn').disabled=true;document.getElementById('runbtn').textContent='생성 중…';
+      var s=document.getElementById('status'),btn=document.getElementById('runbtn');
+      if(j.status==='running'){btn.disabled=true;btn.textContent='생성 중…';
         s.innerHTML='<div class=log>'+ (j.log||'시작하는 중…') +'</div>';setTimeout(poll,1500);}
-      else if(j.done){s.innerHTML='<div class=log>'+(j.log||'')+'</div><p class=muted>완료! 아래 결과물에서 확인하세요.</p>';
-        document.getElementById('runbtn').disabled=false;document.getElementById('runbtn').textContent='대본 만들기';
-        setTimeout(()=>location.reload(),1200);}
+      else if(j.status==='done'){
+        var msg = j.ok
+          ? '<p style="color:var(--good);font-weight:800;margin-top:10px">✅ 완료 — 아래 결과물에서 확인하세요.</p>'
+          : '<p style="color:var(--danger);font-weight:800;margin-top:10px">⛔ 실패 — 의료광고 검수 불통과 또는 오류입니다. 로그를 확인하세요. (검수 통과 전엔 결과가 게시되지 않습니다)</p>';
+        s.innerHTML='<div class=log>'+(j.log||'')+'</div>'+msg;
+        btn.disabled=false;btn.textContent='대본 만들기';
+        if(j.ok)setTimeout(()=>location.reload(),1500);}
     })}
     document.getElementById('runf').addEventListener('submit',function(){setTimeout(poll,1500)});
     if(%RUNNING%)poll();
     </script>""".replace("%HID%", '"'+h+'"').replace("%RUNNING%", "true" if running else "false")
     return page(name, body, script)
 
+ALLOWED_EXT = {".pdf", ".docx", ".txt", ".md", ".csv", ".hwp", ".pptx", ".zip"}
+
 @app.route("/h/<h>/upload", methods=["POST"])
 def upload(h):
     if not os.path.exists(cfg_path(h)): abort(404)
+    dest = data_dir(h, "raw")
     for f in request.files.getlist("files"):
-        if f and f.filename:
-            f.save(os.path.join(data_dir(h,"raw"), os.path.basename(f.filename)))
+        if not f or not f.filename: continue
+        name = secure_filename(f.filename)   # 경로탈출·위험문자 제거
+        if not name: continue
+        if os.path.splitext(name)[1].lower() not in ALLOWED_EXT: continue  # 허용 확장자만
+        f.save(os.path.join(dest, name))
     return redirect(f"/h/{h}")
 
 def _run_pipeline(h, topic):
-    JOBS[h] = {"running": True, "log": "", "done": False}
+    job_set(h, topic=topic, status="running", ok=None, log="")
+    log = ""; ok = False
     try:
         proc = subprocess.Popen([PY, "run.py", "all", "--hospital", h, "--topic", topic],
                                 cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                env={**os.environ, "PYTHONUTF8":"1"})
+                                env={**os.environ, "PYTHONUTF8": "1"})
         for line in io.TextIOWrapper(proc.stdout, encoding="utf-8", errors="ignore"):
-            JOBS[h]["log"] += line
+            log += line
+            job_set(h, log=log)
         proc.wait()
+        ok = (proc.returncode == 0)   # run.py all 이 검수 실패/오류 시 non-zero 반환
     except Exception as e:
-        JOBS[h]["log"] += f"\n[오류] {e}"
-    JOBS[h]["running"] = False
-    JOBS[h]["done"] = True
+        log += f"\n[오류] {e}"
+    job_set(h, status="done", ok=ok, log=log)
 
 @app.route("/h/<h>/run", methods=["POST"])
 def run_ep(h):
     if not os.path.exists(cfg_path(h)): abort(404)
-    topic = request.form.get("topic","").strip() or "주제"
-    if not JOBS.get(h,{}).get("running"):
+    topic = (request.form.get("topic","").strip() or "주제")[:60]
+    if not job_get(h).get("running"):
         threading.Thread(target=_run_pipeline, args=(h, topic), daemon=True).start()
     return redirect(f"/h/{h}")
 
 @app.route("/h/<h>/status")
 def status(h):
-    return jsonify(JOBS.get(h, {"running": False, "done": False, "log": ""}))
+    return jsonify(job_get(h))
 
 @app.route("/h/<h>/view/<path:fn>")
 def view(h, fn):
@@ -297,22 +335,21 @@ def view(h, fn):
     return send_file(p)
 
 LOGIN = """<!doctype html><html lang=ko><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
-<title>{{heading}} · 병원 유튜브 대본 생성기</title><style>{{css}}</style></head><body>
+<title>로그인 · 병원 유튜브 대본 생성기</title><style>{{css}}</style></head><body>
 <div class=auth><div class=authcard>
   <div class=logo><span class=dot style="width:44px;height:44px;border-radius:13px;font-size:23px">본</span></div>
-  <h1>{{heading}}</h1><p class=s>병원 유튜브 대본 생성기</p>
+  <h1>로그인</h1><p class=s>병원 유튜브 대본 생성기</p>
   {{ err_html|safe }}
   <form method=post>
     <label>아이디</label><input type=text name=username placeholder="아이디" required autofocus>
     <label>비밀번호</label><input type=password name=password placeholder="비밀번호" required>
-    <button class="btn pri" type=submit>{{btn}}</button>
+    <button class="btn pri" type=submit>로그인</button>
   </form>
-  <div class=authfoot>{{ foot|safe }}</div>
 </div></div></body></html>"""
 
-def _login_page(heading, btn, foot, err=""):
+def _login_page(err=""):
     err_html = f'<div class=err>{err}</div>' if err else ""
-    return render_template_string(LOGIN, css=CSS, heading=heading, btn=btn, foot=foot, err_html=err_html)
+    return render_template_string(LOGIN, css=CSS, err_html=err_html)
 
 @app.route("/login", methods=["GET","POST"])
 def login():
@@ -325,20 +362,10 @@ def login():
         if u in users and check_password_hash(users[u], p):
             session["user"] = u; return redirect("/")
         err = "아이디 또는 비밀번호가 올바르지 않습니다."
-    return _login_page("로그인", "로그인", '<a href="/signup">계정 만들기</a>', err)
+    return _login_page(err)
 
-@app.route("/signup", methods=["GET","POST"])
-def signup():
-    err = ""
-    if request.method == "POST":
-        u = request.form.get("username","").strip(); p = request.form.get("password","")
-        users = load_users()
-        if not u or not p: err = "아이디와 비밀번호를 입력하세요."
-        elif u in users: err = "이미 있는 아이디입니다."
-        else:
-            users[u] = generate_password_hash(p); save_users(users)
-            session["user"] = u; return redirect("/")
-    return _login_page("계정 만들기", "가입하고 시작하기", '<a href="/login">로그인으로</a>', err)
+# 공개 회원가입 없음. 팀원 계정은 관리자가 config/users.yaml 에 직접 추가하거나
+# ADMIN_PW 환경변수로 관리(비밀번호는 해시로만 저장).
 
 @app.route("/logout")
 def logout():

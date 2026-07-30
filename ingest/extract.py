@@ -51,15 +51,46 @@ def pdf_text(path):
 
 def hwp_text(path):
     # 선택: pyhwp 설치 시 hwp5txt 사용
-    r = subprocess.run(["hwp5txt", path], capture_output=True)
-    if r.returncode == 0:
-        return r.stdout.decode("utf-8", "ignore")
+    try:
+        r = subprocess.run(["hwp5txt", path], capture_output=True)
+        if r.returncode == 0:
+            return r.stdout.decode("utf-8", "ignore")
+    except FileNotFoundError:
+        pass
     return "[hwp 추출 불가 — 'pip install pyhwp' 후 재시도]"
+
+def pptx_text(path):
+    """pptx(강의자료) 텍스트 추출 — 슬라이드 XML의 <a:t> 조각을 이어붙임."""
+    try:
+        z = zipfile.ZipFile(path)
+        slides = sorted([n for n in z.namelist() if re.match(r"ppt/slides/slide\d+\.xml$", n)],
+                        key=lambda n: int(re.search(r"(\d+)", n).group(1)))
+        parts = []
+        for s in slides:
+            xml = z.read(s).decode("utf-8", "ignore")
+            parts.append(" ".join(re.findall(r"<a:t>(.*?)</a:t>", xml, re.S)))
+        t = "\n".join(parts)
+        for a, b in [("&amp;","&"),("&lt;","<"),("&gt;",">"),("&quot;",'"'),("&#39;","'")]:
+            t = t.replace(a, b)
+        return t
+    except Exception as e:
+        return f"[pptx 파싱 실패: {e}]"
+
+def _safe_extractall(zf, dst):
+    """zip-slip 방지: 각 멤버가 dst 밖으로 나가면 무시."""
+    dst = os.path.abspath(dst)
+    for m in zf.namelist():
+        target = os.path.abspath(os.path.join(dst, m))
+        if target != dst and not target.startswith(dst + os.sep):
+            print(f"  ! 위험 경로 무시(zip): {m}")
+            continue
+        zf.extract(m, dst)
 
 def extract_one(path):
     ext = path.lower().rsplit(".", 1)[-1]
     if ext == "pdf":  return pdf_text(path)
     if ext == "docx": return docx_text(path)
+    if ext == "pptx": return pptx_text(path)
     if ext == "hwp":  return hwp_text(path)
     if ext in ("txt", "md", "csv"):
         return io.open(path, encoding="utf-8", errors="ignore").read()
@@ -74,7 +105,7 @@ def gather_files(raw_dir):
             dst = p[:-4] + "_unzipped"
             os.makedirs(dst, exist_ok=True)
             try:
-                zipfile.ZipFile(p).extractall(dst)
+                _safe_extractall(zipfile.ZipFile(p), dst)
             except Exception as e:
                 print(f"  ! zip 풀기 실패 {os.path.basename(p)}: {e}")
             for q in glob.glob(dst + "/**/*", recursive=True):

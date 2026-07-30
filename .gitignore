@@ -2,6 +2,7 @@
 data/*/raw/*
 data/*/corpus/*
 data/*/kb/*
+data/*.db
 !data/**/.gitkeep
 # 비밀
 .env

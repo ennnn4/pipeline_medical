@@ -51,28 +51,27 @@ def cmd_classify(a):
     json.dump(res, open(os.path.join(_kbdir(h),"classify.json"),"w",encoding="utf-8"), ensure_ascii=False, indent=1)
     print(f"분류 완료 → data/{h}/kb/classify.json")
 
-def cmd_kb(a):
-    from llm.runner import generate, load_prompt, corpus_text
-    h = a.hospital
-    cfg = _cfg(h); kb = _kbdir(h)
-    # 원장 프로파일
+def _gen_kb(kb, name, prompt, user, force):
+    """KB 파일 하나 생성. 이미 있으면 건너뜀(force면 재생성). — 전체 재생성 방지."""
+    from llm.runner import generate, load_prompt
+    p = os.path.join(kb, name)
+    if os.path.exists(p) and not force:
+        print(f"  · {name} 이미 있음 — 건너뜀"); return
+    res = generate(load_prompt(prompt), user, parse_json=True)
+    json.dump(res, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    print(f"  · {name} 생성")
+
+def cmd_kb(a, topics=None, force=None):
+    from llm.runner import corpus_text
+    h = a.hospital; cfg = _cfg(h); kb = _kbdir(h)
+    force = force if force is not None else getattr(a, "force", False)
+    dzs = topics if topics is not None else (cfg.get("diseases") or [])
     prof_src = corpus_text(h, categories=["원장설문지","원장인터뷰","기존유튜브대본","원장강의자료"]) or corpus_text(h)
-    prof = generate(load_prompt("profile.md"), "자료:\n"+prof_src, parse_json=True)
-    json.dump(prof, open(os.path.join(kb,"profile.json"),"w",encoding="utf-8"), ensure_ascii=False, indent=1)
-    print(f"원장 프로파일 → data/{h}/kb/profile.json")
-    # 논문 근거표
-    ev = generate(load_prompt("evidence.md"), "논문:\n"+(corpus_text(h, categories=["논문"]) or ""), parse_json=True)
-    json.dump(ev, open(os.path.join(kb,"evidence.json"),"w",encoding="utf-8"), ensure_ascii=False, indent=1)
-    print(f"논문 근거표 → data/{h}/kb/evidence.json")
-    # 경쟁 분석
-    comp = generate(load_prompt("competitor.md"), "경쟁자막:\n"+(corpus_text(h, categories=["경쟁유튜브"]) or ""), parse_json=True)
-    json.dump(comp, open(os.path.join(kb,"competitor.json"),"w",encoding="utf-8"), ensure_ascii=False, indent=1)
-    print(f"경쟁 분석 → data/{h}/kb/competitor.json")
-    # 질환별 KB
-    for dz in (cfg.get("diseases") or []):
-        d = generate(load_prompt("disease.md"), f"질환: {dz}\n자료:\n"+corpus_text(h), parse_json=True)
-        json.dump(d, open(os.path.join(kb,f"disease_{dz}.json"),"w",encoding="utf-8"), ensure_ascii=False, indent=1)
-        print(f"질환 KB({dz}) → data/{h}/kb/disease_{dz}.json")
+    _gen_kb(kb, "profile.json",    "profile.md",    "자료:\n"+prof_src, force)
+    _gen_kb(kb, "evidence.json",   "evidence.md",   "논문:\n"+(corpus_text(h, categories=["논문"]) or ""), force)
+    _gen_kb(kb, "competitor.json", "competitor.md", "경쟁자막:\n"+(corpus_text(h, categories=["경쟁유튜브"]) or ""), force)
+    for dz in dzs:
+        _gen_kb(kb, f"disease_{dz}.json", "disease.md", f"질환: {dz}\n자료:\n"+corpus_text(h), force)
 
 def cmd_episode(a):
     from llm.runner import generate, load_prompt
@@ -123,10 +122,19 @@ def cmd_render(a):
     print("대시보드 →", out)
 
 def cmd_all(a):
-    cmd_ingest(a); cmd_classify(a); cmd_kb(a); cmd_episode(a)
+    cmd_ingest(a)
+    # KB: 없는 것만 생성(매번 전체 재생성 안 함). 이 주제의 질환 KB가 없으면 그것만 추가.
+    print("[KB 준비] 없는 것만 생성합니다 (전체 갱신은 python run.py kb --force)")
+    cmd_kb(a, topics=[a.topic])
+    cmd_episode(a)
     pkg = os.path.join(_outdir(a.hospital), f"{a.topic}_package.json")
     a.file = pkg; a.edition = a.topic
-    cmd_compliance(a); cmd_render(a)
+    rc = cmd_compliance(a)
+    if rc != 0:
+        # 의료광고 검수 불통과 → 결과 게시(렌더) 차단
+        print("\n⛔ 의료광고 검수 불통과 — 대시보드 렌더/게시를 차단합니다. 위 위반을 수정 후 재생성하세요.")
+        sys.exit(1)
+    cmd_render(a)
 
 def cmd_init(a):
     """새 병원 온보딩: config 템플릿 + 병원별 data 폴더 생성."""
@@ -151,15 +159,19 @@ def main():
     ap = argparse.ArgumentParser(description="boncure-pipeline")
     sub = ap.add_subparsers(dest="cmd", required=True)
     ini = sub.add_parser("init"); ini.add_argument("--hospital", required=True)
-    for c in ["ingest","classify","kb"]:
+    for c in ["ingest","classify"]:
         s = sub.add_parser(c); s.add_argument("--hospital", default="boncure")
+    kbp = sub.add_parser("kb"); kbp.add_argument("--hospital", default="boncure")
+    kbp.add_argument("--force", action="store_true", help="이미 있는 KB도 다시 생성")
     e = sub.add_parser("episode"); e.add_argument("--hospital", default="boncure"); e.add_argument("--topic", required=True)
     cp = sub.add_parser("compliance"); cp.add_argument("--file", required=True); cp.add_argument("--edition", default=None)
     r = sub.add_parser("render"); r.add_argument("--file", required=True); r.add_argument("--hospital", default="boncure")
     al = sub.add_parser("all"); al.add_argument("--hospital", default="boncure"); al.add_argument("--topic", required=True)
     a = ap.parse_args()
-    {"init":cmd_init,"ingest":cmd_ingest,"classify":cmd_classify,"kb":cmd_kb,"episode":cmd_episode,
-     "compliance":cmd_compliance,"render":cmd_render,"all":cmd_all}[a.cmd](a)
+    rc = {"init":cmd_init,"ingest":cmd_ingest,"classify":cmd_classify,"kb":cmd_kb,"episode":cmd_episode,
+          "compliance":cmd_compliance,"render":cmd_render,"all":cmd_all}[a.cmd](a)
+    if isinstance(rc, int) and rc != 0:
+        sys.exit(rc)   # 검수 FAIL 등은 non-zero로 종료(자동화·게이트용)
 
 if __name__ == "__main__":
     main()
