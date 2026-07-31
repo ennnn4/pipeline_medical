@@ -21,15 +21,23 @@ ROLES = [
     "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='platform_admin') THEN CREATE ROLE platform_admin NOLOGIN; END IF; END $$;",
 ]
 
+# review_links는 토큰으로만 조회(부트스트랩) → app_rw에 직접 SELECT 미부여(직접 SELECT는 42501).
+#   관리(생성·폐기)는 INSERT/UPDATE/DELETE, 조회는 exchange_review_token()(SECURITY DEFINER)로만.
+NO_SELECT_TABLES = {"review_links"}
+
 def tenant_policy(tbl):
-    return [
+    grant = "INSERT, UPDATE, DELETE" if tbl in NO_SELECT_TABLES else "SELECT, INSERT, UPDATE, DELETE"
+    out = [
         f"ALTER TABLE {tbl} ENABLE ROW LEVEL SECURITY;",
         f"ALTER TABLE {tbl} FORCE ROW LEVEL SECURITY;",
         f"DROP POLICY IF EXISTS p_tenant ON {tbl};",
         f"CREATE POLICY p_tenant ON {tbl} TO app_rw "
         f"USING (hospital_id = {TENANT_SETTING}) WITH CHECK (hospital_id = {TENANT_SETTING});",
-        f"GRANT SELECT, INSERT, UPDATE, DELETE ON {tbl} TO app_rw;",
     ]
+    if tbl in NO_SELECT_TABLES:
+        out.append(f"REVOKE SELECT ON {tbl} FROM app_rw;")   # 명시적 SELECT 박탈(직접조회=42501)
+    out.append(f"GRANT {grant} ON {tbl} TO app_rw;")
+    return out
 
 # style_rules: 작업별 정책
 STYLE_RULES_POLICY = [
