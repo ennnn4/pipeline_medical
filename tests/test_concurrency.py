@@ -64,19 +64,21 @@ def test_advisory_lock_blocks_content_during_approval(owner, rw, tenant):
     h, m = tenant["hospital_id"], tenant["membership_id"]
     with owner.begin() as cn:
         _, v = new_version(cn, h)
-    release = threading.Event(); inserted = threading.Event()
+    acquired = threading.Event(); release = threading.Event(); inserted = threading.Event()
     def holder():                                          # lock 보유(승인 함수와 동일 키)
         with tenant_conn(rw, h, m) as cn:
             cn.execute(text("select pg_advisory_xact_lock(hashtextextended(:v,0))"), {"v": str(v)})
-            release.wait(5)                                # 릴리스 전까지 트랜잭션 유지
+            acquired.set()                                 # 획득 신호(sleep 추정 대신 결정적)
+            release.wait(5)
     def inserter():                                        # 콘텐츠 INSERT(트리거가 같은 lock 시도 → 대기)
         with tenant_conn(rw, h, m) as cn:
             cn.execute(text("insert into script_blocks(id,hospital_id,version_id,stable_block_key,order_index,block_type,text) "
                             "values(:b,:h,:v,'k9',9,'explanation','x')"), {"b": uuid.uuid4(), "h": h, "v": v})
         inserted.set()
-    th = threading.Thread(target=holder); th.start(); time.sleep(0.4)   # holder가 lock 획득 보장
-    ti = threading.Thread(target=inserter); ti.start(); time.sleep(0.6)
-    assert not inserted.is_set()                           # ← lock 때문에 INSERT가 아직 대기 중
+    th = threading.Thread(target=holder); th.start()
+    assert acquired.wait(5)                                # holder가 lock 획득 확인 후
+    ti = threading.Thread(target=inserter); ti.start()
+    assert not inserted.wait(0.6)                          # ← lock 때문에 INSERT가 대기 중
     release.set(); ti.join(5); th.join(5)
     assert inserted.is_set()                               # holder 릴리스 후 INSERT 진행
 

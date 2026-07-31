@@ -29,6 +29,8 @@
 - membership_roles와 hospital_memberships의 직접 쓰기는 app_rw에서 금지한다.
 - 승인 요청에는 인증 user_id, membership_id, hospital_id, request_id를 감사 로그에 기록한다.
 - app_rw credential 노출 또는 서버 침해 시 승인자 사칭이 가능하다는 잔여 위험을 수용한다.
+- fn_approve_version은 애플리케이션에서 직접 raw SQL로 호출하지 않고, repositories.approve_version 경로로만 호출한다(advisory lock 하 hash 계산 보장).
+- 승인 HTTP endpoint 활성화 전 인증 user_id·request_id를 audit_events에 배선한다(현재는 hospital·actor·action·version·hash만 기록).
 
 별도 승인 서비스·서명 토큰은 다음 조건에서 재검토한다.
 - 외부 고객이 직접 DB에 접근하는 구조

@@ -85,6 +85,53 @@ def create_edited_version(conn, hospital_id, script_id, expected_current_version
         raise Conflict("CAS 실패")
     return new_v
 
+# ── 3단계: 블록 편집 오케스트레이션 ──
+def apply_block_edit(conn, hospital_id, script_id, expected_current_version_id, edits, category="tone"):
+    """블록 편집 → 새 immutable 버전(콘텐츠+CAS 단일TX) → 변경블록 재분할 → claim 재추출(unverified)
+    → 편집이력 기록 → 변경블록 compliance 재검사. 새 버전은 미승인(승인은 4단계 근거검증 후).
+    edits: {stable_block_key: new_text}. evidence 판정(direct/partial/inferred)은 절대 하지 않음(4단계)."""
+    import uuid as _uuid
+    from nlp.segment import segment, SEGMENTER_VERSION
+    from store.migrate import is_claim, claim_type_of
+    from compliance.rules import check as compliance_check
+
+    changed = {}
+    def content_fn(cn, h, new_v):
+        rows = cn.execute(text(
+            "select stable_block_key, order_index, block_type, scene, text, metadata "
+            "from script_blocks where hospital_id=:h and version_id=:pv order by order_index"),
+            {"h": h, "pv": expected_current_version_id}).all()
+        for r in rows:
+            key = r.stable_block_key
+            new_text = edits.get(key, r.text)
+            bid = _uuid.uuid4()
+            cn.execute(text("insert into script_blocks(id,hospital_id,version_id,stable_block_key,order_index,"
+                            "block_type,scene,text,metadata) values(:b,:h,:v,:k,:o,:bt,:sc,:tx,:md)"),
+                       {"b": bid, "h": h, "v": new_v, "k": key, "o": r.order_index, "bt": r.block_type,
+                        "sc": r.scene, "tx": new_text, "md": __import__("json").dumps(r.metadata or {})})
+            for si, (s0, s1, st) in enumerate(segment(new_text)):
+                sid = _uuid.uuid4()
+                cn.execute(text("insert into script_sentences(id,hospital_id,version_id,block_id,sentence_index,"
+                                "text,start_offset,end_offset,offset_unit,segmenter_version) "
+                                "values(:s,:h,:v,:b,:i,:tx,:a,:z,'codepoint',:sv)"),
+                           {"s": sid, "h": h, "v": new_v, "b": bid, "i": si, "tx": st, "a": s0, "z": s1, "sv": SEGMENTER_VERSION})
+                if key in edits and is_claim(st):          # 변경 블록만 재추출, 근거 assessment는 없음(승인 차단)
+                    cn.execute(text("insert into claims(id,hospital_id,version_id,sentence_id,claim_index,"
+                                    "claim_text,claim_type,detection_method) values(:c,:h,:v,:s,0,:tx,:ct,'llm')"),
+                               {"c": _uuid.uuid4(), "h": h, "v": new_v, "s": sid, "tx": st, "ct": claim_type_of(st)})
+            if key in edits:
+                changed[key] = (r.text, new_text)
+
+    new_v = create_edited_version(conn, hospital_id, script_id, expected_current_version_id, content_fn)
+    findings = {}
+    for key, (before, after) in changed.items():
+        conn.execute(text("insert into edits(id,hospital_id,script_id,from_version_id,to_version_id,stable_block_key,"
+                          "before_text,after_text,category) values(:i,:h,:s,:fv,:tv,:k,:bt,:at,:cat)"),
+                     {"i": _uuid.uuid4(), "h": hospital_id, "s": script_id, "fv": expected_current_version_id,
+                      "tv": new_v, "k": key, "bt": before, "at": after, "cat": category})
+        findings[key] = compliance_check(after)            # 변경 say 금지어 재검사
+    return {"version_id": new_v, "changed": list(changed), "compliance": findings}
+
 # ── 승인: fn_approve_version(승인자=세션 membership, 역할+게이트+UPDATE+audit) ──
 def approve_version(conn, hospital_id, version_id, policy_version):
     """승인자는 tenant_conn의 membership_id(세션 app.membership_id)로 결합 — 파라미터로 안 받음.
