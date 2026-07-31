@@ -5,7 +5,7 @@ boncure-pipeline 로컬 웹앱 — 터미널·yaml 없이 브라우저로 쓴다
 기능: 병원 만들기(폼) · 자료 업로드(끌어놓기) · 대본 생성(버튼) · 대시보드 보기.
 엔진(run.py)을 그대로 호출하므로 파이프라인 로직은 재사용.
 """
-import os, sys, glob, subprocess, threading, re, io, secrets, sqlite3, datetime
+import os, sys, glob, subprocess, threading, re, io, secrets, sqlite3, datetime, unicodedata
 from flask import Flask, request, redirect, send_file, abort, render_template_string, jsonify, url_for, session
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -295,16 +295,28 @@ def hospital(h):
 
 ALLOWED_EXT = {".pdf", ".docx", ".txt", ".md", ".csv", ".hwp", ".pptx", ".zip"}
 
+def safe_filename(fn):
+    """한글 보존 안전 파일명. werkzeug secure_filename은 비ASCII를 통째로 날려
+    '설문지.pdf'→'pdf'로 만들어 한글 자료가 유실됨. 경로탈출·제어문자만 제거하고 한글은 유지."""
+    fn = (fn or "").replace("\\", "/").split("/")[-1]     # 경로 제거(디렉터리 탈출 방지)
+    fn = unicodedata.normalize("NFC", fn)
+    fn = re.sub(r"[\x00-\x1f\x7f]", "", fn)               # 제어문자 제거
+    fn = fn.replace("/", "").strip().lstrip(".")          # 구분자·선행 점 제거
+    fn = re.sub(r"\.{2,}", ".", fn)                       # '..' 붕괴
+    return fn[:200]
+
 @app.route("/h/<h>/upload", methods=["POST"])
 def upload(h):
     if not os.path.exists(cfg_path(h)): abort(404)
     dest = data_dir(h, "raw")
+    saved = 0
     for f in request.files.getlist("files"):
         if not f or not f.filename: continue
-        name = secure_filename(f.filename)   # 경로탈출·위험문자 제거
+        name = safe_filename(f.filename)     # 한글 유지 + 경로탈출 방지
         if not name: continue
         if os.path.splitext(name)[1].lower() not in ALLOWED_EXT: continue  # 허용 확장자만
         f.save(os.path.join(dest, name))
+        saved += 1
     return redirect(f"/h/{h}")
 
 def _run_pipeline(h, topic, evidence=True):
