@@ -5,6 +5,11 @@ pyyaml>=6.0
 flask>=3.0          # 웹앱(app.py) — 로그인·업로드·버튼으로 대본 생성
 gunicorn>=21.0      # 배포용 WSGI 서버(Render 등). 로컬은 python app.py 그대로.
 pymupdf>=1.24      # 논문 PDF에서 그림 추출(시각자료). Docker에도 pip로 설치됨.
+# ── P0 데이터 계층(store/·alembic) ──
+sqlalchemy>=2.0    # ORM/Core 스키마·쿼리
+alembic>=1.13      # DB 마이그레이션(upgrade/downgrade)
+psycopg[binary]>=3.1   # 운영 PostgreSQL 드라이버(postgresql+psycopg://)
+pg8000>=1.31       # 로컬 테스트용 순수파이썬 드라이버(대체 dialect)
 # 유튜브 수집(선택)
 youtube-transcript-api>=0.6.2
 google-api-python-client>=2.0   # YouTube Data API (조회수·길이·게시일)

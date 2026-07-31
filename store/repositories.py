@@ -1,27 +1,38 @@
-"""런타임 리포지토리 — 동시편집 CAS, 마이그레이션 lease, 승인+audit(동일 TX), approval_stale, hash.
+"""런타임 리포지토리 — app_rw + RLS 경로용. 테넌트 함수는 'app.hospital_id가 설정된 Connection'을 받는다.
 
-assessment_set_hash 규격(결정적):
-  - UTF-8, canonical JSON(sort_keys, 공백없음 separators=(',',':'))
-  - claim_id 오름차순 정렬, **effective assessment만** 포함(승인에 실제 사용된 집합)
-  - 필드: support_level, verification_status, medical_risk, assessment_kind  (override는 kind로 식별)
-  - 제외: created_at, 랜덤 UUID, rationale 등 비결정 필드
-  - domain prefix "boncure.v1:assessment_set:" 후 SHA-256 hex
-version_content_hash 규격: 블록을 order_index 순으로 {order,type,scene,text,label,tags} canonical → SHA-256.
-정책: stale = (미승인) 또는 (content/assessment_set/policy 해시 중 하나라도 저장값과 불일치).
+GPT 검토 반영:
+ - 테넌트 함수(create_edited_version, approve_version, is_stale)는 engine이 아니라 tenant_conn을 받음
+   → app_rw로 호출 시 RLS 아래에서 동작(owner 우회 아님).
+ - create_edited_version: 버전·approval_state·콘텐츠(블록/문장/claim)를 한 트랜잭션에 넣고 CAS를 '마지막'에.
+   → 중간 장애 시 current가 빈 버전을 가리키지 않음.
+ - 승인은 SECURITY DEFINER fn_approve_version 호출(역할검사 + 미검증/미지원 claim 게이트 + UPDATE + audit 원자).
+   버전 상태 직접 UPDATE 권한은 app_rw에서 봉쇄.
+ - 마이그레이션 lease/heartbeat는 owner/마이그레이션 role(BYPASSRLS)로 실행.
+
+assessment_set_hash 규격: docs/P4 §4. (source checksum/stable_claim_key 확장은 후속.)
 """
 import hashlib, json, uuid
+from contextlib import contextmanager
 from sqlalchemy import text
 
 class Conflict(Exception):
-    """동시성 충돌(HTTP 409 대응)."""
+    """동시성 충돌(HTTP 409)."""
 
 _PREFIX = "boncure.v1:"
+
+@contextmanager
+def tenant_conn(engine, hospital_id):
+    """app.hospital_id가 트랜잭션에 설정된 Connection. app_rw 경로 전용."""
+    with engine.connect() as conn:
+        with conn.begin():
+            conn.execute(text("select set_config('app.hospital_id', :h, true)"), {"h": str(hospital_id)})
+            yield conn
 
 def _sha(domain, obj):
     payload = _PREFIX + domain + ":" + json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
-# ── 해시 ─────────────────────────────────────────────
+# ── 해시(conn 기반) ─────────────────────────────────────
 def version_content_hash(conn, hospital_id, version_id):
     rows = conn.execute(text(
         "select order_index, block_type, scene, text, metadata from script_blocks "
@@ -40,65 +51,53 @@ def assessment_set_hash(conn, hospital_id, version_id):
               "risk": r.medical_risk, "kind": r.assessment_kind} for r in rows]
     return _sha("assessment_set", canon)
 
-# ── 승인(+audit 동일 TX) ─────────────────────────────
-def approve_version(engine, hospital_id, version_id, approver_membership_id, policy_version, _audit_fail=False):
-    with engine.begin() as conn:
-        ch = version_content_hash(conn, hospital_id, version_id)
-        ah = assessment_set_hash(conn, hospital_id, version_id)
-        conn.execute(text(
-            "update version_approval_states set status='approved', approver_membership_id=:a, "
-            "assessment_set_hash=:ah, version_content_hash=:ch, compliance_policy_version=:pv, "
-            "decided_at=now(), updated_at=now() where hospital_id=:h and version_id=:v"),
-            {"a": approver_membership_id, "ah": ah, "ch": ch, "pv": policy_version, "h": hospital_id, "v": version_id})
-        conn.execute(text(
-            "insert into audit_events(id,hospital_id,actor_membership_id,action,entity_type,entity_id,after_hash) "
-            "values(:i,:h,:a,'approval.approve','version',:v,:ah)"),
-            {"i": uuid.uuid4(), "h": hospital_id, "a": approver_membership_id, "v": version_id, "ah": ah})
-        if _audit_fail:
-            conn.execute(text("insert into audit_events(id,action) values(:i, null)"), {"i": uuid.uuid4()})  # NOT NULL 위반 → 전체 rollback
+# ── 편집: 콘텐츠 + current CAS 단일 트랜잭션(conn) ──────
+def create_edited_version(conn, hospital_id, script_id, expected_current_version_id, content_fn=None):
+    row = conn.execute(text(
+        "select current_version_id, "
+        "(select coalesce(max(version_no),0) from script_versions where hospital_id=:h and script_id=:s) as maxno "
+        "from scripts where id=:s and hospital_id=:h for update"),
+        {"h": hospital_id, "s": script_id}).first()
+    if row is None:
+        raise Conflict("script 없음(권한/컨텍스트 확인)")
+    if row.current_version_id != expected_current_version_id:
+        raise Conflict("current_version 변경됨(다른 편집 선반영)")
+    new_v = uuid.uuid4(); new_no = row.maxno + 1
+    conn.execute(text("insert into script_versions(id,hospital_id,script_id,parent_version_id,version_no,source) "
+                      "values(:v,:h,:s,:p,:n,'editor')"),
+                 {"v": new_v, "h": hospital_id, "s": script_id, "p": expected_current_version_id, "n": new_no})
+    conn.execute(text("insert into version_approval_states(id,hospital_id,version_id,status) values(:i,:h,:v,'none')"),
+                 {"i": uuid.uuid4(), "h": hospital_id, "v": new_v})
+    if content_fn:
+        content_fn(conn, hospital_id, new_v)          # 블록·문장·claim(동일 TX) — CAS 이전
+    r = conn.execute(text("update scripts set current_version_id=:nv, updated_at=now() "
+                          "where id=:s and hospital_id=:h and current_version_id is not distinct from :exp"),
+                     {"nv": new_v, "s": script_id, "h": hospital_id, "exp": expected_current_version_id})
+    if r.rowcount != 1:
+        raise Conflict("CAS 실패")
+    return new_v
+
+# ── 승인: fn_approve_version(역할+게이트+UPDATE+audit) ──
+def approve_version(conn, hospital_id, version_id, approver_membership_id, policy_version):
+    ch = version_content_hash(conn, hospital_id, version_id)
+    ah = assessment_set_hash(conn, hospital_id, version_id)
+    conn.execute(text("select fn_approve_version(:h,:v,:a,:p,:ch,:ah)"),
+                 {"h": hospital_id, "v": version_id, "a": approver_membership_id,
+                  "p": policy_version, "ch": ch, "ah": ah})
     return {"content_hash": ch, "assessment_set_hash": ah}
 
-def is_stale(engine, hospital_id, version_id, policy_version):
-    with engine.connect() as conn:
-        st = conn.execute(text(
-            "select status, version_content_hash, assessment_set_hash, compliance_policy_version "
-            "from version_approval_states where hospital_id=:h and version_id=:v"),
-            {"h": hospital_id, "v": version_id}).first()
-        if not st or st.status != "approved":
-            return True                                  # 미승인 = 출력 차단
-        ch = version_content_hash(conn, hospital_id, version_id)
-        ah = assessment_set_hash(conn, hospital_id, version_id)
-        return not (st.version_content_hash == ch and st.assessment_set_hash == ah
-                    and st.compliance_policy_version == policy_version)
+def is_stale(conn, hospital_id, version_id, policy_version):
+    st = conn.execute(text(
+        "select status, version_content_hash, assessment_set_hash, compliance_policy_version "
+        "from version_approval_states where hospital_id=:h and version_id=:v"),
+        {"h": hospital_id, "v": version_id}).first()
+    if not st or st.status != "approved":
+        return True
+    return not (st.version_content_hash == version_content_hash(conn, hospital_id, version_id)
+                and st.assessment_set_hash == assessment_set_hash(conn, hospital_id, version_id)
+                and st.compliance_policy_version == policy_version)
 
-# ── 동시 편집: current_version compare-and-swap ──────
-def create_edited_version(engine, hospital_id, script_id, expected_current_version_id):
-    with engine.begin() as conn:
-        row = conn.execute(text(
-            "select current_version_id, "
-            "(select coalesce(max(version_no),0) from script_versions where hospital_id=:h and script_id=:s) as maxno "
-            "from scripts where id=:s and hospital_id=:h for update"),
-            {"h": hospital_id, "s": script_id}).first()
-        if row is None:
-            raise Conflict("script 없음")
-        if row.current_version_id != expected_current_version_id:
-            raise Conflict("current_version 변경됨(다른 편집 선반영)")
-        new_v = uuid.uuid4(); new_no = row.maxno + 1
-        conn.execute(text(
-            "insert into script_versions(id,hospital_id,script_id,parent_version_id,version_no,source) "
-            "values(:v,:h,:s,:p,:n,'editor')"),
-            {"v": new_v, "h": hospital_id, "s": script_id, "p": expected_current_version_id, "n": new_no})
-        conn.execute(text("insert into version_approval_states(id,hospital_id,version_id,status) values(:i,:h,:v,'none')"),
-                     {"i": uuid.uuid4(), "h": hospital_id, "v": new_v})
-        r = conn.execute(text(
-            "update scripts set current_version_id=:nv, updated_at=now() "
-            "where id=:s and hospital_id=:h and current_version_id is not distinct from :exp"),
-            {"nv": new_v, "s": script_id, "h": hospital_id, "exp": expected_current_version_id})
-        if r.rowcount != 1:
-            raise Conflict("CAS 실패")
-        return new_v
-
-# ── 마이그레이션 lease(SKIP LOCKED 원자 획득) ────────
+# ── 마이그레이션 lease — owner/마이그레이션 role(BYPASSRLS)로 실행 ──
 def acquire_lease(engine, worker_id, ttl_sec=300):
     with engine.begin() as conn:
         row = conn.execute(text(
@@ -116,6 +115,8 @@ def heartbeat(engine, import_id, lease_token, ttl_sec=300):
     with engine.begin() as conn:
         r = conn.execute(text(
             "update migration_imports set last_heartbeat_at=now(), "
-            "lease_expires_at=now()+(:ttl||' seconds')::interval where id=:i and lease_token=:t"),
+            "lease_expires_at=now()+(:ttl||' seconds')::interval "
+            "where id=:i and lease_token=:t and status='pending' "  # fencing: pending + 토큰 일치만
+            "and (lease_expires_at is null or lease_expires_at > now())"),
             {"i": import_id, "t": lease_token, "ttl": str(ttl_sec)})
-        return r.rowcount    # 1=해당 워커, 0=토큰 불일치
+        return r.rowcount

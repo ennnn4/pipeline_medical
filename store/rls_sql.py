@@ -119,6 +119,62 @@ AUTH_GRANTS = [
     # app_rw는 users 직접 권한 없음(GRANT 안 함)
 ]
 
+# 불변 테이블: app_rw는 INSERT/SELECT만(UPDATE/DELETE 봉쇄) — '주석뿐 불변'을 DB 권한으로 강제
+IMMUTABLE_TABLES = ["script_versions", "script_blocks", "script_sentences", "claims",
+                    "claim_assessments", "source_versions"]
+
+LOCKDOWN = (
+    [f"REVOKE UPDATE, DELETE ON {t} FROM app_rw;" for t in IMMUTABLE_TABLES]
+    # 승인 상태: 직접 UPDATE/DELETE 봉쇄 → 승인/거절은 fn_* 함수로만
+    + ["REVOKE UPDATE, DELETE ON version_approval_states FROM app_rw;"]
+)
+
+# 승인: 역할검사 + 미검증/미지원 claim 게이트 + 상태UPDATE + audit(동일 함수=원자). SECURITY DEFINER.
+FN_APPROVE = """
+CREATE OR REPLACE FUNCTION public.fn_approve_version(
+  p_hospital uuid, p_version uuid, p_approver uuid, p_policy text, p_content_hash text, p_assessment_hash text)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.membership_roles
+                 WHERE hospital_id=p_hospital AND membership_id=p_approver AND role IN ('approver','admin')) THEN
+    RAISE EXCEPTION 'approver role required' USING ERRCODE='42501';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.claims c
+             WHERE c.hospital_id=p_hospital AND c.version_id=p_version
+               AND NOT EXISTS (SELECT 1 FROM public.claim_effective_assessment e
+                               WHERE e.hospital_id=c.hospital_id AND e.claim_id=c.id
+                                 AND e.verification_status='verified'
+                                 AND e.support_level NOT IN ('unverified','unsupported'))) THEN
+    RAISE EXCEPTION 'unverified or unsupported claim blocks approval' USING ERRCODE='23514';
+  END IF;
+  UPDATE public.version_approval_states SET status='approved', approver_membership_id=p_approver,
+    assessment_set_hash=p_assessment_hash, version_content_hash=p_content_hash,
+    compliance_policy_version=p_policy, decided_at=now(), updated_at=now()
+  WHERE hospital_id=p_hospital AND version_id=p_version;
+  IF NOT FOUND THEN RAISE EXCEPTION 'approval state row not found' USING ERRCODE='P0002'; END IF;
+  INSERT INTO public.audit_events(id,hospital_id,actor_membership_id,action,entity_type,entity_id,after_hash)
+    VALUES(gen_random_uuid(), p_hospital, p_approver, 'approval.approve', 'version', p_version, p_assessment_hash);
+END $$;
+"""
+FN_REVOKE_LINK = """
+CREATE OR REPLACE FUNCTION public.fn_revoke_review_link(p_hospital uuid, p_link_id uuid)
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+DECLARE n integer;
+BEGIN
+  UPDATE public.review_links SET revoked_at=now() WHERE hospital_id=p_hospital AND id=p_link_id AND revoked_at IS NULL;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  UPDATE public.review_sessions SET revoked_at=now()
+    WHERE hospital_id=p_hospital AND review_link_id=p_link_id AND revoked_at IS NULL;   -- 링크 폐기 시 세션도 폐기
+  RETURN n;
+END $$;
+"""
+FN_GRANTS = [
+    "REVOKE ALL ON FUNCTION public.fn_approve_version(uuid,uuid,uuid,text,text,text) FROM PUBLIC;",
+    "GRANT EXECUTE ON FUNCTION public.fn_approve_version(uuid,uuid,uuid,text,text,text) TO app_rw;",
+    "REVOKE ALL ON FUNCTION public.fn_revoke_review_link(uuid,uuid) FROM PUBLIC;",
+    "GRANT EXECUTE ON FUNCTION public.fn_revoke_review_link(uuid,uuid) TO app_rw;",
+]
+
 def statements():
     """실행할 SQL 문장 순서 목록."""
     sts = list(ROLES)
@@ -132,6 +188,9 @@ def statements():
     sts.append(AUTH_FNS); sts += AUTH_GRANTS
     # 참조 무결성 검사용 최소 조회 권한(FK가 걸린 부모 테이블 등은 정책으로 통제)
     sts.append("GRANT SELECT ON hospitals TO app_rw;")
+    # 불변 테이블/승인 상태 DML 봉쇄 + 승인·폐기 전용 함수(blanket GRANT 이후에 REVOKE)
+    sts += LOCKDOWN
+    sts.append(FN_APPROVE); sts.append(FN_REVOKE_LINK); sts += FN_GRANTS
     return sts
 
 def apply(engine):

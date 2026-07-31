@@ -1,28 +1,50 @@
-"""동시 편집 CAS(current_version) + 마이그레이션 lease(SKIP LOCKED)."""
-import uuid, pytest
+"""동시 편집 CAS(app_rw + 진짜 병렬) + 마이그레이션 lease(owner/BYPASSRLS)."""
+import uuid, threading, pytest
 from sqlalchemy import text
 from store.testkit import new_version
 from store import repositories as repo
+from store.repositories import tenant_conn, create_edited_version, Conflict
 
-def _script_with_current(owner, h):
+def _script_current(owner, h):
     with owner.begin() as cn:
         sc, v = new_version(cn, h)
         cn.execute(text("update scripts set current_version_id=:v where id=:s"), {"v": v, "s": sc})
     return sc, v
 
-def test_cas_only_one_wins(owner, tenant):
-    h = tenant["hospital_id"]; sc, v1 = _script_with_current(owner, h)
-    v2 = repo.create_edited_version(owner, h, sc, expected_current_version_id=v1)   # 편집자 A
+def test_cas_via_app_rw_sequential(owner, rw, tenant):
+    h = tenant["hospital_id"]; sc, v1 = _script_current(owner, h)
+    with tenant_conn(rw, h) as cn:
+        v2 = create_edited_version(cn, h, sc, v1)          # app_rw + RLS 경로에서 실제 동작
     assert v2 != v1
-    with pytest.raises(repo.Conflict):                                             # 편집자 B(구버전 기대)
-        repo.create_edited_version(owner, h, sc, expected_current_version_id=v1)
-    # current는 v2, version_no 중복 없음
-    with owner.connect() as cn:
-        cur = cn.execute(text("select current_version_id from scripts where id=:s"), {"s": sc}).scalar()
-        nos = [r[0] for r in cn.execute(text("select version_no from script_versions where script_id=:s order by version_no"), {"s": sc})]
-    assert cur == v2 and nos == [1, 2]
+    with pytest.raises(Conflict):
+        with tenant_conn(rw, h) as cn:
+            create_edited_version(cn, h, sc, v1)           # 구버전 기대 → Conflict
 
-def _pending_import(owner, h):
+def test_cas_true_concurrency(owner, rw, tenant):
+    h = tenant["hospital_id"]; sc, v1 = _script_current(owner, h)
+    results = []; barrier = threading.Barrier(2)
+    def worker():
+        barrier.wait()                                     # 동시에 진입
+        try:
+            with tenant_conn(rw, h) as cn:
+                nv = create_edited_version(cn, h, sc, v1)
+            results.append(("ok", nv))
+        except Conflict:
+            results.append(("conflict", None))
+        except Exception as e:
+            results.append(("error", repr(e)))
+    ts = [threading.Thread(target=worker) for _ in range(2)]
+    for t in ts: t.start()
+    for t in ts: t.join()
+    oks = [r for r in results if r[0] == "ok"]
+    conflicts = [r for r in results if r[0] == "conflict"]
+    assert len(oks) == 1 and len(conflicts) == 1, results  # 정확히 한 명만 성공
+    with owner.connect() as cn:
+        nos = [r[0] for r in cn.execute(text("select version_no from script_versions where script_id=:s order by version_no"), {"s": sc})]
+    assert nos == [1, 2]                                    # version_no 중복 없음
+
+# ── lease (owner/마이그레이션 role) ──
+def _pending(owner, h):
     iid = uuid.uuid4()
     with owner.begin() as cn:
         cn.execute(text("insert into migration_imports(id,hospital_id,source_uri,raw_sha256,migration_version,status) "
@@ -30,22 +52,20 @@ def _pending_import(owner, h):
     return iid
 
 def test_lease_acquire_and_contention(owner, tenant):
-    h = tenant["hospital_id"]; iid = _pending_import(owner, h)
-    a = repo.acquire_lease(owner, "worker-1")
-    assert a and a["id"] == iid                       # 워커1 획득
-    b = repo.acquire_lease(owner, "worker-2")
-    assert b is None                                  # 워커2는 못 얻음(활성 lease)
+    iid = _pending(owner, tenant["hospital_id"])
+    a = repo.acquire_lease(owner, "w1"); assert a and a["id"] == iid
+    assert repo.acquire_lease(owner, "w2") is None          # 활성 lease → 못 얻음
 
-def test_heartbeat_token_match(owner, tenant):
-    h = tenant["hospital_id"]; iid = _pending_import(owner, h)
-    a = repo.acquire_lease(owner, "worker-1")
-    assert repo.heartbeat(owner, iid, uuid.uuid4()) == 0        # 다른 토큰 거부
-    assert repo.heartbeat(owner, iid, a["lease_token"]) == 1    # 정당 워커
+def test_heartbeat_fencing(owner, tenant):
+    iid = _pending(owner, tenant["hospital_id"])
+    a = repo.acquire_lease(owner, "w1")
+    assert repo.heartbeat(owner, iid, uuid.uuid4()) == 0    # 다른 토큰 거부
+    assert repo.heartbeat(owner, iid, a["lease_token"]) == 1
 
 def test_expired_lease_takeover(owner, tenant):
-    h = tenant["hospital_id"]; iid = _pending_import(owner, h)
-    repo.acquire_lease(owner, "worker-1", ttl_sec=1)
-    with owner.begin() as cn:                          # lease 만료 강제
+    iid = _pending(owner, tenant["hospital_id"])
+    a = repo.acquire_lease(owner, "w1")
+    with owner.begin() as cn:
         cn.execute(text("update migration_imports set lease_expires_at=now()-interval '1 min' where id=:i"), {"i": iid})
-    b = repo.acquire_lease(owner, "worker-2")
-    assert b and b["id"] == iid                        # 만료 lease 인계
+    b = repo.acquire_lease(owner, "w2"); assert b and b["id"] == iid
+    assert repo.heartbeat(owner, iid, a["lease_token"]) == 0  # 만료된 옛 워커 fencing(인계 후 쓰기 거부)
