@@ -205,8 +205,9 @@ BEGIN
     compliance_policy_version=p_policy, decided_at=now(), updated_at=now()
   WHERE hospital_id=p_hospital AND version_id=p_version;
   IF NOT FOUND THEN RAISE EXCEPTION 'approval state row not found' USING ERRCODE='P0002'; END IF;
-  INSERT INTO public.audit_events(id,hospital_id,actor_membership_id,action,entity_type,entity_id,after_hash)
-    VALUES(gen_random_uuid(), p_hospital, v_approver, 'approval.approve', 'version', p_version, p_assessment_hash);
+  INSERT INTO public.audit_events(id,hospital_id,actor_membership_id,action,entity_type,entity_id,after_hash,request_id)
+    VALUES(gen_random_uuid(), p_hospital, v_approver, 'approval.approve', 'version', p_version, p_assessment_hash,
+           NULLIF(current_setting('app.request_id', true), ''));   -- 감사 추적(SDR 요건)
 END $$;
 """
 def _active_role_check(alias_h, alias_m, roles):
