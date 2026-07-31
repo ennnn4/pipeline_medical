@@ -73,8 +73,11 @@ def create_edited_version(conn, hospital_id, script_id, expected_current_version
                  {"v": new_v, "h": hospital_id, "s": script_id, "p": expected_current_version_id, "n": new_no})
     conn.execute(text("insert into version_approval_states(id,hospital_id,version_id,status) values(:i,:h,:v,'none')"),
                  {"i": uuid.uuid4(), "h": hospital_id, "v": new_v})
-    if content_fn:
-        content_fn(conn, hospital_id, new_v)          # 블록·문장·claim(동일 TX) — CAS 이전
+    content_fn(conn, hospital_id, new_v)              # 블록·문장·claim(동일 TX) — CAS 이전
+    cnt = conn.execute(text("select count(*) from script_blocks where hospital_id=:h and version_id=:v"),
+                       {"h": hospital_id, "v": new_v}).scalar()
+    if cnt == 0:
+        raise ValueError("content_fn이 블록을 만들지 않음 — 빈 버전 방지(#no-op 차단)")
     r = conn.execute(text("update scripts set current_version_id=:nv, updated_at=now() "
                           "where id=:s and hospital_id=:h and current_version_id is not distinct from :exp"),
                      {"nv": new_v, "s": script_id, "h": hospital_id, "exp": expected_current_version_id})
@@ -84,7 +87,9 @@ def create_edited_version(conn, hospital_id, script_id, expected_current_version
 
 # ── 승인: fn_approve_version(승인자=세션 membership, 역할+게이트+UPDATE+audit) ──
 def approve_version(conn, hospital_id, version_id, policy_version):
-    """승인자는 tenant_conn의 membership_id(세션 app.membership_id)로 결합 — 파라미터로 안 받음."""
+    """승인자는 tenant_conn의 membership_id(세션 app.membership_id)로 결합 — 파라미터로 안 받음.
+    version advisory lock을 먼저 잡아 hash 계산~승인 사이 콘텐츠/assessment INSERT 직렬화(TOCTOU 차단)."""
+    conn.execute(text("select pg_advisory_xact_lock(hashtextextended(:v, 0))"), {"v": str(version_id)})
     ch = version_content_hash(conn, hospital_id, version_id)
     ah = assessment_set_hash(conn, hospital_id, version_id)
     conn.execute(text("select fn_approve_version(:h,:v,:p,:ch,:ah)"),

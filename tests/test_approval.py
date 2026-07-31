@@ -53,6 +53,17 @@ def test_approver_impersonation_blocked(owner, rw, tenant):
             approve_version(cn, h, v, "policy-1")
     assert sqlstate(ei.value) == "42501"
 
+def test_archived_membership_cannot_approve(owner, rw, tenant):
+    """퇴사/archived된 membership은 role이 남아도 승인 불가(active 검사)."""
+    h, m = tenant["hospital_id"], tenant["membership_id"]
+    _, v, b, c = _version_with_claim(owner, h); _grant(owner, h, m, "approver")
+    with owner.begin() as cn:
+        cn.execute(text("update hospital_memberships set archived_at=now() where id=:m"), {"m": m})
+    with pytest.raises(Exception) as ei:
+        with tenant_conn(rw, h, m) as cn:
+            approve_version(cn, h, v, "policy-1")
+    assert sqlstate(ei.value) == "42501"
+
 def test_approve_blocks_unverified_claim(owner, rw, tenant):
     h, m = tenant["hospital_id"], tenant["membership_id"]
     _, v, b, c = _version_with_claim(owner, h, support="unverified", kind="migration"); _grant(owner, h, m, "approver")

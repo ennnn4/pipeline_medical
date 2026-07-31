@@ -1,8 +1,9 @@
 """동시 편집 CAS(app_rw + 진짜 병렬) + 마이그레이션 lease(owner/BYPASSRLS)."""
-import uuid, threading, pytest
+import uuid, threading, time, pytest
 from sqlalchemy import text
 from store.testkit import new_version, new_block
 from store import repositories as repo
+import store.rls_sql as R
 from store.repositories import tenant_conn, create_edited_version, Conflict
 
 def _content(cn, h, v):                                     # 편집 콘텐츠(블록 1개) — 빈 버전 방지(#5)
@@ -19,6 +20,12 @@ def test_create_edited_requires_content(owner, rw, tenant):
     with pytest.raises(ValueError):
         with tenant_conn(rw, h) as cn:
             create_edited_version(cn, h, sc, v1, None)     # 콘텐츠 없으면 거부
+
+def test_create_edited_rejects_noop_content(owner, rw, tenant):
+    h = tenant["hospital_id"]; sc, v1 = _script_current(owner, h)
+    with pytest.raises(ValueError):                        # no-op content_fn → 블록 0 → 거부
+        with tenant_conn(rw, h) as cn:
+            create_edited_version(cn, h, sc, v1, lambda cn, h, v: None)
 
 def test_cas_via_app_rw_sequential(owner, rw, tenant):
     h = tenant["hospital_id"]; sc, v1 = _script_current(owner, h)
@@ -51,6 +58,31 @@ def test_cas_true_concurrency(owner, rw, tenant):
     with owner.connect() as cn:
         nos = [r[0] for r in cn.execute(text("select version_no from script_versions where script_id=:s order by version_no"), {"s": sc})]
     assert nos == [1, 2]                                    # version_no 중복 없음
+
+def test_advisory_lock_blocks_content_during_approval(owner, rw, tenant):
+    """한 트랜잭션이 version advisory lock 보유 중 다른 트랜잭션의 콘텐츠 INSERT가 '실제로 대기'함을 증명."""
+    h, m = tenant["hospital_id"], tenant["membership_id"]
+    with owner.begin() as cn:
+        _, v = new_version(cn, h)
+    release = threading.Event(); inserted = threading.Event()
+    def holder():                                          # lock 보유(승인 함수와 동일 키)
+        with tenant_conn(rw, h, m) as cn:
+            cn.execute(text("select pg_advisory_xact_lock(hashtextextended(:v,0))"), {"v": str(v)})
+            release.wait(5)                                # 릴리스 전까지 트랜잭션 유지
+    def inserter():                                        # 콘텐츠 INSERT(트리거가 같은 lock 시도 → 대기)
+        with tenant_conn(rw, h, m) as cn:
+            cn.execute(text("insert into script_blocks(id,hospital_id,version_id,stable_block_key,order_index,block_type,text) "
+                            "values(:b,:h,:v,'k9',9,'explanation','x')"), {"b": uuid.uuid4(), "h": h, "v": v})
+        inserted.set()
+    th = threading.Thread(target=holder); th.start(); time.sleep(0.4)   # holder가 lock 획득 보장
+    ti = threading.Thread(target=inserter); ti.start(); time.sleep(0.6)
+    assert not inserted.is_set()                           # ← lock 때문에 INSERT가 아직 대기 중
+    release.set(); ti.join(5); th.join(5)
+    assert inserted.is_set()                               # holder 릴리스 후 INSERT 진행
+
+def test_rls_apply_idempotent(owner):
+    """rls_sql.apply()를 두 번 실행해도 실패하지 않음(정책/함수/트리거 재적용)."""
+    R.apply(owner)                                         # base_url이 이미 1회, 여기서 2회째
 
 # ── lease (owner/마이그레이션 role) ──
 def _pending(owner, h):

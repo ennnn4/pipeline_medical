@@ -31,6 +31,31 @@ def test_app_rw_cannot_insert_into_approved_version(owner, rw, tenant):
                             "values(:b,:h,:v,'k2',9,'explanation','x')"), {"b": uuid.uuid4(), "h": h, "v": v})
     assert sqlstate(ei.value) == "2BP01"                  # frozen 트리거
 
+def _seed_link(owner, h):
+    import hashlib
+    with owner.begin() as cn:
+        _, v = new_version(cn, h)
+        lid = uuid.uuid4()
+        cn.execute(text("insert into review_links(id,hospital_id,version_id,token_hash,permission,expires_at) "
+                        "values(:i,:h,:v,:t,'comment_only',now()+interval '1 day')"),
+                   {"i": lid, "h": h, "v": v, "t": hashlib.sha256(lid.bytes).digest()})
+    return lid
+
+@pytest.mark.parametrize("sql", [
+    "update review_links set revoked_at=now() where id=:l",
+    "delete from review_links where id=:l",
+    "insert into review_links(id,hospital_id,version_id,token_hash,permission,expires_at) "
+    "select gen_random_uuid(),:h,version_id,'\\x00','approve',now()+interval '1 day' from review_links where id=:l",
+])
+def test_app_rw_cannot_direct_dml_review_links(owner, rw, tenant, sql):
+    """review_links 직접 UPDATE/DELETE/INSERT(approve 링크 재생성 포함) 차단 → 함수로만."""
+    h, m = tenant["hospital_id"], tenant["membership_id"]
+    lid = _seed_link(owner, h)
+    with pytest.raises(Exception) as ei:
+        with tenant_conn(rw, h, m) as cn:
+            cn.execute(text(sql), {"l": lid, "h": h})
+    assert sqlstate(ei.value) == "42501"
+
 def test_app_rw_cannot_update_immutable_block(owner, rw, tenant):
     h = tenant["hospital_id"]
     with owner.begin() as cn:

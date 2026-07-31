@@ -127,24 +127,38 @@ LOCKDOWN = (
     [f"REVOKE UPDATE, DELETE ON {t} FROM app_rw;" for t in IMMUTABLE_TABLES]
     # 승인 상태: 직접 UPDATE/DELETE 봉쇄. INSERT는 status='none'만(승인 행 위조 방지) → 승인은 fn_approve만.
     + ["REVOKE UPDATE, DELETE ON version_approval_states FROM app_rw;",
+       # 멱등: 먼저 전부 DROP 후 재생성
        "DROP POLICY IF EXISTS p_tenant ON version_approval_states;",
+       "DROP POLICY IF EXISTS vas_sel ON version_approval_states;",
+       "DROP POLICY IF EXISTS vas_ins ON version_approval_states;",
        f"CREATE POLICY vas_sel ON version_approval_states FOR SELECT TO app_rw USING (hospital_id = {TENANT_SETTING});",
        f"CREATE POLICY vas_ins ON version_approval_states FOR INSERT TO app_rw "
        f"WITH CHECK (hospital_id = {TENANT_SETTING} AND status = 'none');",
        # #1 권한 상승 차단: app_rw는 역할·멤버십을 스스로 부여/변경 불가(관리자/owner 전용)
        "REVOKE INSERT, UPDATE, DELETE ON membership_roles FROM app_rw;",
-       "REVOKE INSERT, UPDATE, DELETE ON hospital_memberships FROM app_rw;"]
+       "REVOKE INSERT, UPDATE, DELETE ON hospital_memberships FROM app_rw;",
+       # review_links: 직접 DML 전면 봉쇄 → 생성/폐기/조회는 전용 함수(fn_create/revoke/exchange)로만
+       "REVOKE INSERT, UPDATE, DELETE ON review_links FROM app_rw;"]
 )
 
-# #4 승인된 버전의 콘텐츠(블록/문장/claim) 사후 추가 차단(불변 우회 방지). claim_assessments는 재검토용이라 허용.
+# #4 승인 버전 콘텐츠 동결 + advisory lock으로 승인과 직렬화(race 차단). claim_assessments는 재검토용 허용(lock만).
 TRIGGER_FROZEN = """
 CREATE OR REPLACE FUNCTION public.fn_reject_if_version_approved() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
 BEGIN
+  PERFORM pg_advisory_xact_lock(hashtextextended(NEW.version_id::text, 0));   -- 승인과 동일 lock → TOCTOU 차단
   IF EXISTS (SELECT 1 FROM public.version_approval_states s
              WHERE s.hospital_id=NEW.hospital_id AND s.version_id=NEW.version_id AND s.status='approved') THEN
     RAISE EXCEPTION 'approved version content is frozen' USING ERRCODE='2BP01';
   END IF;
+  RETURN NEW;
+END $$;
+CREATE OR REPLACE FUNCTION public.fn_lock_version_of_claim() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+DECLARE v uuid;
+BEGIN
+  SELECT c.version_id INTO v FROM public.claims c WHERE c.id=NEW.claim_id AND c.hospital_id=NEW.hospital_id;
+  IF v IS NOT NULL THEN PERFORM pg_advisory_xact_lock(hashtextextended(v::text, 0)); END IF;  -- 승인 hash와 직렬화
   RETURN NEW;
 END $$;
 """
@@ -152,6 +166,9 @@ TRIGGERS = [
     f"DROP TRIGGER IF EXISTS trg_frozen ON {t};"
     f"CREATE TRIGGER trg_frozen BEFORE INSERT ON {t} FOR EACH ROW EXECUTE FUNCTION public.fn_reject_if_version_approved();"
     for t in ("script_blocks", "script_sentences", "claims")
+] + [
+    "DROP TRIGGER IF EXISTS trg_lock_assessment ON claim_assessments;"
+    "CREATE TRIGGER trg_lock_assessment BEFORE INSERT ON claim_assessments FOR EACH ROW EXECUTE FUNCTION public.fn_lock_version_of_claim();"
 ]
 
 # 승인: 역할검사 + 미검증/미지원 claim 게이트 + 상태UPDATE + audit(동일 함수=원자). SECURITY DEFINER.
@@ -161,15 +178,19 @@ CREATE OR REPLACE FUNCTION public.fn_approve_version(
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
 DECLARE v_approver uuid; v_hospital uuid;
 BEGIN
-  -- 승인자는 파라미터 신뢰 금지 → 세션 컨텍스트(앱이 인증된 membership으로 설정)에 결합
   v_approver := NULLIF(current_setting('app.membership_id', true), '')::uuid;
   v_hospital := NULLIF(current_setting('app.hospital_id', true), '')::uuid;
   IF v_approver IS NULL OR v_hospital IS NULL OR v_hospital <> p_hospital THEN
     RAISE EXCEPTION 'session identity required / hospital mismatch' USING ERRCODE='42501';
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM public.membership_roles
-                 WHERE hospital_id=p_hospital AND membership_id=v_approver AND role IN ('approver','admin')) THEN
-    RAISE EXCEPTION 'approver role required' USING ERRCODE='42501';
+  -- 동시성 직렬화: 승인·콘텐츠 INSERT·assessment INSERT가 같은 version lock을 공유(race 차단)
+  PERFORM pg_advisory_xact_lock(hashtextextended(p_version::text, 0));
+  -- active membership + approver 역할(퇴사/archived 제외)
+  IF NOT EXISTS (SELECT 1 FROM public.hospital_memberships hm JOIN public.membership_roles mr
+                 ON mr.hospital_id=hm.hospital_id AND mr.membership_id=hm.id
+                 WHERE hm.hospital_id=p_hospital AND hm.id=v_approver AND hm.archived_at IS NULL
+                   AND mr.role IN ('approver','admin')) THEN
+    RAISE EXCEPTION 'active approver role required' USING ERRCODE='42501';
   END IF;
   IF EXISTS (SELECT 1 FROM public.claims c
              WHERE c.hospital_id=p_hospital AND c.version_id=p_version
@@ -188,6 +209,11 @@ BEGIN
     VALUES(gen_random_uuid(), p_hospital, v_approver, 'approval.approve', 'version', p_version, p_assessment_hash);
 END $$;
 """
+def _active_role_check(alias_h, alias_m, roles):
+    return (f"NOT EXISTS (SELECT 1 FROM public.hospital_memberships hm JOIN public.membership_roles mr "
+            f"ON mr.hospital_id=hm.hospital_id AND mr.membership_id=hm.id "
+            f"WHERE hm.hospital_id={alias_h} AND hm.id={alias_m} AND hm.archived_at IS NULL AND mr.role IN ({roles}))")
+
 FN_REVOKE_LINK = """
 CREATE OR REPLACE FUNCTION public.fn_revoke_review_link(p_link_id uuid)
 RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
@@ -197,14 +223,32 @@ BEGIN
   v_member   := NULLIF(current_setting('app.membership_id', true), '')::uuid;
   IF v_hospital IS NULL OR v_member IS NULL THEN
     RAISE EXCEPTION 'session identity required' USING ERRCODE='42501'; END IF;
-  IF NOT EXISTS (SELECT 1 FROM public.membership_roles
-                 WHERE hospital_id=v_hospital AND membership_id=v_member AND role IN ('editor','approver','admin')) THEN
-    RAISE EXCEPTION 'role required to revoke link' USING ERRCODE='42501'; END IF;
+  IF """ + _active_role_check("v_hospital", "v_member", "'editor','approver','admin'") + """ THEN
+    RAISE EXCEPTION 'active role required to revoke link' USING ERRCODE='42501'; END IF;
   UPDATE public.review_links SET revoked_at=now() WHERE hospital_id=v_hospital AND id=p_link_id AND revoked_at IS NULL;
   GET DIAGNOSTICS n = ROW_COUNT;
   UPDATE public.review_sessions SET revoked_at=now()
     WHERE hospital_id=v_hospital AND review_link_id=p_link_id AND revoked_at IS NULL;   -- 링크 폐기 시 세션도 폐기
   RETURN n;
+END $$;
+"""
+# review_links 직접 DML 봉쇄 → 생성도 전용 함수로만(comment_only만; approve 링크 재생성 차단)
+FN_CREATE_LINK = """
+CREATE OR REPLACE FUNCTION public.fn_create_review_link(p_version uuid, p_token_hash bytea, p_reviewer text, p_expires timestamptz)
+RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+DECLARE v_hospital uuid; v_member uuid; v_id uuid;
+BEGIN
+  v_hospital := NULLIF(current_setting('app.hospital_id', true), '')::uuid;
+  v_member   := NULLIF(current_setting('app.membership_id', true), '')::uuid;
+  IF v_hospital IS NULL OR v_member IS NULL THEN RAISE EXCEPTION 'session identity required' USING ERRCODE='42501'; END IF;
+  IF """ + _active_role_check("v_hospital", "v_member", "'editor','approver','admin'") + """ THEN
+    RAISE EXCEPTION 'active role required to create link' USING ERRCODE='42501'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.script_versions WHERE hospital_id=v_hospital AND id=p_version) THEN
+    RAISE EXCEPTION 'version not in hospital' USING ERRCODE='42501'; END IF;
+  v_id := gen_random_uuid();
+  INSERT INTO public.review_links(id,hospital_id,version_id,token_hash,reviewer_name,permission,created_by_membership_id,expires_at)
+    VALUES(v_id, v_hospital, p_version, p_token_hash, p_reviewer, 'comment_only', v_member, p_expires);
+  RETURN v_id;
 END $$;
 """
 FN_GRANTS = [
@@ -214,6 +258,8 @@ FN_GRANTS = [
     "GRANT EXECUTE ON FUNCTION public.fn_approve_version(uuid,uuid,text,text,text) TO app_rw;",
     "REVOKE ALL ON FUNCTION public.fn_revoke_review_link(uuid) FROM PUBLIC;",
     "GRANT EXECUTE ON FUNCTION public.fn_revoke_review_link(uuid) TO app_rw;",
+    "REVOKE ALL ON FUNCTION public.fn_create_review_link(uuid,bytea,text,timestamptz) FROM PUBLIC;",
+    "GRANT EXECUTE ON FUNCTION public.fn_create_review_link(uuid,bytea,text,timestamptz) TO app_rw;",
 ]
 
 def statements():
@@ -231,7 +277,7 @@ def statements():
     sts.append("GRANT SELECT ON hospitals TO app_rw;")
     # 불변 테이블/승인 상태 DML 봉쇄 + 승인·폐기 전용 함수(blanket GRANT 이후에 REVOKE)
     sts += LOCKDOWN
-    sts.append(FN_APPROVE); sts.append(FN_REVOKE_LINK); sts += FN_GRANTS
+    sts.append(FN_APPROVE); sts.append(FN_REVOKE_LINK); sts.append(FN_CREATE_LINK); sts += FN_GRANTS
     sts.append(TRIGGER_FROZEN); sts += TRIGGERS      # 승인 버전 콘텐츠 동결 트리거
     return sts
 
