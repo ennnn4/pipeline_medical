@@ -118,7 +118,7 @@ def apply_block_edit(conn, hospital_id, script_id, expected_current_version_id, 
                                 "text,start_offset,end_offset,offset_unit,segmenter_version) "
                                 "values(:s,:h,:v,:b,:i,:tx,:a,:z,'codepoint',:sv)"),
                            {"s": sid, "h": h, "v": new_v, "b": bid, "i": si, "tx": st, "a": s0, "z": s1, "sv": SEGMENTER_VERSION})
-                if key in edits and is_claim(st):          # 변경 블록만 재추출, 근거 assessment는 없음(승인 차단)
+                if is_claim(st):                            # 모든 블록의 의학주장을 재추출(unverified) — 어떤 claim도 게이트 탈출 못함
                     cn.execute(text("insert into claims(id,hospital_id,version_id,sentence_id,claim_index,"
                                     "claim_text,claim_type,detection_method) values(:c,:h,:v,:s,0,:tx,:ct,'llm')"),
                                {"c": _uuid.uuid4(), "h": h, "v": new_v, "s": sid, "tx": st, "ct": claim_type_of(st)})

@@ -116,7 +116,10 @@ AUTH_GRANTS = [
     "REVOKE ALL ON FUNCTION public.get_current_user(uuid) FROM PUBLIC;",
     "GRANT EXECUTE ON FUNCTION public.lookup_user_for_login(text) TO app_auth;",
     "GRANT EXECUTE ON FUNCTION public.get_current_user(uuid) TO app_auth;",
-    # app_rw는 users 직접 권한 없음(GRANT 안 함)
+    # 앱서버 인증 경로(SDR상 app_rw=서버 신뢰): 특정 email/id의 최소 필드만 반환하는 함수만 EXECUTE.
+    # users 테이블 직접 SELECT는 여전히 없음(전체 조회 불가).
+    "GRANT EXECUTE ON FUNCTION public.lookup_user_for_login(text) TO app_rw;",
+    "GRANT EXECUTE ON FUNCTION public.get_current_user(uuid) TO app_rw;",
 ]
 
 # 불변 테이블: app_rw는 INSERT/SELECT만(UPDATE/DELETE 봉쇄) — '주석뿐 불변'을 DB 권한으로 강제
