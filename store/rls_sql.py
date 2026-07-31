@@ -266,9 +266,51 @@ FN_GRANTS = [
     "GRANT EXECUTE ON FUNCTION public.fn_create_review_link(uuid,bytea,text,timestamptz) TO app_rw;",
 ]
 
+# ── 관리형 PG(superuser 없음) 대응: SECURITY DEFINER 함수를 고정 NOLOGIN 역할 app_owner가 소유 ──
+# 로컬은 함수 소유자=postgres(superuser)라 definer가 RLS를 우회했지만, Render 등 관리형 PG는 superuser가
+# 없어 소유자(비-super)에 RLS가 그대로 적용 → 함수 내부 SELECT/UPDATE가 42501/빈결과로 실패.
+# 해법: 함수 소유자를 app_owner로 고정하고, FORCE-RLS 테이블에 app_owner용 허용 정책(p_definer)을 둔다.
+# app_owner는 NOLOGIN(클라이언트 접속 불가)이며 오직 신뢰된 함수의 definer로만 쓰인다.
+# 테넌트 정확성은 함수 로직(세션 app.membership_id/app.hospital_id + 병원 일치 + 역할검사)이 강제 → 보안 등가.
+DEFINER_ROLE = "app_owner"
+FORCE_RLS_TABLES = list(TENANT_TABLES) + ["style_rules"]
+
+def definer_policy(tbl):
+    return [
+        f"DROP POLICY IF EXISTS p_definer ON {tbl};",
+        f"CREATE POLICY p_definer ON {tbl} TO {DEFINER_ROLE} USING (true) WITH CHECK (true);",
+        f"GRANT SELECT, INSERT, UPDATE, DELETE ON {tbl} TO {DEFINER_ROLE};",
+    ]
+
+DEFINER_EXTRA_GRANTS = [
+    "GRANT USAGE ON SCHEMA public TO app_owner;",
+    "GRANT CREATE ON SCHEMA public TO app_owner;",                      # 함수 소유권 이전(ALTER FUNCTION OWNER) 전제: 스키마 CREATE
+    "GRANT INSERT ON audit_events TO app_owner;",                       # fn_approve 감사기록(TENANT_TABLES 밖)
+    "GRANT SELECT ON users TO app_owner;",                              # 인증 함수(lookup/get_current_user)
+    "GRANT SELECT ON public.claim_latest_assessment TO app_owner;",     # security_invoker view → 소유자 권한으로 조회
+    "GRANT SELECT ON public.claim_effective_assessment TO app_owner;",  # fn_approve 게이트가 참조
+]
+
+# 소유권 이전 대상(모든 SECURITY DEFINER 함수). ALTER FUNCTION OWNER는
+# 접속 owner가 app_owner 멤버십(PG16 CREATEROLE 자동부여)·또는 superuser면 가능.
+DEFINER_FUNCS = [
+    "public.exchange_review_token(bytea)",
+    "public.lookup_user_for_login(text)",
+    "public.get_current_user(uuid)",
+    "public.fn_reject_if_version_approved()",
+    "public.fn_lock_version_of_claim()",
+    "public.fn_approve_version(uuid,uuid,text,text,text)",
+    "public.fn_revoke_review_link(uuid)",
+    "public.fn_create_review_link(uuid,bytea,text,timestamptz)",
+]
+FN_OWNERSHIP = [f"ALTER FUNCTION {f} OWNER TO app_owner;" for f in DEFINER_FUNCS]
+
 def statements():
     """실행할 SQL 문장 순서 목록."""
     sts = list(ROLES)
+    # 접속 owner가 app_owner로 SET ROLE 가능해야 ALTER FUNCTION OWNER TO app_owner 실행 가능.
+    # PG16+는 CREATEROLE로 만든 역할이라도 SET 권한이 자동부여되지 않음. 생성자는 ADMIN 옵션 보유 → 자기에게 SET 부여.
+    sts.append("GRANT app_owner TO CURRENT_USER WITH SET TRUE;")
     sts.append("GRANT USAGE ON SCHEMA public TO app_rw;")
     sts.append("GRANT USAGE ON SCHEMA public TO app_auth;")
     for t in TENANT_TABLES:
@@ -283,6 +325,11 @@ def statements():
     sts += LOCKDOWN
     sts.append(FN_APPROVE); sts.append(FN_REVOKE_LINK); sts.append(FN_CREATE_LINK); sts += FN_GRANTS
     sts.append(TRIGGER_FROZEN); sts += TRIGGERS      # 승인 버전 콘텐츠 동결 트리거
+    # 관리형 PG 대응: definer 허용 정책 + app_owner grant + 함수 소유권 이전(모든 함수 생성 후)
+    for t in FORCE_RLS_TABLES:
+        sts += definer_policy(t)
+    sts += DEFINER_EXTRA_GRANTS
+    sts += FN_OWNERSHIP
     return sts
 
 def apply(engine):
