@@ -21,11 +21,14 @@ class Conflict(Exception):
 _PREFIX = "boncure.v1:"
 
 @contextmanager
-def tenant_conn(engine, hospital_id):
-    """app.hospital_id가 트랜잭션에 설정된 Connection. app_rw 경로 전용."""
+def tenant_conn(engine, hospital_id, membership_id=None):
+    """app.hospital_id(+선택 app.membership_id)가 트랜잭션에 설정된 Connection. app_rw 경로 전용.
+    membership_id는 인증된 사용자의 membership — 승인 등 신원 결합 작업에 함수가 세션에서 읽는다(파라미터 신뢰 금지)."""
     with engine.connect() as conn:
         with conn.begin():
             conn.execute(text("select set_config('app.hospital_id', :h, true)"), {"h": str(hospital_id)})
+            conn.execute(text("select set_config('app.membership_id', :m, true)"),
+                         {"m": str(membership_id) if membership_id else ""})
             yield conn
 
 def _sha(domain, obj):
@@ -77,13 +80,13 @@ def create_edited_version(conn, hospital_id, script_id, expected_current_version
         raise Conflict("CAS 실패")
     return new_v
 
-# ── 승인: fn_approve_version(역할+게이트+UPDATE+audit) ──
-def approve_version(conn, hospital_id, version_id, approver_membership_id, policy_version):
+# ── 승인: fn_approve_version(승인자=세션 membership, 역할+게이트+UPDATE+audit) ──
+def approve_version(conn, hospital_id, version_id, policy_version):
+    """승인자는 tenant_conn의 membership_id(세션 app.membership_id)로 결합 — 파라미터로 안 받음."""
     ch = version_content_hash(conn, hospital_id, version_id)
     ah = assessment_set_hash(conn, hospital_id, version_id)
-    conn.execute(text("select fn_approve_version(:h,:v,:a,:p,:ch,:ah)"),
-                 {"h": hospital_id, "v": version_id, "a": approver_membership_id,
-                  "p": policy_version, "ch": ch, "ah": ah})
+    conn.execute(text("select fn_approve_version(:h,:v,:p,:ch,:ah)"),
+                 {"h": hospital_id, "v": version_id, "p": policy_version, "ch": ch, "ah": ah})
     return {"content_hash": ch, "assessment_set_hash": ah}
 
 def is_stale(conn, hospital_id, version_id, policy_version):

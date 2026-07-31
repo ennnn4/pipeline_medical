@@ -132,11 +132,18 @@ LOCKDOWN = (
 # 승인: 역할검사 + 미검증/미지원 claim 게이트 + 상태UPDATE + audit(동일 함수=원자). SECURITY DEFINER.
 FN_APPROVE = """
 CREATE OR REPLACE FUNCTION public.fn_approve_version(
-  p_hospital uuid, p_version uuid, p_approver uuid, p_policy text, p_content_hash text, p_assessment_hash text)
+  p_hospital uuid, p_version uuid, p_policy text, p_content_hash text, p_assessment_hash text)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+DECLARE v_approver uuid; v_hospital uuid;
 BEGIN
+  -- 승인자는 파라미터 신뢰 금지 → 세션 컨텍스트(앱이 인증된 membership으로 설정)에 결합
+  v_approver := NULLIF(current_setting('app.membership_id', true), '')::uuid;
+  v_hospital := NULLIF(current_setting('app.hospital_id', true), '')::uuid;
+  IF v_approver IS NULL OR v_hospital IS NULL OR v_hospital <> p_hospital THEN
+    RAISE EXCEPTION 'session identity required / hospital mismatch' USING ERRCODE='42501';
+  END IF;
   IF NOT EXISTS (SELECT 1 FROM public.membership_roles
-                 WHERE hospital_id=p_hospital AND membership_id=p_approver AND role IN ('approver','admin')) THEN
+                 WHERE hospital_id=p_hospital AND membership_id=v_approver AND role IN ('approver','admin')) THEN
     RAISE EXCEPTION 'approver role required' USING ERRCODE='42501';
   END IF;
   IF EXISTS (SELECT 1 FROM public.claims c
@@ -147,13 +154,13 @@ BEGIN
                                  AND e.support_level NOT IN ('unverified','unsupported'))) THEN
     RAISE EXCEPTION 'unverified or unsupported claim blocks approval' USING ERRCODE='23514';
   END IF;
-  UPDATE public.version_approval_states SET status='approved', approver_membership_id=p_approver,
+  UPDATE public.version_approval_states SET status='approved', approver_membership_id=v_approver,
     assessment_set_hash=p_assessment_hash, version_content_hash=p_content_hash,
     compliance_policy_version=p_policy, decided_at=now(), updated_at=now()
   WHERE hospital_id=p_hospital AND version_id=p_version;
   IF NOT FOUND THEN RAISE EXCEPTION 'approval state row not found' USING ERRCODE='P0002'; END IF;
   INSERT INTO public.audit_events(id,hospital_id,actor_membership_id,action,entity_type,entity_id,after_hash)
-    VALUES(gen_random_uuid(), p_hospital, p_approver, 'approval.approve', 'version', p_version, p_assessment_hash);
+    VALUES(gen_random_uuid(), p_hospital, v_approver, 'approval.approve', 'version', p_version, p_assessment_hash);
 END $$;
 """
 FN_REVOKE_LINK = """
@@ -169,8 +176,9 @@ BEGIN
 END $$;
 """
 FN_GRANTS = [
-    "REVOKE ALL ON FUNCTION public.fn_approve_version(uuid,uuid,uuid,text,text,text) FROM PUBLIC;",
-    "GRANT EXECUTE ON FUNCTION public.fn_approve_version(uuid,uuid,uuid,text,text,text) TO app_rw;",
+    "DROP FUNCTION IF EXISTS public.fn_approve_version(uuid,uuid,uuid,text,text,text);",  # 구 6인자(p_approver 신뢰) 제거
+    "REVOKE ALL ON FUNCTION public.fn_approve_version(uuid,uuid,text,text,text) FROM PUBLIC;",
+    "GRANT EXECUTE ON FUNCTION public.fn_approve_version(uuid,uuid,text,text,text) TO app_rw;",
     "REVOKE ALL ON FUNCTION public.fn_revoke_review_link(uuid,uuid) FROM PUBLIC;",
     "GRANT EXECUTE ON FUNCTION public.fn_revoke_review_link(uuid,uuid) TO app_rw;",
 ]
