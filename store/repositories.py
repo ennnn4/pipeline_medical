@@ -55,7 +55,9 @@ def assessment_set_hash(conn, hospital_id, version_id):
     return _sha("assessment_set", canon)
 
 # ── 편집: 콘텐츠 + current CAS 단일 트랜잭션(conn) ──────
-def create_edited_version(conn, hospital_id, script_id, expected_current_version_id, content_fn=None):
+def create_edited_version(conn, hospital_id, script_id, expected_current_version_id, content_fn):
+    if content_fn is None:
+        raise ValueError("content_fn 필수 — 빈 버전을 current로 만들 수 없음(#5)")
     row = conn.execute(text(
         "select current_version_id, "
         "(select coalesce(max(version_no),0) from script_versions where hospital_id=:h and script_id=:s) as maxno "

@@ -1,8 +1,35 @@
-"""불변 테이블·승인상태 DML 봉쇄 — app_rw는 UPDATE/DELETE 불가(42501)."""
+"""불변 테이블·승인상태 DML 봉쇄 + 권한상승 차단 + 승인버전 콘텐츠 동결."""
 import uuid, pytest
 from sqlalchemy import text
-from store.testkit import sqlstate, new_version, new_block
-from store.repositories import tenant_conn
+from store.testkit import sqlstate, new_version, new_block, new_sentence, new_claim
+from store.repositories import tenant_conn, approve_version
+
+def test_app_rw_cannot_self_grant_role(owner, rw, tenant):
+    """#1 권한상승: app_rw가 membership_roles에 자기 approver 역할 추가 시도 → 차단."""
+    h, m = tenant["hospital_id"], tenant["membership_id"]
+    with pytest.raises(Exception) as ei:
+        with tenant_conn(rw, h, m) as cn:
+            cn.execute(text("insert into membership_roles(id,hospital_id,membership_id,role) values(:i,:h,:m,'approver')"),
+                       {"i": uuid.uuid4(), "h": h, "m": m})
+    assert sqlstate(ei.value) == "42501"
+
+def test_app_rw_cannot_insert_into_approved_version(owner, rw, tenant):
+    """#4 불변 우회: 승인된 버전에 블록 추가 시도 → 동결 트리거 차단."""
+    h, m = tenant["hospital_id"], tenant["membership_id"]
+    with owner.begin() as cn:
+        _, v = new_version(cn, h); b = new_block(cn, h, v); s = new_sentence(cn, h, v, b); c = new_claim(cn, h, v, s)
+        cn.execute(text("insert into claim_assessments(id,hospital_id,claim_id,assessment_kind,idempotency_key,"
+                        "support_level,verification_status,medical_risk) values(:i,:h,:c,'automated','a','direct','verified','low')"),
+                   {"i": uuid.uuid4(), "h": h, "c": c})
+        cn.execute(text("insert into membership_roles(id,hospital_id,membership_id,role) values(:i,:h,:m,'approver')"),
+                   {"i": uuid.uuid4(), "h": h, "m": m})
+    with tenant_conn(rw, h, m) as cn:
+        approve_version(cn, h, v, "policy-1")             # 승인
+    with pytest.raises(Exception) as ei:                  # 승인 후 블록 추가 시도
+        with tenant_conn(rw, h, m) as cn:
+            cn.execute(text("insert into script_blocks(id,hospital_id,version_id,stable_block_key,order_index,block_type,text) "
+                            "values(:b,:h,:v,'k2',9,'explanation','x')"), {"b": uuid.uuid4(), "h": h, "v": v})
+    assert sqlstate(ei.value) == "2BP01"                  # frozen 트리거
 
 def test_app_rw_cannot_update_immutable_block(owner, rw, tenant):
     h = tenant["hospital_id"]

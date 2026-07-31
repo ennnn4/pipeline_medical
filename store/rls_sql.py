@@ -130,8 +130,29 @@ LOCKDOWN = (
        "DROP POLICY IF EXISTS p_tenant ON version_approval_states;",
        f"CREATE POLICY vas_sel ON version_approval_states FOR SELECT TO app_rw USING (hospital_id = {TENANT_SETTING});",
        f"CREATE POLICY vas_ins ON version_approval_states FOR INSERT TO app_rw "
-       f"WITH CHECK (hospital_id = {TENANT_SETTING} AND status = 'none');"]
+       f"WITH CHECK (hospital_id = {TENANT_SETTING} AND status = 'none');",
+       # #1 권한 상승 차단: app_rw는 역할·멤버십을 스스로 부여/변경 불가(관리자/owner 전용)
+       "REVOKE INSERT, UPDATE, DELETE ON membership_roles FROM app_rw;",
+       "REVOKE INSERT, UPDATE, DELETE ON hospital_memberships FROM app_rw;"]
 )
+
+# #4 승인된 버전의 콘텐츠(블록/문장/claim) 사후 추가 차단(불변 우회 방지). claim_assessments는 재검토용이라 허용.
+TRIGGER_FROZEN = """
+CREATE OR REPLACE FUNCTION public.fn_reject_if_version_approved() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM public.version_approval_states s
+             WHERE s.hospital_id=NEW.hospital_id AND s.version_id=NEW.version_id AND s.status='approved') THEN
+    RAISE EXCEPTION 'approved version content is frozen' USING ERRCODE='2BP01';
+  END IF;
+  RETURN NEW;
+END $$;
+"""
+TRIGGERS = [
+    f"DROP TRIGGER IF EXISTS trg_frozen ON {t};"
+    f"CREATE TRIGGER trg_frozen BEFORE INSERT ON {t} FOR EACH ROW EXECUTE FUNCTION public.fn_reject_if_version_approved();"
+    for t in ("script_blocks", "script_sentences", "claims")
+]
 
 # 승인: 역할검사 + 미검증/미지원 claim 게이트 + 상태UPDATE + audit(동일 함수=원자). SECURITY DEFINER.
 FN_APPROVE = """
@@ -168,23 +189,31 @@ BEGIN
 END $$;
 """
 FN_REVOKE_LINK = """
-CREATE OR REPLACE FUNCTION public.fn_revoke_review_link(p_hospital uuid, p_link_id uuid)
+CREATE OR REPLACE FUNCTION public.fn_revoke_review_link(p_link_id uuid)
 RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
-DECLARE n integer;
+DECLARE v_hospital uuid; v_member uuid; n integer;
 BEGIN
-  UPDATE public.review_links SET revoked_at=now() WHERE hospital_id=p_hospital AND id=p_link_id AND revoked_at IS NULL;
+  v_hospital := NULLIF(current_setting('app.hospital_id', true), '')::uuid;   -- 세션 병원에 결합(교차병원 폐기 차단)
+  v_member   := NULLIF(current_setting('app.membership_id', true), '')::uuid;
+  IF v_hospital IS NULL OR v_member IS NULL THEN
+    RAISE EXCEPTION 'session identity required' USING ERRCODE='42501'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.membership_roles
+                 WHERE hospital_id=v_hospital AND membership_id=v_member AND role IN ('editor','approver','admin')) THEN
+    RAISE EXCEPTION 'role required to revoke link' USING ERRCODE='42501'; END IF;
+  UPDATE public.review_links SET revoked_at=now() WHERE hospital_id=v_hospital AND id=p_link_id AND revoked_at IS NULL;
   GET DIAGNOSTICS n = ROW_COUNT;
   UPDATE public.review_sessions SET revoked_at=now()
-    WHERE hospital_id=p_hospital AND review_link_id=p_link_id AND revoked_at IS NULL;   -- 링크 폐기 시 세션도 폐기
+    WHERE hospital_id=v_hospital AND review_link_id=p_link_id AND revoked_at IS NULL;   -- 링크 폐기 시 세션도 폐기
   RETURN n;
 END $$;
 """
 FN_GRANTS = [
     "DROP FUNCTION IF EXISTS public.fn_approve_version(uuid,uuid,uuid,text,text,text);",  # 구 6인자(p_approver 신뢰) 제거
+    "DROP FUNCTION IF EXISTS public.fn_revoke_review_link(uuid,uuid);",                   # 구 2인자(p_hospital 신뢰) 제거
     "REVOKE ALL ON FUNCTION public.fn_approve_version(uuid,uuid,text,text,text) FROM PUBLIC;",
     "GRANT EXECUTE ON FUNCTION public.fn_approve_version(uuid,uuid,text,text,text) TO app_rw;",
-    "REVOKE ALL ON FUNCTION public.fn_revoke_review_link(uuid,uuid) FROM PUBLIC;",
-    "GRANT EXECUTE ON FUNCTION public.fn_revoke_review_link(uuid,uuid) TO app_rw;",
+    "REVOKE ALL ON FUNCTION public.fn_revoke_review_link(uuid) FROM PUBLIC;",
+    "GRANT EXECUTE ON FUNCTION public.fn_revoke_review_link(uuid) TO app_rw;",
 ]
 
 def statements():
@@ -203,6 +232,7 @@ def statements():
     # 불변 테이블/승인 상태 DML 봉쇄 + 승인·폐기 전용 함수(blanket GRANT 이후에 REVOKE)
     sts += LOCKDOWN
     sts.append(FN_APPROVE); sts.append(FN_REVOKE_LINK); sts += FN_GRANTS
+    sts.append(TRIGGER_FROZEN); sts += TRIGGERS      # 승인 버전 콘텐츠 동결 트리거
     return sts
 
 def apply(engine):

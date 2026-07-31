@@ -1,9 +1,12 @@
 """동시 편집 CAS(app_rw + 진짜 병렬) + 마이그레이션 lease(owner/BYPASSRLS)."""
 import uuid, threading, pytest
 from sqlalchemy import text
-from store.testkit import new_version
+from store.testkit import new_version, new_block
 from store import repositories as repo
 from store.repositories import tenant_conn, create_edited_version, Conflict
+
+def _content(cn, h, v):                                     # 편집 콘텐츠(블록 1개) — 빈 버전 방지(#5)
+    new_block(cn, h, v, 0)
 
 def _script_current(owner, h):
     with owner.begin() as cn:
@@ -11,14 +14,20 @@ def _script_current(owner, h):
         cn.execute(text("update scripts set current_version_id=:v where id=:s"), {"v": v, "s": sc})
     return sc, v
 
+def test_create_edited_requires_content(owner, rw, tenant):
+    h = tenant["hospital_id"]; sc, v1 = _script_current(owner, h)
+    with pytest.raises(ValueError):
+        with tenant_conn(rw, h) as cn:
+            create_edited_version(cn, h, sc, v1, None)     # 콘텐츠 없으면 거부
+
 def test_cas_via_app_rw_sequential(owner, rw, tenant):
     h = tenant["hospital_id"]; sc, v1 = _script_current(owner, h)
     with tenant_conn(rw, h) as cn:
-        v2 = create_edited_version(cn, h, sc, v1)          # app_rw + RLS 경로에서 실제 동작
+        v2 = create_edited_version(cn, h, sc, v1, _content)  # app_rw + RLS 경로에서 실제 동작
     assert v2 != v1
     with pytest.raises(Conflict):
         with tenant_conn(rw, h) as cn:
-            create_edited_version(cn, h, sc, v1)           # 구버전 기대 → Conflict
+            create_edited_version(cn, h, sc, v1, _content)   # 구버전 기대 → Conflict
 
 def test_cas_true_concurrency(owner, rw, tenant):
     h = tenant["hospital_id"]; sc, v1 = _script_current(owner, h)
@@ -27,7 +36,7 @@ def test_cas_true_concurrency(owner, rw, tenant):
         barrier.wait()                                     # 동시에 진입
         try:
             with tenant_conn(rw, h) as cn:
-                nv = create_edited_version(cn, h, sc, v1)
+                nv = create_edited_version(cn, h, sc, v1, _content)
             results.append(("ok", nv))
         except Conflict:
             results.append(("conflict", None))
