@@ -125,8 +125,12 @@ IMMUTABLE_TABLES = ["script_versions", "script_blocks", "script_sentences", "cla
 
 LOCKDOWN = (
     [f"REVOKE UPDATE, DELETE ON {t} FROM app_rw;" for t in IMMUTABLE_TABLES]
-    # 승인 상태: 직접 UPDATE/DELETE 봉쇄 → 승인/거절은 fn_* 함수로만
-    + ["REVOKE UPDATE, DELETE ON version_approval_states FROM app_rw;"]
+    # 승인 상태: 직접 UPDATE/DELETE 봉쇄. INSERT는 status='none'만(승인 행 위조 방지) → 승인은 fn_approve만.
+    + ["REVOKE UPDATE, DELETE ON version_approval_states FROM app_rw;",
+       "DROP POLICY IF EXISTS p_tenant ON version_approval_states;",
+       f"CREATE POLICY vas_sel ON version_approval_states FOR SELECT TO app_rw USING (hospital_id = {TENANT_SETTING});",
+       f"CREATE POLICY vas_ins ON version_approval_states FOR INSERT TO app_rw "
+       f"WITH CHECK (hospital_id = {TENANT_SETTING} AND status = 'none');"]
 )
 
 # 승인: 역할검사 + 미검증/미지원 claim 게이트 + 상태UPDATE + audit(동일 함수=원자). SECURITY DEFINER.
