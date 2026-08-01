@@ -59,6 +59,19 @@ if not NO_SEED:
     if already:
         print(f"[seed] 이미 존재(slug=boncure, id={already}) — 건너뜀")
     else:
+        # 블록 구성: SEED_PACKAGE(out/<topic>_package.json) 지정 시 실제 대본, 아니면 2블록 플레이스홀더
+        import io as _io, json as _json
+        from store.migrate import block_type_of
+        pkg_path = os.environ.get("SEED_PACKAGE")
+        if pkg_path:
+            sc_list = _json.load(_io.open(pkg_path, encoding="utf-8")).get("script") or []
+            blocks = [(f"blk_{i+1}", i, block_type_of(b.get("block") or ""),
+                       (b.get("scene") or "")[:2000], b.get("say") or "",
+                       _json.dumps({"block_label": b.get("block") or "", "tags": b.get("tags") or []}, ensure_ascii=False))
+                      for i, b in enumerate(sc_list) if (b.get("say") or "").strip()]
+        else:
+            blocks = [("blk_1", 0, "explanation", None, "안녕하세요, 한의사 송정현입니다.", "{}"),
+                      ("blk_2", 1, "explanation", None, "오늘 영상도 끝까지 함께해 주세요. 구독과 좋아요 부탁드립니다.", "{}")]
         h, u, m, sc, v = (uuid.uuid4() for _ in range(5))
         with eng.begin() as cn:
             cn.execute(text("insert into hospitals(id,slug,name) values(:h,'boncure','본큐어한의원')"), {"h": h})
@@ -73,14 +86,13 @@ if not NO_SEED:
                             "values(:v,:h,:s,1,'migration')"), {"v": v, "h": h, "s": sc})
             cn.execute(text("insert into version_approval_states(id,hospital_id,version_id,status) "
                             "values(:i,:h,:v,'none')"), {"i": uuid.uuid4(), "h": h, "v": v})
-            for key, oi, tx in [("blk_1", 0, "안녕하세요, 한의사 송정현입니다."),
-                                ("blk_2", 1, "오늘 영상도 끝까지 함께해 주세요. 구독과 좋아요 부탁드립니다.")]:
+            for key, oi, bt, scn, tx, md in blocks:
                 cn.execute(text("insert into script_blocks(id,hospital_id,version_id,stable_block_key,order_index,"
-                                "block_type,text) values(:b,:h,:v,:k,:o,'explanation',:tx)"),
-                           {"b": uuid.uuid4(), "h": h, "v": v, "k": key, "o": oi, "tx": tx})
+                                "block_type,scene,text,metadata) values(:b,:h,:v,:k,:o,:bt,:scn,:tx,cast(:md as jsonb))"),
+                           {"b": uuid.uuid4(), "h": h, "v": v, "k": key, "o": oi, "bt": bt, "scn": scn, "tx": tx, "md": md})
             cn.execute(text("update scripts set current_version_id=:v where id=:s"), {"v": v, "s": sc})
         seeded = {"hospital": h, "version": v, "script": sc}
-        print(f"[seed] 병원 boncure / 로그인 demo@boncure.kr·demo1234(승인자) / 스크립트 v1(2블록)")
+        print(f"[seed] 병원 boncure / 로그인 demo@boncure.kr·demo1234(승인자) / 스크립트 v1({len(blocks)}블록)")
 
 # ── 3) RLS·역할·정책·함수·grant·lockdown ─────────────────
 R.apply(eng)
