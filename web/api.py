@@ -34,6 +34,40 @@ def _u(path):
     return (request.script_root or "") + path
 
 
+_SUPPORT_KO = {"direct": "직접근거", "partial": "부분근거", "inferred": "추론", "unsupported": "근거없음", "unverified": "미검증"}
+_KIND_KO = {"automated": "자동검증", "human_review": "원장검수", "override": "원장확정", "migration": "이관"}
+
+def _evidence_panel(claims):
+    """4단계: 버전의 의학주장별 유효 근거판정을 카드로. 검증됨=초록, 실패=빨강, 판정없음=회색(미검증).
+    자동판정은 '인용·수치 실측'까지만이며 의학 타당성은 원장 확인 몫임을 명시(과신 방지)."""
+    if not claims:
+        return ('<div class=card><h2>근거 검증 (4단계)</h2>'
+                '<p><small>이 버전에 등록된 의학주장이 없습니다.</small></p></div>')
+    verified = sum(1 for c in claims if c["verification_status"] == "verified")
+    rows = []
+    for c in claims:
+        vs = c["verification_status"]
+        if vs == "verified":
+            style, label = "background:#e6f7f0;color:#12b886", "검증됨"
+        elif vs == "failed":
+            style, label = "background:#fdeaec;color:#f04452", "검증실패"
+        else:
+            style, label = "background:#f2f4f6;color:#8b95a1", "미검증"
+        sup = _SUPPORT_KO.get(c["support_level"], "미검증")
+        kind = _KIND_KO.get(c["assessment_kind"], "")
+        src = f'<div style="font-size:12px;color:#8b95a1;margin-top:4px">📄 {escape(c["source_title"])}</div>' if c["source_title"] else ""
+        rat = f'<div style="font-size:12px;color:#8b95a1;margin-top:2px">{escape((c["rationale"] or "")[:160])}</div>' if c["rationale"] else ""
+        rows.append(
+            f'<div class=blk><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+            f'<span class="badge" style="{style}">{label}</span>'
+            f'<span class="badge" style="background:#eef4ff;color:#3182f6">{sup}</span>'
+            f'{f"<small>{escape(kind)}</small>" if kind else ""}</div>'
+            f'<div style="margin-top:6px;font-size:14px">{escape((c["claim_text"] or "")[:220])}</div>{src}{rat}</div>')
+    note = ('<p><small>자동검증은 <b>인용 실재·수치 대조</b>까지만 확인합니다. '
+            '의학적 근거등급·환자적용은 원장 최종 판단 몫이며, 원장 검수가 자동판정보다 우선합니다.</small></p>')
+    return (f'<div class=card><h2>근거 검증 (4단계) — 검증됨 {verified}/{len(claims)}</h2>{note}{"".join(rows)}</div>')
+
+
 def _sqlstate(exc):
     for o in (getattr(exc, "orig", None), exc):
         try:
@@ -186,6 +220,18 @@ def create_app(engine=None):
             stale = repo.is_stale(conn, hid, uuid.UUID(version_id), "policy-1")
             is_current = conn.execute(text("select current_version_id=:v from scripts where id=:s"),
                                       {"v": uuid.UUID(version_id), "s": sc.script_id}).scalar()
+            # 4단계: 이 버전의 의학주장 + 유효 근거판정(사람>자동, migration 제외) + 출처
+            claims = conn.execute(text(
+                "select c.id, c.claim_text, e.support_level, e.verification_status, e.medical_risk, "
+                "e.assessment_kind, e.rationale, "
+                "(select s.title from claim_sources cs join source_versions sv "
+                "  on sv.hospital_id=cs.hospital_id and sv.id=cs.source_version_id "
+                "  join sources s on s.hospital_id=sv.hospital_id and s.id=sv.source_id "
+                "  where cs.hospital_id=c.hospital_id and cs.claim_id=c.id limit 1) as source_title "
+                "from claims c left join claim_effective_assessment e "
+                "  on e.hospital_id=c.hospital_id and e.claim_id=c.id "
+                "where c.hospital_id=:h and c.version_id=:v order by c.claim_index"),
+                {"h": hid, "v": uuid.UUID(version_id)}).mappings().all()
         badge = '<span class="badge stale">미승인/stale</span>' if stale else '<span class="badge ok">승인됨</span>'
         rows = "".join(f'<div class=blk><div class=key>{escape(b["stable_block_key"])} · {escape(b["block_type"])}</div>'
                        f'<textarea name="edit__{escape(b["stable_block_key"])}">{escape(b["text"])}</textarea></div>' for b in blocks)
@@ -196,10 +242,11 @@ def create_app(engine=None):
         approve = (f'<form method=post action="{_u(f"/ui/h/{slug}/versions/{version_id}/approve")}" style="margin-top:12px">'
                    f'<button class=btn type=submit>✅ 승인</button></form>') if (is_current and stale) else ""
         diff = f'<a class="btn g" href="{_u(f"/api/h/{slug}/versions/{version_id}/diff")}?from={sc.parent_version_id}">diff(JSON)</a>' if sc.parent_version_id else ""
+        evidence = _evidence_panel(claims)
         return _page(f"버전 {sc.version_no}",
                      f'<div class=card><h1>버전 v{sc.version_no} {badge}</h1>{msg}'
                      f'<h2>블록 (편집 → 새 immutable 버전)</h2>{editform}{approve} {diff} '
-                     f'<a class="btn g" href="{_u("/logout")}">로그아웃</a></div>')
+                     f'<a class="btn g" href="{_u("/logout")}">로그아웃</a></div>{evidence}')
 
     @app.post("/ui/h/<slug>/scripts/<script_id>/edit")
     def ui_edit(slug, script_id):
