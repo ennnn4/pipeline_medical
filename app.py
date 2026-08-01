@@ -12,6 +12,10 @@ from werkzeug.utils import secure_filename
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 PY = sys.executable
+try:
+    from web.branding import LOGO_URI, ICON_URI     # medical.png 추출 로고(투명 PNG data URI)
+except Exception:
+    LOGO_URI = ICON_URI = ""
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024   # 업로드 최대 500MB
 
@@ -142,13 +146,15 @@ textarea{min-height:64px;resize:vertical}
 
 PAGE = """<!doctype html><html lang=ko><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
 <title>{{title}}</title><style>{{css}}</style></head><body>
-<div class=nav><div class=nav-in><div class=brand><span class=dot>본</span>병원 유튜브 대본 생성기</div>{{ userhtml|safe }}</div></div>
+<div class=nav><div class=nav-in><div class=brand>{{ brand|safe }}</div>{{ userhtml|safe }}</div></div>
 <div class=wrap>{{ body|safe }}</div>{{ script|safe }}</body></html>"""
 
 def page(title, body, script=""):
     u = session.get("user")
     userhtml = f'<div class=navr><span>{u}</span><a class="btn ghost" href="/logout">로그아웃</a></div>' if u else ""
-    return render_template_string(PAGE, title=title, css=CSS, body=body, script=script, userhtml=userhtml)
+    brand = (f'<img src="{LOGO_URI}" style="height:30px" alt="Medical Pipeline">' if LOGO_URI
+             else '<span class=dot>본</span>병원 유튜브 대본 생성기')
+    return render_template_string(PAGE, title=title, css=CSS, body=body, script=script, userhtml=userhtml, brand=brand)
 
 @app.route("/")
 def home():
@@ -358,8 +364,8 @@ def view(h, fn):
 LOGIN = """<!doctype html><html lang=ko><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
 <title>로그인 · 병원 유튜브 대본 생성기</title><style>{{css}}</style></head><body>
 <div class=auth><div class=authcard>
-  <div class=logo><span class=dot style="width:44px;height:44px;border-radius:13px;font-size:23px">본</span></div>
-  <h1>로그인</h1><p class=s>병원 유튜브 대본 생성기</p>
+  <div class=logo>{{ logo|safe }}</div>
+  <h1>로그인</h1><p class=s>Medical Pipeline · 병원 유튜브 대본 생성기</p>
   {{ err_html|safe }}
   <form method=post>
     <label>아이디</label><input type=text name=username placeholder="아이디" required autofocus>
@@ -370,7 +376,9 @@ LOGIN = """<!doctype html><html lang=ko><head><meta charset=utf-8><meta name=vie
 
 def _login_page(err=""):
     err_html = f'<div class=err>{err}</div>' if err else ""
-    return render_template_string(LOGIN, css=CSS, err_html=err_html)
+    logo = (f'<img src="{ICON_URI}" style="width:64px;height:64px" alt="Medical Pipeline">' if ICON_URI
+            else '<span class=dot style="width:44px;height:44px;border-radius:13px;font-size:23px">본</span>')
+    return render_template_string(LOGIN, css=CSS, err_html=err_html, logo=logo)
 
 @app.route("/login", methods=["GET","POST"])
 def login():

@@ -14,6 +14,10 @@ from werkzeug.security import check_password_hash
 from sqlalchemy import text
 from store.db import make_engine
 from store import repositories as repo
+try:
+    from web.branding import LOGO_URI, ICON_URI
+except Exception:
+    LOGO_URI = ICON_URI = ""
 
 _CSS = """*{box-sizing:border-box}body{font-family:'Pretendard',-apple-system,'Malgun Gothic',sans-serif;background:#f2f4f6;color:#191f28;margin:0;line-height:1.6}
 .wrap{max-width:820px;margin:0 auto;padding:28px 20px}.card{background:#fff;border:1px solid #e5e8eb;border-radius:16px;padding:22px;margin:14px 0}
@@ -25,7 +29,10 @@ label{font-size:12px;color:#8b95a1;font-weight:700}input{width:100%;font:inherit
 .blk{border-top:1px solid #eef;padding:12px 0}.key{font-size:12px;color:#8b95a1;font-weight:700}small{color:#8b95a1}"""
 
 def _page(title, body):
-    return f"<!doctype html><meta charset=utf-8><title>{escape(title)}</title><style>{_CSS}</style><div class=wrap>{body}</div>"
+    fav = f"<link rel=icon href='{ICON_URI}'>" if ICON_URI else ""
+    brand = f"<div style='padding:18px 0 8px'><img src='{LOGO_URI}' alt='Medical Pipeline' style='height:38px'></div>" if LOGO_URI else ""
+    return (f"<!doctype html><meta charset=utf-8><title>{escape(title)}</title>{fav}"
+            f"<style>{_CSS}</style><div class=wrap>{brand}{body}</div>")
 
 
 def _u(path):
