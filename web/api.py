@@ -28,6 +28,12 @@ def _page(title, body):
     return f"<!doctype html><meta charset=utf-8><title>{escape(title)}</title><style>{_CSS}</style><div class=wrap>{body}</div>"
 
 
+def _u(path):
+    """마운트 프리픽스(script_root) 인식 절대경로. 단독 실행 시 ''→경로 그대로,
+    DispatcherMiddleware로 /studio 등에 마운트되면 프리픽스를 자동 부착(하드코딩 링크가 프리픽스를 우회하지 않도록)."""
+    return (request.script_root or "") + path
+
+
 def _sqlstate(exc):
     for o in (getattr(exc, "orig", None), exc):
         try:
@@ -144,7 +150,7 @@ def create_app(engine=None):
                 row = cn.execute(text("select id, pw_hash from lookup_user_for_login(:e)"), {"e": email}).first()
             if row and row.pw_hash and check_password_hash(row.pw_hash, pw):
                 session["user_id"] = str(row.id)
-                return redirect(request.args.get("next") or "/")
+                return redirect(request.args.get("next") or _u("/"))
             err = '<div class="msg e">이메일 또는 비밀번호가 올바르지 않습니다.</div>'
         return _page("로그인", f"<div class=card><h1>로그인</h1>{err}<form method=post>"
                      f"<label>이메일</label><input name=email type=email required>"
@@ -153,18 +159,19 @@ def create_app(engine=None):
 
     @app.get("/logout")
     def logout():
-        session.clear(); return redirect("/login")
+        session.clear(); return redirect(_u("/login"))
 
     @app.get("/")
     def home():
-        if not session.get("user_id"): return redirect("/login")
+        if not session.get("user_id"): return redirect(_u("/login"))
         return _page("홈", "<div class=card><h1>대본 편집</h1><p>버전 URL로 접근하세요: "
                      "<code>/ui/h/&lt;slug&gt;/versions/&lt;version_id&gt;</code></p>"
-                     "<a class=btn g href=/logout>로그아웃</a></div>")
+                     f'<a class="btn g" href="{_u("/logout")}">로그아웃</a></div>')
 
     @app.get("/ui/h/<slug>/versions/<version_id>")
     def ui_version(slug, version_id):
-        if not session.get("user_id"): return redirect(f"/login?next=/ui/h/{slug}/versions/{version_id}")
+        if not session.get("user_id"):
+            return redirect(_u("/login") + "?next=" + _u(f"/ui/h/{slug}/versions/{version_id}"))
         msg = {"approved": '<div class="msg s">승인되었습니다.</div>',
                "e403": '<div class="msg e">승인 권한(approver)이 없습니다.</div>',
                "e422": '<div class="msg e">미검증/미지원 claim이 있어 승인할 수 없습니다(4단계 근거검증 필요).</div>',
@@ -182,17 +189,17 @@ def create_app(engine=None):
         badge = '<span class="badge stale">미승인/stale</span>' if stale else '<span class="badge ok">승인됨</span>'
         rows = "".join(f'<div class=blk><div class=key>{escape(b["stable_block_key"])} · {escape(b["block_type"])}</div>'
                        f'<textarea name="edit__{escape(b["stable_block_key"])}">{escape(b["text"])}</textarea></div>' for b in blocks)
-        editform = (f'<form method=post action="/ui/h/{slug}/scripts/{sc.script_id}/edit">'
+        editform = (f'<form method=post action="{_u(f"/ui/h/{slug}/scripts/{sc.script_id}/edit")}">'
                     f'<input type=hidden name=expected value="{version_id}">{rows}'
                     f'<button class=btn type=submit>💾 편집 저장(새 버전 생성)</button></form>') if is_current else \
                    f'<p><small>이 버전은 현재 버전이 아니라 편집할 수 없습니다(불변).</small></p>{rows}'
-        approve = (f'<form method=post action="/ui/h/{slug}/versions/{version_id}/approve" style="margin-top:12px">'
+        approve = (f'<form method=post action="{_u(f"/ui/h/{slug}/versions/{version_id}/approve")}" style="margin-top:12px">'
                    f'<button class=btn type=submit>✅ 승인</button></form>') if (is_current and stale) else ""
-        diff = f'<a class="btn g" href="/api/h/{slug}/versions/{version_id}/diff?from={sc.parent_version_id}">diff(JSON)</a>' if sc.parent_version_id else ""
+        diff = f'<a class="btn g" href="{_u(f"/api/h/{slug}/versions/{version_id}/diff")}?from={sc.parent_version_id}">diff(JSON)</a>' if sc.parent_version_id else ""
         return _page(f"버전 {sc.version_no}",
                      f'<div class=card><h1>버전 v{sc.version_no} {badge}</h1>{msg}'
                      f'<h2>블록 (편집 → 새 immutable 버전)</h2>{editform}{approve} {diff} '
-                     f'<a class="btn g" href=/logout>로그아웃</a></div>')
+                     f'<a class="btn g" href="{_u("/logout")}">로그아웃</a></div>')
 
     @app.post("/ui/h/<slug>/scripts/<script_id>/edit")
     def ui_edit(slug, script_id):
@@ -211,11 +218,11 @@ def create_app(engine=None):
                     {"h": hid, "v": exp_uuid})}
                 changed = {k: v for k, v in edits.items() if cur.get(k) != v}
                 if not changed:
-                    return redirect(f"/ui/h/{slug}/versions/{expected}")
+                    return redirect(_u(f"/ui/h/{slug}/versions/{expected}"))
                 res = repo.apply_block_edit(conn, hid, sc_uuid, exp_uuid, changed)
-            return redirect(f"/ui/h/{slug}/versions/{res['version_id']}?m=edited")
+            return redirect(_u(f"/ui/h/{slug}/versions/{res['version_id']}?m=edited"))
         except repo.Conflict:
-            return redirect(f"/ui/h/{slug}/versions/{expected}?m=conflict")
+            return redirect(_u(f"/ui/h/{slug}/versions/{expected}?m=conflict"))
 
     @app.post("/ui/h/<slug>/versions/<version_id>/approve")
     def ui_approve(slug, version_id):
@@ -223,11 +230,11 @@ def create_app(engine=None):
         try:
             with tenant(slug) as (conn, hid, mid):
                 repo.approve_version(conn, hid, uuid.UUID(version_id), "policy-1")
-            return redirect(f"/ui/h/{slug}/versions/{version_id}?m=approved")
+            return redirect(_u(f"/ui/h/{slug}/versions/{version_id}?m=approved"))
         except Exception as e:
             code = _sqlstate(e)
             m = {"42501": "e403", "23514": "e422"}.get(code)
             if not m: raise
-            return redirect(f"/ui/h/{slug}/versions/{version_id}?m={m}")
+            return redirect(_u(f"/ui/h/{slug}/versions/{version_id}?m={m}"))
 
     return app

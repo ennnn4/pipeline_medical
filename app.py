@@ -392,6 +392,19 @@ def login():
 def logout():
     session.clear(); return redirect("/login")
 
+# ── 스튜디오(PostgreSQL 기반 편집·버전·승인 UI)를 /studio 에 마운트 ──
+# 예전 sqlite 대시보드(위 라우트)는 그대로 두고, 새 store/ 시스템(web/api.py)을 같은 프로세스에서 서빙.
+# DATABASE_URL(app_rw) 미설정이어도 import·마운트는 안전(엔진 생성은 지연, 실제 접속은 /studio 라우트 진입 시).
+# 마운트가 실패해도 기존 대시보드는 계속 동작하도록 try/except로 감싼다.
+try:
+    from werkzeug.middleware.dispatcher import DispatcherMiddleware
+    from web.api import create_app as _create_studio
+    _studio_app = _create_studio()
+    app.wsgi_app = DispatcherMiddleware(app.wsgi_app, {"/studio": _studio_app})
+    print("[studio] /studio 에 편집·승인 UI 마운트 완료")
+except Exception as _e:  # pragma: no cover - 배포 안전장치
+    print(f"[studio] 마운트 실패(기존 대시보드는 정상 동작): {_e!r}")
+
 if __name__ == "__main__":
     load_users()  # 기본 계정 보장 + 콘솔 안내
     port = int(os.environ.get("PORT", 5000))   # 배포 환경은 PORT 주입, 로컬은 5000
