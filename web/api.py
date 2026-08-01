@@ -37,35 +37,52 @@ def _u(path):
 _SUPPORT_KO = {"direct": "직접근거", "partial": "부분근거", "inferred": "추론", "unsupported": "근거없음", "unverified": "미검증"}
 _KIND_KO = {"automated": "자동검증", "human_review": "원장검수", "override": "원장확정", "migration": "이관"}
 
-def _evidence_panel(claims):
-    """4단계: 버전의 의학주장별 유효 근거판정을 카드로. 검증됨=초록, 실패=빨강, 판정없음=회색(미검증).
-    자동판정은 '인용·수치 실측'까지만이며 의학 타당성은 원장 확인 몫임을 명시(과신 방지)."""
+def _review_buttons(slug, claim_id, is_current):
+    """원장 검수/반려 버튼(사람 판정=human_review, 자동보다 우선). 현재 버전에서만 노출."""
+    if not is_current:
+        return ""
+    act = _u(f"/ui/h/{slug}/claims/{claim_id}/review")
+    return (f'<div style="margin-top:6px;display:flex;gap:6px">'
+            f'<form method=post action="{act}" style="margin:0"><input type=hidden name=decision value=confirm>'
+            f'<button class=btn style="padding:4px 12px;font-size:13px;background:#12b886">확정</button></form>'
+            f'<form method=post action="{act}" style="margin:0"><input type=hidden name=decision value=reject>'
+            f'<button class=btn style="padding:4px 12px;font-size:13px;background:#f04452">반려</button></form></div>')
+
+def _evidence_panel(slug, claims, is_current):
+    """4단계: 버전의 의학주장별 유효 근거판정 + 원문 인용 + 원장 검수/반려.
+    검증됨=초록, 반려/실패=빨강, 판정없음=회색(미검증). 자동판정은 원문 근거에만, 최종은 원장."""
     if not claims:
         return ('<div class=card><h2>근거 검증 (4단계)</h2>'
                 '<p><small>이 버전에 등록된 의학주장이 없습니다.</small></p></div>')
     verified = sum(1 for c in claims if c["verification_status"] == "verified")
+    failed = sum(1 for c in claims if c["verification_status"] == "failed")
+    unver = len(claims) - verified - failed
     rows = []
     for c in claims:
         vs = c["verification_status"]
         if vs == "verified":
             style, label = "background:#e6f7f0;color:#12b886", "검증됨"
         elif vs == "failed":
-            style, label = "background:#fdeaec;color:#f04452", "검증실패"
+            style, label = "background:#fdeaec;color:#f04452", "반려/실패"
         else:
             style, label = "background:#f2f4f6;color:#8b95a1", "미검증"
-        sup = _SUPPORT_KO.get(c["support_level"], "미검증")
+        sup = f'<span class="badge" style="background:#eef4ff;color:#3182f6">{_SUPPORT_KO.get(c["support_level"], "미검증")}</span>' if c["support_level"] else ""
         kind = _KIND_KO.get(c["assessment_kind"], "")
         src = f'<div style="font-size:12px;color:#8b95a1;margin-top:4px">📄 {escape(c["source_title"])}</div>' if c["source_title"] else ""
-        rat = f'<div style="font-size:12px;color:#8b95a1;margin-top:2px">{escape((c["rationale"] or "")[:160])}</div>' if c["rationale"] else ""
+        quote = (f'<div style="font-size:12px;color:#495057;margin-top:4px;padding:8px 10px;background:#f8f9fa;border-radius:8px;border-left:3px solid #d0d5dd">“{escape((c["source_quote"] or "")[:280])}”</div>'
+                 if c["source_quote"] and c["support_level"] else "")
+        rat = f'<div style="font-size:12px;color:#8b95a1;margin-top:2px">{escape((c["rationale"] or "")[:200])}</div>' if c["rationale"] else ""
         rows.append(
             f'<div class=blk><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
-            f'<span class="badge" style="{style}">{label}</span>'
-            f'<span class="badge" style="background:#eef4ff;color:#3182f6">{sup}</span>'
+            f'<span class="badge" style="{style}">{label}</span>{sup}'
             f'{f"<small>{escape(kind)}</small>" if kind else ""}</div>'
-            f'<div style="margin-top:6px;font-size:14px">{escape((c["claim_text"] or "")[:220])}</div>{src}{rat}</div>')
-    note = ('<p><small>자동검증은 <b>인용 실재·수치 대조</b>까지만 확인합니다. '
-            '의학적 근거등급·환자적용은 원장 최종 판단 몫이며, 원장 검수가 자동판정보다 우선합니다.</small></p>')
-    return (f'<div class=card><h2>근거 검증 (4단계) — 검증됨 {verified}/{len(claims)}</h2>{note}{"".join(rows)}</div>')
+            f'<div style="margin-top:6px;font-size:14px">{escape((c["claim_text"] or "")[:220])}</div>'
+            f'{src}{quote}{rat}{_review_buttons(slug, c["id"], is_current)}</div>')
+    note = ('<p><small>자동검증은 <b>논문 원문을 실제로 대조</b>해 판정합니다(근거 문장 인용). '
+            '의학적 근거등급·환자적용의 최종 판단은 원장 몫이며, <b>원장 확정/반려가 자동판정보다 우선</b>합니다.</small></p>')
+    summary = (f'검증됨 <b style="color:#12b886">{verified}</b> · '
+               f'미검증 <b style="color:#8b95a1">{unver}</b> · 반려/실패 <b style="color:#f04452">{failed}</b> (총 {len(claims)})')
+    return (f'<div class=card><h2>근거 검증 (4단계)</h2><p>{summary}</p>{note}{"".join(rows)}</div>')
 
 
 def _sqlstate(exc):
@@ -209,7 +226,8 @@ def create_app(engine=None):
         msg = {"approved": '<div class="msg s">승인되었습니다.</div>',
                "e403": '<div class="msg e">승인 권한(approver)이 없습니다.</div>',
                "e422": '<div class="msg e">미검증/미지원 claim이 있어 승인할 수 없습니다(4단계 근거검증 필요).</div>',
-               "edited": '<div class="msg s">새 버전이 생성되었습니다(미승인).</div>'}.get(request.args.get("m"), "")
+               "edited": '<div class="msg s">새 버전이 생성되었습니다(미승인).</div>',
+               "reviewed": '<div class="msg s">원장 검수가 반영되었습니다(자동판정보다 우선).</div>'}.get(request.args.get("m"), "")
         with tenant(slug) as (conn, hid, mid):
             sc = conn.execute(text("select script_id, version_no, parent_version_id from script_versions where hospital_id=:h and id=:v"),
                               {"h": hid, "v": uuid.UUID(version_id)}).first()
@@ -227,7 +245,9 @@ def create_app(engine=None):
                 "(select s.title from claim_sources cs join source_versions sv "
                 "  on sv.hospital_id=cs.hospital_id and sv.id=cs.source_version_id "
                 "  join sources s on s.hospital_id=sv.hospital_id and s.id=sv.source_id "
-                "  where cs.hospital_id=c.hospital_id and cs.claim_id=c.id limit 1) as source_title "
+                "  where cs.hospital_id=c.hospital_id and cs.claim_id=c.id limit 1) as source_title, "
+                "(select cs.source_quote from claim_sources cs "
+                "  where cs.hospital_id=c.hospital_id and cs.claim_id=c.id limit 1) as source_quote "
                 "from claims c left join claim_effective_assessment e "
                 "  on e.hospital_id=c.hospital_id and e.claim_id=c.id "
                 "where c.hospital_id=:h and c.version_id=:v order by c.claim_index"),
@@ -242,7 +262,7 @@ def create_app(engine=None):
         approve = (f'<form method=post action="{_u(f"/ui/h/{slug}/versions/{version_id}/approve")}" style="margin-top:12px">'
                    f'<button class=btn type=submit>✅ 승인</button></form>') if (is_current and stale) else ""
         diff = f'<a class="btn g" href="{_u(f"/api/h/{slug}/versions/{version_id}/diff")}?from={sc.parent_version_id}">diff(JSON)</a>' if sc.parent_version_id else ""
-        evidence = _evidence_panel(claims)
+        evidence = _evidence_panel(slug, claims, is_current)
         return _page(f"버전 {sc.version_no}",
                      f'<div class=card><h1>버전 v{sc.version_no} {badge}</h1>{msg}'
                      f'<h2>블록 (편집 → 새 immutable 버전)</h2>{editform}{approve} {diff} '
@@ -283,5 +303,35 @@ def create_app(engine=None):
             m = {"42501": "e403", "23514": "e422"}.get(code)
             if not m: raise
             return redirect(_u(f"/ui/h/{slug}/versions/{version_id}?m={m}"))
+
+    # ── 원장 검수/반려: 주장별 사람 판정(human_review) — 자동판정보다 우선 ──
+    @app.post("/ui/h/<slug>/claims/<claim_id>/review")
+    def ui_review(slug, claim_id):
+        if not session.get("user_id"): abort(401)
+        try:
+            cl_uuid = uuid.UUID(claim_id)
+        except (TypeError, ValueError):
+            abort(400)
+        decision = request.form.get("decision")
+        if decision == "confirm":
+            sup, vf, risk = "direct", "verified", "low"
+        elif decision == "reject":
+            sup, vf, risk = "unsupported", "failed", "high"
+        else:
+            abort(400)
+        with tenant(slug) as (conn, hid, mid):
+            row = conn.execute(text("select version_id from claims where hospital_id=:h and id=:c"),
+                               {"h": hid, "c": cl_uuid}).first()
+            if not row: abort(404)
+            # 사람 판정 append(불변; effective view가 최신 human을 automated보다 우선)
+            conn.execute(text(
+                "insert into claim_assessments(id,hospital_id,claim_id,assessment_kind,idempotency_key,"
+                "support_level,verification_status,medical_risk,rationale,created_by_membership_id) "
+                "values(:i,:h,:c,'human_review',:ik,:sup,:vf,:risk,:ra,:mid)"),
+                {"i": uuid.uuid4(), "h": hid, "c": cl_uuid, "ik": uuid.uuid4().hex,
+                 "sup": sup, "vf": vf, "risk": risk,
+                 "ra": ("원장 확정" if decision == "confirm" else "원장 반려"), "mid": mid})
+            vid = row.version_id
+        return redirect(_u(f"/ui/h/{slug}/versions/{vid}?m=reviewed"))
 
     return app

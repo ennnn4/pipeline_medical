@@ -93,19 +93,12 @@ if not NO_SEED:
                                 "block_type,scene,text,metadata) values(:b,:h,:v,:k,:o,:bt,:scn,:tx,cast(:md as jsonb))"),
                            {"b": bid, "h": h, "v": v, "k": key, "o": oi, "bt": bt, "scn": scn, "tx": tx, "md": md})
             cn.execute(text("update scripts set current_version_id=:v where id=:s"), {"v": v, "s": sc})
-            # 4단계 근거 배선: 논문(evidence) 블록에 이미 계산된 근거를 claim+source+자동 assessment로 적재
+            # 4단계: 전 블록 의학주장 추출 + 논문블록 인용의 근거판정(LLM 우선) 적재
             if os.environ.get("SEED_EVIDENCE") and pkg_path:
-                from store.evidence_seed import seed_evidence_for_block
-                ev_path = pkg_path.replace("_package.json", "_package.evidence.json")
-                try:
-                    results = (_json.load(_io.open(ev_path, encoding="utf-8")).get("results") or [])
-                except FileNotFoundError:
-                    results = []
-                ev_blocks = [t for t in bmap.values() if t[1] == "evidence"] or list(bmap.values())[-1:]
-                if results and ev_blocks:
-                    bid, _, btext = ev_blocks[0]
-                    nseed = seed_evidence_for_block(cn, h, v, bid, btext, results)
-                    print(f"[seed] 4단계 근거: 논문 블록에 claim {nseed}건 + 자동 assessment(verified) 적재")
+                from store.evidence_seed import seed_claims
+                blocks_full = [(k, bid, bt, tx) for k, (bid, bt, tx) in bmap.items()]
+                res = seed_claims(cn, h, v, blocks_full, pkg_path)
+                print(f"[seed] 4단계: 의학주장 {res['claims']}건(자동 검증됨 {res['verified']}) 적재")
             # 두 번째 병원(멀티테넌트/RLS 격리 시연용) — 다른 원장·다른 대본, 별도 로그인
             if os.environ.get("SEED_HOSPITAL2"):
                 h2, u2, m2, sc2, v2 = (uuid.uuid4() for _ in range(5))
