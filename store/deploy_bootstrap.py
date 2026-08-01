@@ -91,6 +91,30 @@ if not NO_SEED:
                                 "block_type,scene,text,metadata) values(:b,:h,:v,:k,:o,:bt,:scn,:tx,cast(:md as jsonb))"),
                            {"b": uuid.uuid4(), "h": h, "v": v, "k": key, "o": oi, "bt": bt, "scn": scn, "tx": tx, "md": md})
             cn.execute(text("update scripts set current_version_id=:v where id=:s"), {"v": v, "s": sc})
+            # 두 번째 병원(멀티테넌트/RLS 격리 시연용) — 다른 원장·다른 대본, 별도 로그인
+            if os.environ.get("SEED_HOSPITAL2"):
+                h2, u2, m2, sc2, v2 = (uuid.uuid4() for _ in range(5))
+                cn.execute(text("insert into hospitals(id,slug,name) values(:h,'miso','미소한의원')"), {"h": h2})
+                cn.execute(text("insert into users(id,email,name,pw_hash) values(:u,'director@miso.kr','김서연',:p)"),
+                           {"u": u2, "p": generate_password_hash("demo1234")})
+                cn.execute(text("insert into hospital_memberships(id,hospital_id,user_id) values(:m,:h,:u)"),
+                           {"m": m2, "h": h2, "u": u2})
+                cn.execute(text("insert into membership_roles(id,hospital_id,membership_id,role) values(:i,:h,:m,'approver')"),
+                           {"i": uuid.uuid4(), "h": h2, "m": m2})
+                cn.execute(text("insert into scripts(id,hospital_id,topic) values(:s,:h,'일자목')"), {"s": sc2, "h": h2})
+                cn.execute(text("insert into script_versions(id,hospital_id,script_id,version_no,source) "
+                                "values(:v,:h,:s,1,'migration')"), {"v": v2, "h": h2, "s": sc2})
+                cn.execute(text("insert into version_approval_states(id,hospital_id,version_id,status) "
+                                "values(:i,:h,:v,'none')"), {"i": uuid.uuid4(), "h": h2, "v": v2})
+                blocks2 = [("blk_1", 0, "intro", "안녕하세요, 한의사 김서연입니다. 오늘은 일자목 이야기를 해보겠습니다."),
+                           ("blk_2", 1, "explanation", "고개를 오래 숙이고 화면을 보면 목이 앞으로 빠지기 쉽습니다."),
+                           ("blk_3", 2, "cta", "오늘 영상이 도움이 되셨다면 구독과 좋아요 부탁드립니다.")]
+                for key, oi, bt, tx in blocks2:
+                    cn.execute(text("insert into script_blocks(id,hospital_id,version_id,stable_block_key,order_index,"
+                                    "block_type,text) values(:b,:h,:v,:k,:o,:bt,:tx)"),
+                               {"b": uuid.uuid4(), "h": h2, "v": v2, "k": key, "o": oi, "bt": bt, "tx": tx})
+                cn.execute(text("update scripts set current_version_id=:v where id=:s"), {"v": v2, "s": sc2})
+                print(f"[seed] 병원2 miso / 로그인 director@miso.kr·demo1234(승인자) / 일자목 v1(3블록) = {v2}")
         seeded = {"hospital": h, "version": v, "script": sc}
         print(f"[seed] 병원 boncure / 로그인 demo@boncure.kr·demo1234(승인자) / 스크립트 v1({len(blocks)}블록)")
 
