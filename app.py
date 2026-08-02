@@ -472,6 +472,11 @@ def _run_pipeline(h, topic, evidence=True, request_key=None):
             if cj["reused"] and cj["status"] in ("pending", "generating", "ingesting"):
                 job_set(h, status="done", ok=False, log="[중복 요청] 이미 진행 중인 생성이 있습니다."); return
             _ing.mark_job(make_engine(), hid, job_id, "generating", allowed_from={"pending"}, phase="run.py", started=True)
+            try:    # 생성 시점 자료 스냅샷(재현·책임소재) — 어떤 자료로 만들었는지 job에 결착
+                from store.materials import snapshot_job_materials
+                snapshot_job_materials(make_engine(), hid, job_id)
+            except Exception:
+                pass
         except Exception as e:
             log += f"\n[스튜디오 job 경고] {e}"
     try:

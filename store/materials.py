@@ -50,11 +50,50 @@ def _policies():
         "GRANT SELECT, INSERT, UPDATE, DELETE ON materials TO app_owner;",
     ]
 
+# 자료 version snapshot(P1) — 생성 시점에 어떤 자료(파일명·체크섬)로 만들었는지 job에 결착(재현·책임소재).
+_SNAP_DDL = """
+CREATE TABLE IF NOT EXISTS generation_job_materials (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  hospital_id uuid NOT NULL REFERENCES hospitals(id),
+  job_id uuid NOT NULL,
+  material_id uuid,
+  filename text NOT NULL,
+  checksum text,
+  size_bytes bigint,
+  snapshot_at timestamptz NOT NULL DEFAULT now()
+);
+"""
+
+def _snap_policies():
+    return [
+        "ALTER TABLE generation_job_materials ENABLE ROW LEVEL SECURITY;",
+        "ALTER TABLE generation_job_materials FORCE ROW LEVEL SECURITY;",
+        "DROP POLICY IF EXISTS gjm_rw ON generation_job_materials;",
+        f"CREATE POLICY gjm_rw ON generation_job_materials TO app_rw "
+        f"USING (hospital_id = {_TENANT_SET}) WITH CHECK (hospital_id = {_TENANT_SET});",
+        "DROP POLICY IF EXISTS gjm_def ON generation_job_materials;",
+        "CREATE POLICY gjm_def ON generation_job_materials TO app_owner USING (true) WITH CHECK (true);",
+        "GRANT SELECT, INSERT, UPDATE, DELETE ON generation_job_materials TO app_rw;",
+        "GRANT SELECT, INSERT, UPDATE, DELETE ON generation_job_materials TO app_owner;",
+    ]
+
 def ensure_materials_schema(owner_engine):
     with owner_engine.begin() as cn:
         cn.execute(text(_DDL))
         for s in _policies():
             cn.execute(text(s))
+        cn.execute(text(_SNAP_DDL))
+        for s in _snap_policies():
+            cn.execute(text(s))
+
+def snapshot_job_materials(engine, hospital_id, job_id):
+    """생성 시점의 자료(현재 materials)를 job에 스냅샷 결착. 반환: 스냅샷한 자료 수."""
+    with tenant_conn(engine, hospital_id) as cn:
+        r = cn.execute(text(
+            "insert into generation_job_materials(id,hospital_id,job_id,material_id,filename,checksum,size_bytes) "
+            "select gen_random_uuid(), :h, :j, id, filename, checksum, size_bytes from materials where hospital_id=:h"),
+            {"h": hospital_id, "j": job_id})
+        return r.rowcount
 
 def save_material(engine, hospital_id, filename, raw, mime=None):
     """같은 파일명은 교체(upsert). 상한 초과는 MaterialTooLarge(임시 disk fallback 금지)."""
