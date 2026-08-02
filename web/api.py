@@ -185,6 +185,18 @@ def create_app(engine=None):
             if not (sent and good and hmac.compare_digest(str(sent), str(good))):
                 abort(400)
 
+    @app.after_request
+    def _obs(resp):
+        # /studio endpoint별 요청 수·상태 구조화 로깅 — 물리 통합/redirect 후 놓친 legacy 호출 추적.
+        try:
+            from services.observability import emit
+            emit("http", app="studio", method=request.method,
+                 rule=(request.url_rule.rule if request.url_rule else request.path),
+                 status=resp.status_code)
+        except Exception:
+            pass
+        return resp
+
     @contextmanager
     def tenant(slug):
         """slug→hospital_id, 세션 user_id→membership_id(서버 결정) 후 tenant_conn."""

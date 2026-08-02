@@ -1,14 +1,14 @@
-<title>본큐어 파이프라인 — 추적성·이미지·reseed 수정</title>
+<title>본큐어 파이프라인 — service 추출 완료 보고</title>
 <style>
   :root{--bg:#f6f7f9;--card:#fff;--ink:#0b1524;--muted:#5b6b7f;--line:#e6e9ef;--brand:#1b64f2;--brand-soft:#e8f0fe;
-    --ok:#0f9d58;--ok-soft:#e6f4ea;--warn:#b8860b;--warn-soft:#fbf3dd;--danger:#c0392b;--danger-soft:#fbe9e7;
+    --ok:#0f9d58;--ok-soft:#e6f4ea;--warn:#b8860b;--warn-soft:#fbf3dd;
     --mono:'SFMono-Regular',ui-monospace,Consolas,monospace;--sans:-apple-system,BlinkMacSystemFont,'Segoe UI','Malgun Gothic',sans-serif}
   @media (prefers-color-scheme:dark){:root{--bg:#0b0f16;--card:#131a24;--ink:#eaf0f7;--muted:#9aabc0;--line:#243040;
-    --brand:#5b8dff;--brand-soft:#16233a;--ok:#3ecf8e;--ok-soft:#12251c;--warn:#e0b34d;--warn-soft:#2a2413;--danger:#ff7a6b;--danger-soft:#2a1512}}
+    --brand:#5b8dff;--brand-soft:#16233a;--ok:#3ecf8e;--ok-soft:#12251c;--warn:#e0b34d;--warn-soft:#2a2413}}
   :root[data-theme=dark]{--bg:#0b0f16;--card:#131a24;--ink:#eaf0f7;--muted:#9aabc0;--line:#243040;--brand:#5b8dff;
-    --brand-soft:#16233a;--ok:#3ecf8e;--ok-soft:#12251c;--warn:#e0b34d;--warn-soft:#2a2413;--danger:#ff7a6b;--danger-soft:#2a1512}
+    --brand-soft:#16233a;--ok:#3ecf8e;--ok-soft:#12251c;--warn:#e0b34d;--warn-soft:#2a2413}
   :root[data-theme=light]{--bg:#f6f7f9;--card:#fff;--ink:#0b1524;--muted:#5b6b7f;--line:#e6e9ef;--brand:#1b64f2;
-    --brand-soft:#e8f0fe;--ok:#0f9d58;--ok-soft:#e6f4ea;--warn:#b8860b;--warn-soft:#fbf3dd;--danger:#c0392b;--danger-soft:#fbe9e7}
+    --brand-soft:#e8f0fe;--ok:#0f9d58;--ok-soft:#e6f4ea;--warn:#b8860b;--warn-soft:#fbf3dd}
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.6;-webkit-text-size-adjust:100%}
   .wrap{max-width:760px;margin:0 auto;padding:20px 16px 40px}
@@ -19,19 +19,17 @@
   .chip{font-size:12.5px;font-weight:600;padding:5px 11px;border-radius:999px;border:1px solid var(--line)}
   .chip.ok{background:var(--ok-soft);color:var(--ok);border-color:transparent}
   .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin:14px 0;box-shadow:0 1px 2px rgba(10,20,40,.04)}
-  .card.crit{border-color:var(--danger);background:var(--danger-soft)}
   h2{font-size:16px;margin:2px 0 10px;display:flex;align-items:center;gap:9px}
   h2 .n{flex:none;min-width:24px;height:24px;padding:0 6px;border-radius:7px;background:var(--brand-soft);color:var(--brand);font-size:11.5px;font-weight:800;display:grid;place-items:center}
-  h2 .n.d{background:var(--danger);color:#fff}
   .row{display:flex;gap:10px;padding:8px 0;border-top:1px solid var(--line)}
   .row:first-of-type{border-top:0}
-  .row .tag{flex:none;font-size:11px;font-weight:700;color:var(--ok);margin-top:2px;min-width:34px}
+  .row .tag{flex:none;font-size:11px;font-weight:700;color:var(--ok);margin-top:2px;min-width:40px}
   .row .tag.todo{color:var(--warn)}
   .row p{margin:0;font-size:14px}
   code{font-family:var(--mono);font-size:12px}
   .note{background:var(--warn-soft);border-radius:12px;padding:12px 14px;margin:14px 0;font-size:13.5px}
   .gpthint{font-size:12.5px;color:var(--muted);margin:16px 2px 6px}
-  textarea#gpt{width:100%;height:210px;box-sizing:border-box;border:1px solid var(--line);border-radius:12px;
+  textarea#gpt{width:100%;height:220px;box-sizing:border-box;border:1px solid var(--line);border-radius:12px;
     background:var(--card);color:var(--ink);font-family:var(--mono);font-size:12px;line-height:1.5;padding:12px;user-select:text;-webkit-user-select:text;resize:vertical}
   button.copy{width:100%;margin-top:12px;border:0;border-radius:12px;background:var(--brand);color:#fff;font-weight:700;font-size:15px;padding:14px;cursor:pointer;font-family:var(--sans)}
   button.copy:active{transform:translateY(1px)}
@@ -40,60 +38,61 @@
 </style>
 
 <div class="wrap">
-  <div class="eyebrow">본큐어 파이프라인 · GPT 우선순위 실행</div>
-  <h1>추적성·이미지 + reseed 버그 수정</h1>
-  <div class="sub">GPT 확정 순서에서 export 추적성·이미지 provenance·review_seq를 처리하던 중, reseed하면 승인 게이트가 통째로 사라지던 치명 버그를 발견·수정했습니다.</div>
-  <div class="status"><span class="chip ok">✓ 테스트 123 통과</span><span class="chip ok">✓ 전부 라이브</span></div>
+  <div class="eyebrow">본큐어 파이프라인 · service 추출 완료</div>
+  <h1>업무·읽기 로직 전면 service화 완료</h1>
+  <div class="sub">모든 쓰기·읽기 로직이 공통 service + DB definer 함수로 이동했고, GPT 검토(승인 게이트·추적성·reseed·단일소유·heartbeat·review_seq)까지 반영했습니다. 남은 것은 물리 통합뿐입니다.</div>
+  <div class="status"><span class="chip ok">✓ 테스트 127 통과</span><span class="chip ok">✓ 전부 라이브</span></div>
 
-  <div class="card crit">
-    <h2><span class="n d">!</span>치명 버그 — reseed 시 Step 2.5~4 전부 소실</h2>
-    <div class="row"><span class="tag" style="color:var(--danger)">발견</span><p><code>deploy_bootstrap</code>이 <code>R.apply</code>(rls_sql)만 하고 이후 <code>ensure_*</code>(승인 함수·provenance·gate snapshot 등)를 호출하지 않았음. reseed하면 Step 2.5~4의 스키마·definer 함수가 전부 사라지고, <code>R.apply</code>가 <code>fn_approve_version</code>을 옛 monolithic 버전으로 되돌림.</p></div>
-    <div class="row"><span class="tag" style="color:var(--ok)">수정</span><p><code>R.apply</code> 뒤에 <code>ensure_gen_schema·materials·provision·approval_foundation·approval_fns·scene_images</code> 호출 추가(승인 함수 override 포함). test_rls_apply_idempotent도 R.apply 후 복원.</p></div>
+  <div class="card">
+    <h2><span class="n">✓</span>추출된 service (10)</h2>
+    <div class="row"><span class="tag">계약</span><p><code>exceptions·context(ActorContext)·permissions</code></p></div>
+    <div class="row"><span class="tag">쓰기</span><p><code>scripts(edit)·evidence(assess)·approvals(approve/self/reject/revoke)·images(regen)·exports(gate)</code></p></div>
+    <div class="row"><span class="tag">읽기</span><p><code>workspace(get_version_workspace)</code> — 버전페이지 렌더 데이터 단일 원본.</p></div>
+    <div class="row"><span class="tag">DB</span><p>승인·판정·봉인·복합FK·seal은 SECURITY DEFINER 함수/트리거가 강제. 라우트=파싱+예외매핑만.</p></div>
   </div>
 
   <div class="card">
-    <h2><span class="n">1</span>export 추적성</h2>
-    <div class="row"><span class="tag">결착</span><p><code>fn_approve_core</code>가 승인 audit event id를 <code>version_approval_states.approval_event_id</code>에 결착(추측 검색 금지). <code>prepare_export</code>가 <code>approval_event_id</code>+<code>export_prepared_at</code>(transaction_timestamp) 반환.</p></div>
+    <h2><span class="n">✓</span>GPT 검토 반영(누적)</h2>
+    <div class="row"><span class="tag">승인</span><p>작성자≠승인자·current version·잠금순서(scripts→approval state→advisory)·human_decision gate·자기승인 override·reject/revoke 상태행 기록·gate snapshot·P2013/P2014/P2015 도메인 코드.</p></div>
+    <div class="row"><span class="tag">추적</span><p>export approval_event_id·export_prepared_at / 이미지 source_scene_hash·stale 파생 / review_seq 통일.</p></div>
+    <div class="row"><span class="tag">안전</span><p>🔴 reseed 치명버그(승인함수 소실) 수정 + 단일 소유 + 회귀관문 / heartbeat during run / waived 전용 함수+INSERT 회수 / provenance 강화.</p></div>
   </div>
 
   <div class="card">
-    <h2><span class="n">2</span>이미지 provenance / stale</h2>
-    <div class="row"><span class="tag">결착</span><p>scene_images에 <code>source_version_id·source_scene_hash·source_prompt_hash·generated_by</code>. 재생성 시 그 version 장면의 canonical hash 결착.</p></div>
-    <div class="row"><span class="tag">stale</span><p><code>list_scene_status</code>가 현재 version 장면 해시 vs 이미지 source_scene_hash 비교로 <b>stale 파생</b>(수정 없이 query). 미결착=legacy_unbound. /studio에 배지.</p></div>
+    <h2><span class="n">▲</span>남은 것 — 물리 통합(GPT: 마지막·저우선)</h2>
+    <div class="row"><span class="tag todo">렌더</span><p>대시보드가 <code>/scripts/&lt;id&gt;</code>를 workspace service로 직접 렌더(현재 /studio 리다이렉트). HTML 렌더링이 /studio 클로저 안이라 공유 모듈 추출 필요 — 큰 UI 대이동.</p></div>
+    <div class="row"><span class="tag todo">은퇴</span><p>parity/E2E → /studio GET redirect → DispatcherMiddleware·studio app 제거.</p></div>
+    <div class="row"><span class="tag todo">R2</span><p>bytea 용량 경보 → R2/S3.</p></div>
   </div>
 
-  <div class="card">
-    <h2><span class="n">5</span>review_seq</h2>
-    <div class="row"><span class="tag">순번</span><p>claim별 판정 순번(<code>fn_add_human_assessment</code>이 claim 잠금 하 max+1) — "n차 검수" 결정적. partial UNIQUE.</p></div>
-  </div>
-
-  <div class="card">
-    <h2><span class="n">▲</span>보류·남음</h2>
-    <div class="row"><span class="tag todo">보류</span><p><b>#3-4 job디렉터리+heartbeat</b> — reap가 수동(auto-reaper 꺼짐)+1-active 가드라 동시 오염 이미 방지. GPT "auto-reaper 켜기 전 job-dir 필수" 조건부와 일치 → 병렬/자동회수 여는 시점에.</p></div>
-    <div class="row"><span class="tag todo">남음</span><p><b>#6-7</b> 읽기 query service→대시보드 직접 렌더→parity→/studio 물리 은퇴. bytea→R2/S3.</p></div>
-  </div>
-
-  <div class="note">테스트 <b>123개 통과</b>, 전부 라이브. 무결성·추적성 P0/P1은 사실상 종료. 남은 건 두 Flask 앱→하나 물리 정리(GPT가 마지막에 두라고 한 것)와 R2.</div>
+  <div class="note">테스트 <b>127개 통과</b>, 전부 라이브. <b>UX는 이미 통합</b>(/studio=대시보드 디자인+단일 로그인+공통 service). 물리 통합을 안 해도 완전히 동작하며, 운영 안정성(heartbeat 등)은 모두 닫혔습니다. 남은 건 두 Flask 앱→하나 정리(순수 아키텍처)와 R2입니다.</div>
 
   <div class="gpthint">아래 상자를 눌러 전체 선택 후 복사하거나, 버튼을 누르세요.</div>
-  <textarea id="gpt" readonly onclick="this.focus();this.select();">[본큐어 파이프라인 — 추적성·이미지·review_seq + reseed 치명버그 수정, 다음 진행 확인]
+  <textarea id="gpt" readonly onclick="this.focus();this.select();">[본큐어 파이프라인 — service 추출 완료 보고, 물리 통합 진입 여부 확인]
 
-배경: GPT 확정 순서(#1 export → #2 이미지 → #3 job디렉터리 → #4 heartbeat → #5 review_seq → #6 query service/Step7-9 → #7 R2)대로 진행. 123 tests green, 전부 라이브.
+배경: Step0~6(계약·edit·evidence·approval·export·image·검증) + GPT 검토 다수 라운드 반영. 127 tests green, 전부 라이브.
 
-★ 치명 버그 발견·수정: deploy_bootstrap(reseed 스크립트)이 R.apply(rls_sql: 역할·정책·함수·lockdown)만 실행하고, 이후 ensure_gen_schema/ensure_materials_schema/ensure_provision/ensure_approval_foundation/ensure_approval_fns/ensure_scene_images를 호출하지 않았음. 즉 reseed하면 Step2.5~4에서 추가한 모든 스키마(작성자·superseded·waived·gate snapshot·revoke 컬럼·approval_event·review_seq·이미지 provenance 등)와 definer 함수(fn_approve_core/self/reject/revoke/add_human_assessment/mark_version_superseded)가 전부 사라지고, R.apply가 fn_approve_version을 옛 monolithic(강화 전) 버전으로 되돌림. → deploy_bootstrap의 R.apply 뒤에 ensure_* 6개를 순서대로 호출하도록 수정(ensure_approval_fns가 fn_approve_version을 core 위임형으로 override). test_rls_apply_idempotent(R.apply 2회 테스트)도 이후 ensure_approval_fns로 복원하도록 수정.
+추출된 service(services/*.py):
+- exceptions(타입예외+SQLSTATE 번역: 42501/23514/P0002/P2013 decided_version_frozen/P2014 supersede_conflict/P2015 not_current), context(ActorContext.resolve—hospital·membership·roles 서버결정), permissions.
+- scripts.edit_blocks / evidence.assess_claim / approvals(approve·self_approve·reject·revoke) / images.regenerate_scene / exports.prepare_export / workspace.get_version_workspace(읽기 단일원본).
+- DB: fn_approve_core(private)+wrappers, fn_add_human_assessment, fn_mark_version_superseded, freeze/seal 트리거 등 SECURITY DEFINER가 규칙 강제. app_rw는 claim_assessments·version_approval_states 직접 INSERT/UPDATE 회수.
+- 라우트(/studio·/api)=request 파싱 + ActorContext.resolve + service 호출 + 예외→HTTP만. _require_role 제거.
 
-#1 export 추적성: version_approval_states.approval_event_id 컬럼. fn_approve_core가 승인 audit_events INSERT 시 그 id를 approval_event_id에 결착(RETURNING 대신 함수에서 uuid 생성—app_owner에 audit SELECT 권한 없어 RETURNING 불가). prepare_export가 approval_event_id + export_prepared_at(transaction_timestamp) 반환. 철회 후 신규 export는 차단하되 기존 export 기록은 보존.
+GPT 검토 반영 누적:
+- 승인 게이트: 작성자≠승인자(inv11)·current version만(inv2, P2015)·잠금순서 scripts→approval state→advisory(교착 제거)·evidence gate(최신 effective human_decision: accepted+verified/waived/not_applicable, legacy automated verified는 source=migration에만)·자기승인 별도 fn_self_approve_version(allow_self_approval+admin+사유)·reject/revoke(revoke는 비-current 과거승인도 허용, 원승인자 유지+revoked_by/at/reason 상태행 기록)·gate snapshot(audit metadata에 판정 분포·정책·해시).
+- 추적성: version_approval_states.approval_event_id(승인 audit id 결착)·prepare_export가 approval_event_id+export_prepared_at 반환. 이미지 source_version_id/source_scene_hash/source_prompt_hash → list_scene_status가 현재 장면해시 비교로 stale 파생(수정 없이 query). review_seq(claim별 순번)로 effective/latest 정렬 통일.
+- 안전/위생: ★reseed 치명버그—deploy_bootstrap이 R.apply만 하고 ensure_*를 안 불러 reseed 시 Step2.5~4 스키마·승인함수 소실+R.apply가 fn_approve_version을 옛 monolithic으로 되돌림→deploy_bootstrap에 ensure_* 6개 추가+fn_approve_version을 approval_fns 단일 소유로(rls_sql은 더 이상 생성/grant 안 함)+회귀관문(R.apply 후 core 위임형 유지·구형 overload 부재). heartbeat_job+_run_pipeline 30s heartbeat(reap가 live-worker 오판 방지). waived/not_applicable 전용 fn_add_human_assessment(capability DB 강제)+app_rw claim_assessments INSERT 회수. provenance 강화(ai=반드시 generation_job_id).
 
-#2 이미지 provenance/stale: scene_images에 source_version_id·source_scene_hash·source_prompt_hash·generated_by_membership_id 컬럼(ensure_scene_images 멱등). image service regenerate_scene(version_id)이 그 version 블록 장면(block_key+block_type+scene+text)의 canonical sha256을 source_scene_hash로 결착. list_scene_status가 현재 version 장면 해시 vs 이미지 source_scene_hash 비교로 stale 파생 판정(이미지 row 수정 없이 query, 새 version 트랜잭션이 이미지 테이블에 비의존). source 미결착 이미지는 legacy_unbound(자동 compatible 금지). /studio 버전페이지 이미지에 stale 배지. (최종 publication에서 대본+이미지 두 축 합산은 외부게시 붙일 때.)
+읽기 query service: services/workspace.py get_version_workspace가 버전페이지 데이터(script·version·blocks·claims+effective·approval_status·stale·img_keys·images_status·available_actions) 단일 반환. /studio ui_version이 인라인 SQL 대신 이걸 사용. available_actions는 편의(버튼)이고 실제 mutation은 쓰기 service가 재검사.
 
-#5 review_seq: claim_assessments.review_seq int + partial UNIQUE(hospital,claim,review_seq). fn_add_human_assessment이 claim advisory lock 하 max(review_seq)+1 부여. effective/latest 선택은 created_at DESC,id DESC 유지(이미 결정적)—순번은 감사·표시·동시판정 순서 확정용.
+남은 물리 통합(GPT가 마지막·저우선이라 한 것): 대시보드가 /scripts/<id>/{edit,evidence,approval,images,versions}를 workspace service로 직접 렌더(현재 /studio 리다이렉트). 단 HTML 렌더링(_page/_evidence_panel/_images_panel/_CSS/_u/_csrf_field)이 web/api.py create_app 클로저 안이라 공유 모듈로 추출하거나 대시보드에 재구현하는 큰 UI 대이동 필요. 이후 parity/E2E→기본링크 대시보드→/studio GET redirect→write compat 관찰→DispatcherMiddleware+studio app 제거. 그 후 bytea 용량경보→R2/S3.
 
-#3-4 job디렉터리+heartbeat 보류: 현재 reap_stale은 자동 스케줄이 아니라 생성 재시도 시 run_ep에서 수동 호출(auto-reaper 꺼짐). 1-active 부분유니크+생성 전 _clear_raw_dir로 동시 오염 방지됨. GPT가 "auto-reaper 켜기 전 job-dir 선행, heartbeat 완성 전 auto-reaper 활성화 금지"라 한 조건부와 일치 → run.py 경로가 서브커맨드마다 하드코딩이라(리스크) 병렬/auto-reaper 여는 시점에 함께 리팩터.
+현재 상태: UX는 이미 통합(/studio=대시보드 디자인+단일 로그인+공통 service). 물리 통합을 안 해도 완전 동작하며 운영 안정성(heartbeat 등)은 닫힘.
 
 질문:
-(a) reseed 버그 수정(deploy_bootstrap에 ensure_* 추가, R.apply 뒤 순서) 방식이 맞는지. 장기적으로 fn_approve_version 정의를 rls_sql에서 빼고 approval_fns가 단일 소유하도록 정리할지(현재는 R.apply가 만들고 ensure_approval_fns가 override—두 곳 정의).
-(b) job디렉터리+heartbeat를 auto-reaper 여는 시점까지 보류하는 판단이 맞는지(현재 수동 reap+1-active 가드로 충분한지).
-(c) 다음으로 #6(읽기 query service→대시보드 직접 렌더→/studio 은퇴)로 가도 되는지, 아니면 그 전에 닫을 것(예: provenance created_by를 generation_jobs.initiator_type=membership/system 모델로 정식화)이 있는지.</textarea>
+(a) 지금까지(모든 업무·읽기 로직 service화 + GPT 검토 반영 + reseed 안전 + query service)를 "service 추출 완료"로 승인하는지.
+(b) 물리 통합(대시보드 직접 렌더 → /studio 은퇴)을 지금 진행할지, 아니면 UX·무결성이 이미 안전하니 현 상태를 안정 운영하며 물리 통합은 별도 세션의 집중 작업으로 둘지 — 우선순위 판단.
+(c) 물리 통합을 한다면 렌더링을 공유 모듈(templates/ 또는 render helper)로 추출해서 두 앱이 공유하는 방식이 맞는지, 아니면 대시보드가 workspace service로 자체 템플릿 렌더하고 /studio는 redirect만 남기는 방식이 맞는지.</textarea>
   <button class="copy" onclick="var t=document.getElementById('gpt');t.focus();t.select();try{t.setSelectionRange(0,t.value.length);}catch(e){}var b=this;var ok=function(){b.textContent='✓ 복사됨';b.classList.add('copied');setTimeout(function(){b.textContent='📋 GPT용 전체 복사';b.classList.remove('copied');},2000);};var no=function(){b.textContent='상자를 길게 눌러 복사하세요';setTimeout(function(){b.textContent='📋 GPT용 전체 복사';},2600);};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t.value).then(ok,function(){try{document.execCommand('copy')?ok():no();}catch(e){no();}});}else{try{document.execCommand('copy')?ok():no();}catch(e){no();}}">📋 GPT용 전체 복사</button>
-  <div class="foot">본큐어 파이프라인 · 추적성·이미지·reseed 수정 · 2026-08-02</div>
+  <div class="foot">본큐어 파이프라인 · service 추출 완료 · 2026-08-02</div>
 </div>

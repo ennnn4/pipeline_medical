@@ -9,6 +9,16 @@ class ServiceError(Exception):
     http_status = 400
     code = "service_error"
 
+    def __init__(self, *args, **kw):
+        super().__init__(*args, **kw)
+        # 모든 service 예외의 단일 병목 — 유형·코드별 발생을 구조화 로깅(사후 집계용).
+        try:
+            from services.observability import emit
+            emit("service_error", code=self.code, status=self.http_status,
+                 type=type(self).__name__, msg=(str(args[0])[:200] if args else None))
+        except Exception:
+            pass
+
 
 class Unauthorized(ServiceError):
     http_status = 401
@@ -69,4 +79,9 @@ _SQLSTATE_MAP = {
 def from_sqlstate(sqlstate, message=""):
     """SQLSTATE 코드를 해당 service 예외로 번역(없으면 ServiceError)."""
     cls = _SQLSTATE_MAP.get(sqlstate, ServiceError)
+    try:                                    # 원시 SQLSTATE 차원(P2013/P2014/P2015 구분 집계)
+        from services.observability import emit
+        emit("sqlstate", sqlstate=sqlstate, code=cls.code)
+    except Exception:
+        pass
     return cls(message or sqlstate)

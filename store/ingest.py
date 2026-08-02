@@ -227,10 +227,16 @@ def reap_stale(engine, hospital_id, older_than_sec=1800):
     """heartbeat가 오래 멈춘 active(generating/generated/ingesting) job → stale.
     worker_token을 무효화(NULL)해 늦은 워커가 뒤늦게 상태전이/적재하지 못하게 함(GPT)."""
     with tenant_conn(engine, hospital_id) as cn:
-        cn.execute(text("update generation_jobs set status='stale', worker_token=null, updated_at=now() "
+        r = cn.execute(text("update generation_jobs set status='stale', worker_token=null, updated_at=now() "
                         "where hospital_id=:h and status in ('generating','generated','ingesting') "
                         "and coalesce(heartbeat_at, started_at, created_at) < now() - (:s || ' seconds')::interval"),
                    {"h": hospital_id, "s": str(older_than_sec)})
+    if r.rowcount:                          # 죽은 워커 회수 건수(관측) — 정상 0
+        try:
+            from services.observability import emit
+            emit("reap_stale", reaped=r.rowcount)
+        except Exception:
+            pass
 
 # ── 콘텐츠 적재 (별도 트랜잭션, job 잠금 + job.script_id 기준) ──
 def ingest_content(engine, hospital_id, job_id, script_list, membership_id=None):
