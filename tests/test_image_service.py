@@ -12,11 +12,8 @@ def _ctx(tenant, roles):
 
 
 def _ensure_scene_images(owner):
-    from store.seed_images import DDL, _policies
-    with owner.begin() as cn:
-        cn.execute(text(DDL))
-        for s in _policies():
-            cn.execute(text(s))
+    from store.seed_images import ensure_scene_images
+    ensure_scene_images(owner)
 
 
 def _seed_image(owner, h, key="blk_1", prompt="base prompt"):
@@ -51,3 +48,25 @@ def test_regen_missing_scene(owner, rw, tenant):
     h = tenant["hospital_id"]; _ensure_scene_images(owner)
     with pytest.raises(NotFound):
         im.regenerate_scene(rw, _ctx(tenant, {"editor"}), "nope", generator=lambda p: b"X")
+
+
+def test_image_stale_on_scene_change(owner, rw, tenant):
+    """이미지를 version v 장면으로 생성 후 대본 장면이 바뀌면 stale 파생 판정."""
+    from store.testkit import new_version, new_block
+    h = tenant["hospital_id"]; _ensure_scene_images(owner)
+    with owner.begin() as cn:
+        sc, v = new_version(cn, h)
+        cn.execute(text("update scripts set current_version_id=:v where id=:s"), {"v": v, "s": sc})
+        b = new_block(cn, h, v, 0, key="blk_1")
+        cn.execute(text("update script_blocks set scene='원래 장면', text='원래 문구' where id=:b"), {"b": b})
+    _seed_image(owner, h, key="blk_1")
+    # 현재 version 장면으로 이미지 생성(source 결착)
+    im.regenerate_scene(rw, _ctx(tenant, {"editor"}), "blk_1", version_id=v, generator=lambda p: b"IMG")
+    st = im.list_scene_status(rw, _ctx(tenant, {"editor"}), v)
+    assert st["blk_1"]["stale"] is False                    # 방금 그 장면으로 생성 → 최신
+    # 대본 장면 변경 → stale
+    with owner.begin() as cn:
+        cn.execute(text("update script_blocks set text='바뀐 문구' where hospital_id=:h and version_id=:v and stable_block_key='blk_1'"),
+                   {"h": h, "v": v})
+    st2 = im.list_scene_status(rw, _ctx(tenant, {"editor"}), v)
+    assert st2["blk_1"]["stale"] is True and st2["blk_1"]["reason"] == "source_scene_changed"

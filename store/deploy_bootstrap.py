@@ -141,7 +141,9 @@ ensure_materials_schema(eng)        # materials·material_versions·gjm 복합FK
 ensure_provision(eng)              # fn_provision_hospital(충돌정책)
 ensure_approval_foundation(eng)    # 작성자·superseded·자기승인·waived·gate snapshot·revoke·approval_event
 ensure_approval_fns(eng)           # 승인 core+wrappers(fn_approve_version을 core 위임형으로 교체)
-print("[schema] 생성job·자료버전·승인함수·provisioning 적용(reseed 안전)")
+from store.seed_images import ensure_scene_images
+ensure_scene_images(eng)           # scene_images + provenance(이미지 stale 판정)
+print("[schema] 생성job·자료버전·승인함수·provisioning·이미지 적용(reseed 안전)")
 
 # ── 4) app_rw 실제 비밀번호 설정 ──────────────────────────
 _pw_lit = APP_RW_PASSWORD.replace("'", "''")   # ALTER ROLE는 유틸리티문(파라미터 바인딩 불가) → 안전 이스케이프 후 인라인

@@ -13,6 +13,7 @@ from services import scripts as scripts_service
 from services import evidence as evidence_service
 from services import approvals as approvals_service
 from services import exports as exports_service
+from services import images as images_service
 from services.exceptions import ServiceError
 from flask import Flask, request, jsonify, session, g, abort, redirect, Response
 from markupsafe import escape
@@ -129,7 +130,7 @@ document.addEventListener('keydown',function(e){var lb=document.getElementById('
  if(e.key==='ArrowRight'){ci=(ci+1)%TH.length;_sh()}else if(e.key==='ArrowLeft'){ci=(ci-1+TH.length)%TH.length;_sh()}else if(e.key==='Escape')lb.style.display='none';});
 </script>"""
 
-def _images_panel(slug, version_id, blocks, img_keys, is_current):
+def _images_panel(slug, version_id, blocks, img_keys, is_current, img_status=None):
     """장면별 AI 이미지 썸네일(클릭=라이트박스) + 피드백 재생성 폼. 편집폼과 분리(폼 중첩 방지)."""
     if not img_keys:
         return ""
@@ -143,8 +144,12 @@ def _images_panel(slug, version_id, blocks, img_keys, is_current):
                  f'<input name=feedback placeholder="어떻게 바꿀까? (비우면 새 버전으로 재생성)" '
                  f'style="flex:1;font-size:12px;padding:7px;margin:0"><button class="btn g" '
                  f'style="padding:7px 12px;font-size:12px" onclick="this.innerHTML=\'생성중…\'">🎨 다시</button></form>') if is_current else ""
+        stx = (img_status or {}).get(key) or {}
+        badge = ('<span class="badge stale" style="font-size:11px">⚠ 대본 변경됨 — 재생성 권장</span>' if stx.get("stale") and stx.get("reason") == "source_scene_changed"
+                 else '<span class="badge stale" style="font-size:11px">⚠ 출처 미결착(수동 확인)</span>' if stx.get("stale")
+                 else "")
         cells.append(
-            f'<div class=blk id="img_{escape(key)}"><div class=key>{escape(key)} · {escape((b["block_type"] or "")[:20])}</div>'
+            f'<div class=blk id="img_{escape(key)}"><div class=key>{escape(key)} · {escape((b["block_type"] or "")[:20])} {badge}</div>'
             f'<img class=thumb src="{_u(f"/img/h/{slug}/{key}")}" alt="scene" onclick="LB(this)">{regen}</div>')
     note = ('<p><small>영상용 <b>개념 B롤</b>(AI 생성)입니다. 실제 환자사진·논문 그림이 아니며, '
             '사용 전 저작권·의학표현은 원장 확인. 마음에 안 들면 아래에 적고 “다시”.</small></p>')
@@ -364,7 +369,12 @@ def create_app(engine=None):
                       f'<button class=btn type=submit style="background:#f04452">승인 철회</button></form>')
         diff = f'<a class="btn g" href="{_u(f"/api/h/{slug}/versions/{version_id}/diff")}?from={sc.parent_version_id}">diff(JSON)</a>' if sc.parent_version_id else ""
         evidence = _evidence_panel(slug, claims, is_current, version_id, sc.script_id)
-        images = _images_panel(slug, version_id, blocks, img_keys, is_current)
+        try:      # 이미지 stale 파생 판정(대본 장면이 이미지 생성 당시와 달라졌는지)
+            _ctx_img = ActorContext.resolve(app.config["ENGINE"], session.get("user_id"), slug, g.request_id)
+            img_status = images_service.list_scene_status(app.config["ENGINE"], _ctx_img, version_id)
+        except Exception:
+            img_status = {}
+        images = _images_panel(slug, version_id, blocks, img_keys, is_current, img_status)
         return _page(f"버전 {sc.version_no}",
                      f'<div class=card><h1>버전 v{sc.version_no} {badge}</h1>{msg}'
                      f'<h2>블록 (편집 → 새 immutable 버전)</h2>{editform}{approve}{reject}{revoke}{export} {diff} '
@@ -476,7 +486,7 @@ def create_app(engine=None):
         feedback = (request.form.get("feedback") or "").strip()
         try:      # 이미지 재생성 규칙(권한·프롬프트·영속)은 공통 image service. OpenAI는 TX 밖.
             ctx = ActorContext.resolve(app.config["ENGINE"], session.get("user_id"), slug, g.request_id)
-            images_service.regenerate_scene(app.config["ENGINE"], ctx, block_key, feedback)
+            images_service.regenerate_scene(app.config["ENGINE"], ctx, block_key, feedback, version_id=version_id)
             return redirect(_u(f"/ui/h/{slug}/versions/{version_id}?m=regen#{block_key}"))
         except ServiceError as e:
             if e.http_status == 401:

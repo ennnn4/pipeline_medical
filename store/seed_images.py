@@ -27,6 +27,23 @@ CREATE TABLE IF NOT EXISTS scene_images (
 );
 """
 
+# 이미지 provenance(GPT): 어떤 version의 어떤 장면 입력으로 생성했는지 → 대본 변경 시 stale 파생.
+_PROVENANCE = [
+    "ALTER TABLE scene_images ADD COLUMN IF NOT EXISTS source_version_id uuid;",
+    "ALTER TABLE scene_images ADD COLUMN IF NOT EXISTS source_scene_hash text;",   # 생성에 쓴 장면 입력 canonical 해시
+    "ALTER TABLE scene_images ADD COLUMN IF NOT EXISTS source_prompt_hash text;",
+    "ALTER TABLE scene_images ADD COLUMN IF NOT EXISTS generated_by_membership_id uuid;",
+]
+
+def ensure_scene_images(owner_engine):
+    """scene_images 테이블 + 정책 + provenance 컬럼(멱등). deploy_bootstrap·image service 전제."""
+    with owner_engine.begin() as cn:
+        cn.execute(text(DDL))
+        for s in _PROVENANCE:
+            cn.execute(text(s))
+        for s in _policies():
+            cn.execute(text(s))
+
 def _policies():
     return [
         "ALTER TABLE scene_images ENABLE ROW LEVEL SECURITY;",
