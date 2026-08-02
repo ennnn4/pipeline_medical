@@ -100,18 +100,19 @@ def test_policy_change_stale(owner, rw, tenant):
     with tenant_conn(rw, h, m) as cn:
         assert is_stale(cn, h, v, "policy-2") is True
 
-def test_new_assessment_changes_effective_stale(owner, rw, tenant):
+def test_approved_version_assessment_frozen(owner, rw, tenant):
+    """Step3: 승인된 version의 근거(claim_assessments) 변경은 DB 트리거가 차단(inv13 동결)."""
     h, m = tenant["hospital_id"], tenant["membership_id"]
     _, v, b, c = _version_with_claim(owner, h); _grant(owner, h, m, "approver")
     with tenant_conn(rw, h, m) as cn:
         approve_version(cn, h, v, "policy-1")
-    with owner.begin() as cn:
-        cn.execute(text("insert into claim_assessments(id,hospital_id,claim_id,assessment_kind,idempotency_key,"
-                        "support_level,verification_status,medical_risk,created_by_membership_id) "
-                        "values(:i,:h,:c,'human_review','hr:1','partial','verified','high',:m)"),
-                   {"i": uuid.uuid4(), "h": h, "c": c, "m": m})
-    with tenant_conn(rw, h, m) as cn:
-        assert is_stale(cn, h, v, "policy-1") is True
+    with pytest.raises(Exception) as ei:            # 승인 후 assessment INSERT → 동결(2BP01)
+        with owner.begin() as cn:
+            cn.execute(text("insert into claim_assessments(id,hospital_id,claim_id,assessment_kind,idempotency_key,"
+                            "support_level,verification_status,medical_risk,created_by_membership_id) "
+                            "values(:i,:h,:c,'human_review','hr:1','partial','verified','high',:m)"),
+                       {"i": uuid.uuid4(), "h": h, "c": c, "m": m})
+    assert sqlstate(ei.value) == "2BP01"
 
 def test_cross_hospital_approval_blocked(owner, rw, tenant):
     """A 세션이 B의 version을 승인 시도 → 차단(복합 WHERE not-found)."""

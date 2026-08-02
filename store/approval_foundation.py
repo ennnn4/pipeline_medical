@@ -74,6 +74,29 @@ _FN_GRANTS = [
     "ALTER FUNCTION public.fn_mark_version_superseded(uuid,uuid,uuid,uuid) OWNER TO app_owner;",
 ]
 
+# DB 백스톱(inv13/GPT): approved/revoked version의 근거(claim_assessments) 변경 금지.
+# rls_sql의 trg_lock_assessment(advisory lock)는 그대로 두고, 별도 freeze 트리거를 더한다.
+_FN_FREEZE_ASSESS = """
+CREATE OR REPLACE FUNCTION public.fn_freeze_assessment_if_decided() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+DECLARE v_status text; v_ver uuid;
+BEGIN
+  SELECT c.version_id INTO v_ver FROM public.claims c
+    WHERE c.id = NEW.claim_id AND c.hospital_id = NEW.hospital_id;
+  IF v_ver IS NOT NULL THEN
+    SELECT status INTO v_status FROM public.version_approval_states
+      WHERE hospital_id = NEW.hospital_id AND version_id = v_ver;
+    IF v_status IN ('approved','revoked') THEN
+      RAISE EXCEPTION '% version의 근거는 변경 불가(새 버전 필요)', v_status USING ERRCODE='2BP01';
+    END IF;
+  END IF;
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS trg_freeze_assessment ON claim_assessments;
+CREATE TRIGGER trg_freeze_assessment BEFORE INSERT ON claim_assessments
+  FOR EACH ROW EXECUTE FUNCTION public.fn_freeze_assessment_if_decided();
+"""
+
 
 def ensure_approval_foundation(owner_engine):
     with owner_engine.begin() as cn:
@@ -82,3 +105,4 @@ def ensure_approval_foundation(owner_engine):
         cn.execute(text(_FN_SUPERSEDE))
         for s in _FN_GRANTS:
             cn.execute(text(s))
+        cn.execute(text(_FN_FREEZE_ASSESS))

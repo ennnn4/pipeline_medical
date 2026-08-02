@@ -10,6 +10,7 @@ import os, uuid, secrets, hmac
 from contextlib import contextmanager
 from services.context import ActorContext
 from services import scripts as scripts_service
+from services import evidence as evidence_service
 from services.exceptions import ServiceError
 from flask import Flask, request, jsonify, session, g, abort, redirect, Response
 from markupsafe import escape
@@ -73,18 +74,21 @@ def _require_role(conn, hid, mid, allowed):
 _SUPPORT_KO = {"direct": "직접근거", "partial": "부분근거", "inferred": "추론", "unsupported": "근거없음", "unverified": "미검증"}
 _KIND_KO = {"automated": "자동검증", "human_review": "원장검수", "override": "원장확정", "migration": "이관"}
 
-def _review_buttons(slug, claim_id, is_current):
-    """원장 검수/반려 버튼(사람 판정=human_review, 자동보다 우선). 현재 버전에서만 노출."""
+def _review_buttons(slug, claim_id, is_current, version_id, script_id):
+    """원장 검수/반려 버튼(사람 판정=human_review, 자동보다 우선). 현재 버전에서만 노출.
+    version_id·script_id를 명시 전송 → service가 current 재검사·소속 검증(지연 저장 차단)."""
     if not is_current:
         return ""
     act = _u(f"/ui/h/{slug}/claims/{claim_id}/review")
+    hidden = (f'{_csrf_field()}<input type=hidden name=version_id value="{version_id}">'
+              f'<input type=hidden name=script_id value="{script_id}">')
     return (f'<div style="margin-top:6px;display:flex;gap:6px">'
-            f'<form method=post action="{act}" style="margin:0">{_csrf_field()}<input type=hidden name=decision value=confirm>'
+            f'<form method=post action="{act}" style="margin:0">{hidden}<input type=hidden name=decision value=confirm>'
             f'<button class=btn style="padding:4px 12px;font-size:13px;background:#12b886">확정</button></form>'
-            f'<form method=post action="{act}" style="margin:0">{_csrf_field()}<input type=hidden name=decision value=reject>'
+            f'<form method=post action="{act}" style="margin:0">{hidden}<input type=hidden name=decision value=reject>'
             f'<button class=btn style="padding:4px 12px;font-size:13px;background:#f04452">반려</button></form></div>')
 
-def _evidence_panel(slug, claims, is_current):
+def _evidence_panel(slug, claims, is_current, version_id, script_id):
     """4단계: 버전의 의학주장별 유효 근거판정 + 원문 인용 + 원장 검수/반려.
     검증됨=초록, 반려/실패=빨강, 판정없음=회색(미검증). 자동판정은 원문 근거에만, 최종은 원장."""
     if not claims:
@@ -113,7 +117,7 @@ def _evidence_panel(slug, claims, is_current):
             f'<span class="badge" style="{style}">{label}</span>{sup}'
             f'{f"<small>{escape(kind)}</small>" if kind else ""}</div>'
             f'<div style="margin-top:6px;font-size:14px">{escape((c["claim_text"] or "")[:220])}</div>'
-            f'{src}{quote}{rat}{_review_buttons(slug, c["id"], is_current)}</div>')
+            f'{src}{quote}{rat}{_review_buttons(slug, c["id"], is_current, version_id, script_id)}</div>')
     note = ('<p><small>자동검증은 <b>논문 원문을 실제로 대조</b>해 판정합니다(근거 문장 인용). '
             '의학적 근거등급·환자적용의 최종 판단은 원장 몫이며, <b>원장 확정/반려가 자동판정보다 우선</b>합니다.</small></p>')
     summary = (f'검증됨 <b style="color:#12b886">{verified}</b> · '
@@ -311,6 +315,7 @@ def create_app(engine=None):
                "e422": '<div class="msg e">미검증/미지원 claim이 있어 승인할 수 없습니다(4단계 근거검증 필요).</div>',
                "edited": '<div class="msg s">새 버전이 생성되었습니다(미승인).</div>',
                "reviewed": '<div class="msg s">원장 검수가 반영되었습니다(자동판정보다 우선).</div>',
+               "conflict": '<div class="msg e">현재 버전이 바뀌었거나 승인된 버전이라 검수를 반영하지 못했습니다.</div>',
                "regen": '<div class="msg s">이미지를 다시 생성했습니다.</div>',
                "regenfail": '<div class="msg e">이미지 재생성 실패(OpenAI 키/네트워크 확인).</div>'}.get(request.args.get("m"), "")
         with tenant(slug) as (conn, hid, mid):
@@ -351,7 +356,7 @@ def create_app(engine=None):
         approve = (f'<form method=post action="{_u(f"/ui/h/{slug}/versions/{version_id}/approve")}" style="margin-top:12px">{_csrf_field()}'
                    f'<button class=btn type=submit>✅ 승인</button></form>') if (is_current and stale) else ""
         diff = f'<a class="btn g" href="{_u(f"/api/h/{slug}/versions/{version_id}/diff")}?from={sc.parent_version_id}">diff(JSON)</a>' if sc.parent_version_id else ""
-        evidence = _evidence_panel(slug, claims, is_current)
+        evidence = _evidence_panel(slug, claims, is_current, version_id, sc.script_id)
         images = _images_panel(slug, version_id, blocks, img_keys, is_current)
         return _page(f"버전 {sc.version_no}",
                      f'<div class=card><h1>버전 v{sc.version_no} {badge}</h1>{msg}'
@@ -393,33 +398,20 @@ def create_app(engine=None):
     # ── 원장 검수/반려: 주장별 사람 판정(human_review) — 자동판정보다 우선 ──
     @app.post("/ui/h/<slug>/claims/<claim_id>/review")
     def ui_review(slug, claim_id):
-        if not session.get("user_id"): abort(401)
+        version_id = request.form.get("version_id"); script_id = request.form.get("script_id")
+        decision = request.form.get("decision")
         try:
-            cl_uuid = uuid.UUID(claim_id)
+            uuid.UUID(claim_id); uuid.UUID(version_id); uuid.UUID(script_id)   # 폼 누락/오형식 → 400
         except (TypeError, ValueError):
             abort(400)
-        decision = request.form.get("decision")
-        if decision == "confirm":
-            sup, vf, risk = "direct", "verified", "low"
-        elif decision == "reject":
-            sup, vf, risk = "unsupported", "failed", "high"
-        else:
-            abort(400)
-        with tenant(slug) as (conn, hid, mid):
-            _require_role(conn, hid, mid, {"approver", "admin"})   # 근거 검수는 원장(approver/admin)
-            row = conn.execute(text("select version_id from claims where hospital_id=:h and id=:c"),
-                               {"h": hid, "c": cl_uuid}).first()
-            if not row: abort(404)
-            # 사람 판정 append(불변; effective view가 최신 human을 automated보다 우선)
-            conn.execute(text(
-                "insert into claim_assessments(id,hospital_id,claim_id,assessment_kind,idempotency_key,"
-                "support_level,verification_status,medical_risk,rationale,created_by_membership_id) "
-                "values(:i,:h,:c,'human_review',:ik,:sup,:vf,:risk,:ra,:mid)"),
-                {"i": uuid.uuid4(), "h": hid, "c": cl_uuid, "ik": uuid.uuid4().hex,
-                 "sup": sup, "vf": vf, "risk": risk,
-                 "ra": ("원장 확정" if decision == "confirm" else "원장 반려"), "mid": mid})
-            vid = row.version_id
-        return redirect(_u(f"/ui/h/{slug}/versions/{vid}?m=reviewed"))
+        try:      # 검수 규칙(권한·current 재검사·approved 동결·소속검증)은 공통 evidence service
+            ctx = ActorContext.resolve(app.config["ENGINE"], session.get("user_id"), slug, g.request_id)
+            evidence_service.assess_claim(app.config["ENGINE"], ctx, script_id, version_id, claim_id, decision)
+            return redirect(_u(f"/ui/h/{slug}/versions/{version_id}?m=reviewed"))
+        except ServiceError as e:
+            if e.http_status == 409:   # current 변경/승인 동결 → 최신 버전으로
+                return redirect(_u(f"/ui/h/{slug}/versions/{version_id}?m=conflict"))
+            abort(e.http_status)
 
     # ── 장면 이미지 서빙(DB bytea) ──
     @app.get("/img/h/<slug>/<block_key>")
