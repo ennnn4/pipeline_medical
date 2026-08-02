@@ -12,6 +12,7 @@ from services.context import ActorContext
 from services import scripts as scripts_service
 from services import evidence as evidence_service
 from services import approvals as approvals_service
+from services import exports as exports_service
 from services.exceptions import ServiceError
 from flask import Flask, request, jsonify, session, g, abort, redirect, Response
 from markupsafe import escape
@@ -328,6 +329,8 @@ def create_app(engine=None):
             stale = repo.is_stale(conn, hid, uuid.UUID(version_id), "policy-1")
             is_current = conn.execute(text("select current_version_id=:v from scripts where id=:s"),
                                       {"v": uuid.UUID(version_id), "s": sc.script_id}).scalar()
+            appr_status = conn.execute(text("select status from version_approval_states where hospital_id=:h and version_id=:v"),
+                                       {"h": hid, "v": uuid.UUID(version_id)}).scalar() or "none"
             # 4단계: 이 버전의 의학주장 + 유효 근거판정(사람>자동, migration 제외) + 출처
             claims = conn.execute(text(
                 "select c.id, c.claim_text, e.support_level, e.verification_status, e.medical_risk, "
@@ -353,14 +356,25 @@ def create_app(engine=None):
                     f'<input type=hidden name=expected value="{version_id}">{rows}'
                     f'<button class=btn type=submit>💾 편집 저장(새 버전 생성)</button></form>') if is_current else \
                    f'<p><small>이 버전은 현재 버전이 아니라 편집할 수 없습니다(불변).</small></p>{rows}'
-        approve = (f'<form method=post action="{_u(f"/ui/h/{slug}/versions/{version_id}/approve")}" style="margin-top:12px">{_csrf_field()}'
-                   f'<button class=btn type=submit>✅ 승인</button></form>') if (is_current and stale) else ""
+        _rj = _u(f"/ui/h/{slug}/versions/{version_id}")
+        approve = reject = revoke = export = ""
+        if is_current and appr_status in ("none", "pending"):
+            approve = (f'<form method=post action="{_rj}/approve" style="display:inline-block;margin-top:12px">{_csrf_field()}'
+                       f'<button class=btn type=submit>✅ 승인</button></form>')
+            reject = (f'<form method=post action="{_rj}/reject" style="display:inline-block;margin-top:12px;margin-left:6px">{_csrf_field()}'
+                      f'<input name=reason placeholder="반려 사유" style="padding:6px 8px;font-size:13px">'
+                      f'<button class=btn type=submit style="background:#f04452">반려</button></form>')
+        if appr_status == "approved":
+            export = f'<a class="btn g" style="margin-left:6px" href="{_u(f"/api/h/{slug}/scripts/{sc.script_id}/versions/{version_id}/export")}">⬇ export(JSON)</a>'
+            revoke = (f'<form method=post action="{_rj}/revoke" style="display:inline-block;margin-top:12px;margin-left:6px">{_csrf_field()}'
+                      f'<input name=reason placeholder="철회 사유" style="padding:6px 8px;font-size:13px">'
+                      f'<button class=btn type=submit style="background:#f04452">승인 철회</button></form>')
         diff = f'<a class="btn g" href="{_u(f"/api/h/{slug}/versions/{version_id}/diff")}?from={sc.parent_version_id}">diff(JSON)</a>' if sc.parent_version_id else ""
         evidence = _evidence_panel(slug, claims, is_current, version_id, sc.script_id)
         images = _images_panel(slug, version_id, blocks, img_keys, is_current)
         return _page(f"버전 {sc.version_no}",
                      f'<div class=card><h1>버전 v{sc.version_no} {badge}</h1>{msg}'
-                     f'<h2>블록 (편집 → 새 immutable 버전)</h2>{editform}{approve} {diff} '
+                     f'<h2>블록 (편집 → 새 immutable 버전)</h2>{editform}{approve}{reject}{revoke}{export} {diff} '
                      f'<a class="btn g" href="{_u("/logout")}">로그아웃</a></div>{images}{evidence}')
 
     @app.post("/ui/h/<slug>/scripts/<script_id>/edit")
@@ -422,6 +436,16 @@ def create_app(engine=None):
         reason = (request.form.get("reason") or "").strip()
         return _approval_action(slug, version_id,
                                 lambda ctx: approvals_service.self_approve(app.config["ENGINE"], ctx, version_id, reason), "approved")
+
+    # ── export gate: current이며 approved인 version만 산출물 반환(inv14) ──
+    @app.get("/api/h/<slug>/scripts/<script_id>/versions/<version_id>/export")
+    def export_version(slug, script_id, version_id):
+        try:
+            ctx = ActorContext.resolve(app.config["ENGINE"], session.get("user_id"), slug, g.request_id)
+            payload = exports_service.prepare_export(app.config["ENGINE"], ctx, script_id, version_id)
+            return jsonify(payload), 200
+        except ServiceError as e:
+            return jsonify(error=e.code, detail=str(e)), e.http_status
 
     # ── 원장 검수/반려: 주장별 사람 판정(human_review) — 자동판정보다 우선 ──
     @app.post("/ui/h/<slug>/claims/<claim_id>/review")
