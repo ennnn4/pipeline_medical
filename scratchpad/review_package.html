@@ -1,4 +1,4 @@
-<title>본큐어 파이프라인 — service 추출 완료 보고</title>
+<title>본큐어 파이프라인 — 운영 마감 완료 보고</title>
 <style>
   :root{--bg:#f6f7f9;--card:#fff;--ink:#0b1524;--muted:#5b6b7f;--line:#e6e9ef;--brand:#1b64f2;--brand-soft:#e8f0fe;
     --ok:#0f9d58;--ok-soft:#e6f4ea;--warn:#b8860b;--warn-soft:#fbf3dd;
@@ -38,61 +38,56 @@
 </style>
 
 <div class="wrap">
-  <div class="eyebrow">본큐어 파이프라인 · service 추출 완료</div>
-  <h1>업무·읽기 로직 전면 service화 완료</h1>
-  <div class="sub">모든 쓰기·읽기 로직이 공통 service + DB definer 함수로 이동했고, GPT 검토(승인 게이트·추적성·reseed·단일소유·heartbeat·review_seq)까지 반영했습니다. 남은 것은 물리 통합뿐입니다.</div>
-  <div class="status"><span class="chip ok">✓ 테스트 127 통과</span><span class="chip ok">✓ 전부 라이브</span></div>
+  <div class="eyebrow">본큐어 파이프라인 · GPT 최종승인 후 운영 마감</div>
+  <h1>service 추출 승인 확정 · 운영 마감 3건 완료</h1>
+  <div class="sub">GPT가 "모든 도메인 업무규칙 + 읽기 workspace 모델의 service화 완료"로 <b>최종 승인</b>했습니다. 물리 통합은 긴급하지 않다는 판정에 따라, 착수 전 운영 마감(회귀관문·제약문서·관측성)을 먼저 닫고 물리 통합은 별도 milestone로 등록했습니다.</div>
+  <div class="status"><span class="chip ok">✓ GPT service 추출 승인</span><span class="chip ok">✓ 테스트 135 통과</span><span class="chip ok">✓ 전부 라이브</span></div>
 
   <div class="card">
-    <h2><span class="n">✓</span>추출된 service (10)</h2>
-    <div class="row"><span class="tag">계약</span><p><code>exceptions·context(ActorContext)·permissions</code></p></div>
-    <div class="row"><span class="tag">쓰기</span><p><code>scripts(edit)·evidence(assess)·approvals(approve/self/reject/revoke)·images(regen)·exports(gate)</code></p></div>
-    <div class="row"><span class="tag">읽기</span><p><code>workspace(get_version_workspace)</code> — 버전페이지 렌더 데이터 단일 원본.</p></div>
-    <div class="row"><span class="tag">DB</span><p>승인·판정·봉인·복합FK·seal은 SECURITY DEFINER 함수/트리거가 강제. 라우트=파싱+예외매핑만.</p></div>
+    <h2><span class="n">A</span>GPT 최종 판정</h2>
+    <div class="row"><span class="tag">승인</span><p>(a) service 추출 <b>완료 승인</b> — mutation 라우트에 직접 SQL·역할판정 없음, ActorContext 서버결정, definer 함수/트리거가 우회 차단, workspace가 읽기 단일원본, reseed 후 강화 스키마 복원. 단 "시스템 전체 통합 완료"는 아님(남은 건 운영·구조 개선).</p></div>
+    <div class="row"><span class="tag">연기</span><p>(b) 물리 통합은 <b>긴급하지 않음</b> — UX·무결성 이미 통합. 회귀 표면만 넓으니 안정 운영 후 별도 집중 작업. 지금은 관측성·bootstrap 관문이 우선.</p></div>
+    <div class="row"><span class="tag">방식</span><p>(c) UI 복붙·영구 helper 공유 둘 다 금지. 클로저 HTML/CSS를 공유 Jinja template·macro·static으로 추출 → 두 앱 잠시 공유 → 대시보드 canonical → /studio redirect.</p></div>
   </div>
 
   <div class="card">
-    <h2><span class="n">✓</span>GPT 검토 반영(누적)</h2>
-    <div class="row"><span class="tag">승인</span><p>작성자≠승인자·current version·잠금순서(scripts→approval state→advisory)·human_decision gate·자기승인 override·reject/revoke 상태행 기록·gate snapshot·P2013/P2014/P2015 도메인 코드.</p></div>
-    <div class="row"><span class="tag">추적</span><p>export approval_event_id·export_prepared_at / 이미지 source_scene_hash·stale 파생 / review_seq 통일.</p></div>
-    <div class="row"><span class="tag">안전</span><p>🔴 reseed 치명버그(승인함수 소실) 수정 + 단일 소유 + 회귀관문 / heartbeat during run / waived 전용 함수+INSERT 회수 / provenance 강화.</p></div>
+    <h2><span class="n">✓</span>운영 마감 — GPT 지정 3건 완료</h2>
+    <div class="row"><span class="tag">관문</span><p><b>Bootstrap 회귀관문</b>(영구) — fresh full ensure-chain에서 강화 승인함수·단일소유·컬럼·ACL 계약 검증. reseed 치명버그 재발 차단. <code>test_bootstrap_parity.py</code> 4건.</p></div>
+    <div class="row"><span class="tag">문서</span><p><b>공유 raw 디렉터리 제약</b> 명문화 — 병원당 active 1개·heartbeat 중 reap 금지·병렬 금지·lease 탈취 금지(job-dir 도입 전 유효)+강제지점+해제조건.</p></div>
+    <div class="row"><span class="tag">관측</span><p><b>경량 관측성</b> — 구조화 JSON 로그(Render 수집): service 예외(단일병목)·P2013/14/15·/studio 요청(route 패턴)·reap 건수. 예외 안전. <code>test_observability.py</code> 4건.</p></div>
+    <div class="row"><span class="tag">등록</span><p><b>물리 통합 milestone</b>(Step 7–9) 문서 등록 — GPT 상세계획대로. 무기한 연기 방지.</p></div>
   </div>
 
   <div class="card">
-    <h2><span class="n">▲</span>남은 것 — 물리 통합(GPT: 마지막·저우선)</h2>
-    <div class="row"><span class="tag todo">렌더</span><p>대시보드가 <code>/scripts/&lt;id&gt;</code>를 workspace service로 직접 렌더(현재 /studio 리다이렉트). HTML 렌더링이 /studio 클로저 안이라 공유 모듈 추출 필요 — 큰 UI 대이동.</p></div>
-    <div class="row"><span class="tag todo">은퇴</span><p>parity/E2E → /studio GET redirect → DispatcherMiddleware·studio app 제거.</p></div>
-    <div class="row"><span class="tag todo">R2</span><p>bytea 용량 경보 → R2/S3.</p></div>
+    <h2><span class="n">▲</span>남은 것 — 기술부채 milestone(비긴급)</h2>
+    <div class="row"><span class="tag todo">7A</span><p>클로저 렌더링(<code>_page·_evidence_panel·_images_panel·_CSS·_u·_csrf_field</code>) → 공유 Jinja template·macro·static 추출. URL 불변.</p></div>
+    <div class="row"><span class="tag todo">7B·8</span><p>대시보드 <code>/scripts/&lt;id&gt;/{versions,edit,evidence,approval,images}</code> route + 기능별 parity(렌더 결과·redirect·flash까지).</p></div>
+    <div class="row"><span class="tag todo">9·R2</span><p>내부링크 전환 → /studio GET 302 → write compat 관찰 → DispatcherMiddleware·studio app 제거. 이후 bytea → R2/S3.</p></div>
   </div>
 
-  <div class="note">테스트 <b>127개 통과</b>, 전부 라이브. <b>UX는 이미 통합</b>(/studio=대시보드 디자인+단일 로그인+공통 service). 물리 통합을 안 해도 완전히 동작하며, 운영 안정성(heartbeat 등)은 모두 닫혔습니다. 남은 건 두 Flask 앱→하나 정리(순수 아키텍처)와 R2입니다.</div>
+  <div class="note">GPT 지시대로 <b>안정 운영 단계 진입</b>. service화·무결성·UX는 이미 완결이고, 이번에 <b>관측성·회귀관문·제약문서</b>까지 닫아 물리 통합을 안전하게 뒤로 미룰 조건을 갖췄습니다. 물리 통합은 <code>docs/기술부채_물리통합_milestone.md</code>에 등록되어 잊히지 않습니다. 135 tests green, 전부 라이브.</div>
 
   <div class="gpthint">아래 상자를 눌러 전체 선택 후 복사하거나, 버튼을 누르세요.</div>
-  <textarea id="gpt" readonly onclick="this.focus();this.select();">[본큐어 파이프라인 — service 추출 완료 보고, 물리 통합 진입 여부 확인]
+  <textarea id="gpt" readonly onclick="this.focus();this.select();">[본큐어 파이프라인 — 운영 마감 완료 보고(GPT 최종판정 반영)]
 
-배경: Step0~6(계약·edit·evidence·approval·export·image·검증) + GPT 검토 다수 라운드 반영. 127 tests green, 전부 라이브.
+GPT 판정을 반영해 착수 전 운영 마감을 닫았습니다. 135 tests green, 전부 라이브(커밋 458ee41).
 
-추출된 service(services/*.py):
-- exceptions(타입예외+SQLSTATE 번역: 42501/23514/P0002/P2013 decided_version_frozen/P2014 supersede_conflict/P2015 not_current), context(ActorContext.resolve—hospital·membership·roles 서버결정), permissions.
-- scripts.edit_blocks / evidence.assess_claim / approvals(approve·self_approve·reject·revoke) / images.regenerate_scene / exports.prepare_export / workspace.get_version_workspace(읽기 단일원본).
-- DB: fn_approve_core(private)+wrappers, fn_add_human_assessment, fn_mark_version_superseded, freeze/seal 트리거 등 SECURITY DEFINER가 규칙 강제. app_rw는 claim_assessments·version_approval_states 직접 INSERT/UPDATE 회수.
-- 라우트(/studio·/api)=request 파싱 + ActorContext.resolve + service 호출 + 예외→HTTP만. _require_role 제거.
+GPT 판정 요약:
+(a) "모든 도메인 업무규칙 + 읽기 workspace 모델의 service화 완료"로 최종 승인. "시스템 전체 통합 완료"는 아님.
+(b) 물리 통합은 긴급하지 않음 → 안정 운영 후 별도 집중 작업. 지금은 관측성·bootstrap 회귀관문이 우선.
+(c) 클로저 HTML/CSS를 공유 Jinja template·macro·static으로 추출 → 두 앱 잠시 공유 → 대시보드 canonical → /studio redirect.
 
-GPT 검토 반영 누적:
-- 승인 게이트: 작성자≠승인자(inv11)·current version만(inv2, P2015)·잠금순서 scripts→approval state→advisory(교착 제거)·evidence gate(최신 effective human_decision: accepted+verified/waived/not_applicable, legacy automated verified는 source=migration에만)·자기승인 별도 fn_self_approve_version(allow_self_approval+admin+사유)·reject/revoke(revoke는 비-current 과거승인도 허용, 원승인자 유지+revoked_by/at/reason 상태행 기록)·gate snapshot(audit metadata에 판정 분포·정책·해시).
-- 추적성: version_approval_states.approval_event_id(승인 audit id 결착)·prepare_export가 approval_event_id+export_prepared_at 반환. 이미지 source_version_id/source_scene_hash/source_prompt_hash → list_scene_status가 현재 장면해시 비교로 stale 파생(수정 없이 query). review_seq(claim별 순번)로 effective/latest 정렬 통일.
-- 안전/위생: ★reseed 치명버그—deploy_bootstrap이 R.apply만 하고 ensure_*를 안 불러 reseed 시 Step2.5~4 스키마·승인함수 소실+R.apply가 fn_approve_version을 옛 monolithic으로 되돌림→deploy_bootstrap에 ensure_* 6개 추가+fn_approve_version을 approval_fns 단일 소유로(rls_sql은 더 이상 생성/grant 안 함)+회귀관문(R.apply 후 core 위임형 유지·구형 overload 부재). heartbeat_job+_run_pipeline 30s heartbeat(reap가 live-worker 오판 방지). waived/not_applicable 전용 fn_add_human_assessment(capability DB 강제)+app_rw claim_assessments INSERT 회수. provenance 강화(ai=반드시 generation_job_id).
+이번에 완료한 운영 마감(GPT 지정):
+1) Bootstrap 회귀관문(영구) — tests/test_bootstrap_parity.py: deploy_bootstrap과 동일 순서의 fresh full ensure-chain DB에서 검증. ① fn_approve_version이 fn_approve_core 위임 강화형·단일 소유(app_owner)·구형 overload 부재(count=1). ② 필수 함수 존재(fn_approve_core·self/reject/revoke·fn_add_human_assessment·fn_mark_version_superseded·seal/freeze·provision). ③ 필수 컬럼(approval_event_id·revoked_by·superseded_by·human_decision·review_seq·generation_job_id·audit metadata·allow_self_approval·source_scene_hash·worker_token·material_snapshot_hash). ④ app_rw claim_assessments INSERT 회수 유지. → reseed 치명버그(승인함수 소실·monolithic 복귀) 재발을 CI 관문으로 영구 차단.
+2) 공유 raw 디렉터리 제약 문서화 — docs/운영_공유raw디렉터리_제약.md: data/<h>/raw는 병원별(job별 아님) 공유이므로 불변식 명문화 — 병원당 active job 1개(uq_genjobs_one_active), 정상 heartbeat 살아있는 동안 reap 금지, 병원내 병렬 금지, job별 디렉터리 도입 전에는 lease 강제탈취·병렬 실행 금지. 강제지점 표 + 해제조건(job-dir 격리 도입 시).
+3) 경량 관측성 — services/observability.py: 구조화 이벤트를 stdout JSON 한 줄로(Render 로그 스트림 수집). ServiceError 생성 단일병목에서 code·status·type 방출, from_sqlstate에서 원시 P2013/14/15 방출, /studio after_request에서 route 패턴(테넌트 id 미노출)·status 방출, reap_stale 회수건수 방출. 관측 실패가 요청을 깨지 않음(예외 안전, OBS_DISABLE로 비활성). tests/test_observability.py 4건.
+4) 물리 통합 milestone 등록 — docs/기술부채_물리통합_milestone.md: GPT의 Step 7A(추출)·7B(대시보드 route)·8(parity)·9(단계적 은퇴) 상세계획과 공유O/공유X 경계, URL은 route adapter가 주입(service가 반환 금지)까지 기록. 무기한 연기 방지용 기술부채 등록.
 
-읽기 query service: services/workspace.py get_version_workspace가 버전페이지 데이터(script·version·blocks·claims+effective·approval_status·stale·img_keys·images_status·available_actions) 단일 반환. /studio ui_version이 인라인 SQL 대신 이걸 사용. available_actions는 편의(버튼)이고 실제 mutation은 쓰기 service가 재검사.
+현재 상태: GPT 지시대로 안정 운영 단계 진입. service화·무결성·UX 완결 + 관측성·회귀관문·제약문서로 물리 통합을 안전하게 뒤로 미룰 조건 확보.
 
-남은 물리 통합(GPT가 마지막·저우선이라 한 것): 대시보드가 /scripts/<id>/{edit,evidence,approval,images,versions}를 workspace service로 직접 렌더(현재 /studio 리다이렉트). 단 HTML 렌더링(_page/_evidence_panel/_images_panel/_CSS/_u/_csrf_field)이 web/api.py create_app 클로저 안이라 공유 모듈로 추출하거나 대시보드에 재구현하는 큰 UI 대이동 필요. 이후 parity/E2E→기본링크 대시보드→/studio GET redirect→write compat 관찰→DispatcherMiddleware+studio app 제거. 그 후 bytea 용량경보→R2/S3.
-
-현재 상태: UX는 이미 통합(/studio=대시보드 디자인+단일 로그인+공통 service). 물리 통합을 안 해도 완전 동작하며 운영 안정성(heartbeat 등)은 닫힘.
-
-질문:
-(a) 지금까지(모든 업무·읽기 로직 service화 + GPT 검토 반영 + reseed 안전 + query service)를 "service 추출 완료"로 승인하는지.
-(b) 물리 통합(대시보드 직접 렌더 → /studio 은퇴)을 지금 진행할지, 아니면 UX·무결성이 이미 안전하니 현 상태를 안정 운영하며 물리 통합은 별도 세션의 집중 작업으로 둘지 — 우선순위 판단.
-(c) 물리 통합을 한다면 렌더링을 공유 모듈(templates/ 또는 render helper)로 추출해서 두 앱이 공유하는 방식이 맞는지, 아니면 대시보드가 workspace service로 자체 템플릿 렌더하고 /studio는 redirect만 남기는 방식이 맞는지.</textarea>
+확인 요청:
+(1) 위 운영 마감 3건이 "물리 통합 착수 전 선행조건"으로 충분한지(특히 관측 항목이 redirect 후 legacy 호출 추적에 충분한지 — 현재 service_error·sqlstate·/studio http·reap. 필요 시 approval/export 성공·이미지 bytea 총량·endpoint 호출량을 추가).
+(2) 안정 운영 중 다음으로 손댈 우선순위: 물리 통합 착수(별도 브랜치) vs bytea→R2/S3(용량 추세) vs 그대로 관망. 지금 특별한 신규 기능 요구는 없음.</textarea>
   <button class="copy" onclick="var t=document.getElementById('gpt');t.focus();t.select();try{t.setSelectionRange(0,t.value.length);}catch(e){}var b=this;var ok=function(){b.textContent='✓ 복사됨';b.classList.add('copied');setTimeout(function(){b.textContent='📋 GPT용 전체 복사';b.classList.remove('copied');},2000);};var no=function(){b.textContent='상자를 길게 눌러 복사하세요';setTimeout(function(){b.textContent='📋 GPT용 전체 복사';},2600);};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t.value).then(ok,function(){try{document.execCommand('copy')?ok():no();}catch(e){no();}});}else{try{document.execCommand('copy')?ok():no();}catch(e){no();}}">📋 GPT용 전체 복사</button>
-  <div class="foot">본큐어 파이프라인 · service 추출 완료 · 2026-08-02</div>
+  <div class="foot">본큐어 파이프라인 · 운영 마감 완료 · 2026-08-03</div>
 </div>
