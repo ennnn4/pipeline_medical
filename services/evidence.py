@@ -56,14 +56,8 @@ def assess_claim(engine, ctx, script_id, version_id, claim_id, decision, reason=
                             {"h": ctx.hospital_id, "c": cid, "v": vid}).scalar()
         if not owns:
             raise NotFound("이 버전에 속한 근거(claim)가 아닙니다")
-        # 4) 사람 판정 append(불변) — effective view가 최신 human을 automated보다 우선
-        conn.execute(text(
-            "insert into claim_assessments(id,hospital_id,claim_id,assessment_kind,idempotency_key,"
-            "support_level,verification_status,medical_risk,rationale,human_decision,decision_reason,"
-            "created_by_membership_id) "
-            "values(:i,:h,:c,'human_review',:ik,:sup,:vf,:risk,:ra,:hd,:dr,"
-            "NULLIF(current_setting('app.membership_id', true), '')::uuid)"),
-            {"i": uuid.uuid4(), "h": ctx.hospital_id, "c": cid, "ik": uuid.uuid4().hex,
-             "sup": sup, "vf": vf, "risk": risk, "ra": reason[:2000],
-             "hd": human_decision, "dr": reason[:2000]})
+        # 4) 사람 판정 append — 전용 definer 함수만(app_rw 직접 INSERT 회수). capability·동결은 DB가 재검증.
+        conn.execute(text("select fn_add_human_assessment(:h,:c,:sup,:vf,:risk,:hd,:dr)"),
+                     {"h": ctx.hospital_id, "c": cid, "sup": sup, "vf": vf, "risk": risk,
+                      "hd": human_decision, "dr": reason[:2000]})
     return {"claim_id": str(cid), "version_id": str(vid), "decision": decision, "human_decision": human_decision}

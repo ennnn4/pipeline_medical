@@ -23,25 +23,31 @@ def _seed_claim(owner, h):
 
 def _grant(owner, h, m, role):
     with owner.begin() as cn:
-        cn.execute(text("insert into membership_roles(id,hospital_id,membership_id,role) values(:i,:h,:m,:r)"),
-                   {"i": uuid.uuid4(), "h": h, "m": m, "r": role})
+        exists = cn.execute(text("select 1 from membership_roles where hospital_id=:h and membership_id=:m and role=:r"),
+                            {"h": h, "m": m, "r": role}).scalar()
+        if not exists:
+            cn.execute(text("insert into membership_roles(id,hospital_id,membership_id,role) values(:i,:h,:m,:r)"),
+                       {"i": uuid.uuid4(), "h": h, "m": m, "r": role})
 
 
-def _ctx(tenant, roles):
+def _ctx(owner, tenant, roles):
+    # DB membership_roles에도 부여(전용 definer 함수가 실제 역할을 검증하므로 ctx.roles와 일치)
+    for r in roles:
+        _grant(owner, tenant["hospital_id"], tenant["membership_id"], r)
     return ActorContext(user_id=str(tenant["user_id"]), hospital_id=str(tenant["hospital_id"]),
                         membership_id=str(tenant["membership_id"]), roles=frozenset(roles))
 
 
 def test_assess_requires_review_role(rw, owner, tenant):
     h = tenant["hospital_id"]; sc, v, cid = _seed_claim(owner, h)
-    ctx = _ctx(tenant, {"editor"})                       # editor는 검수 권한 없음
+    ctx = _ctx(owner, tenant, {"editor"})                       # editor는 검수 권한 없음
     with pytest.raises(Forbidden):
         ev.assess_claim(rw, ctx, sc, v, cid, "confirm")
 
 
 def test_assess_confirm_appends_human_review(rw, owner, tenant):
     h = tenant["hospital_id"]; sc, v, cid = _seed_claim(owner, h)
-    ctx = _ctx(tenant, {"approver"})
+    ctx = _ctx(owner, tenant, {"approver"})
     ev.assess_claim(rw, ctx, sc, v, cid, "confirm")
     with owner.connect() as cn:
         n = cn.execute(text("select count(*) from claim_assessments where claim_id=:c and assessment_kind='human_review'"),
@@ -52,7 +58,7 @@ def test_assess_confirm_appends_human_review(rw, owner, tenant):
 def test_assess_rejects_stale_version(rw, owner, tenant):
     """current가 바뀐 뒤 과거 version_id로 검수하면 VersionConflict."""
     h = tenant["hospital_id"]; sc, v, cid = _seed_claim(owner, h)
-    ctx = _ctx(tenant, {"approver", "editor"})
+    ctx = _ctx(owner, tenant, {"approver", "editor"})
     # v 기반 편집으로 current를 v2로 이동
     from services import scripts as svc
     with owner.connect() as cn:
@@ -65,7 +71,7 @@ def test_assess_rejects_stale_version(rw, owner, tenant):
 def test_assess_frozen_after_approval(rw, owner, tenant):
     h, m = tenant["hospital_id"], tenant["membership_id"]; sc, v, cid = _seed_claim(owner, h)
     _grant(owner, h, m, "approver")
-    ctx = _ctx(tenant, {"approver"})
+    ctx = _ctx(owner, tenant, {"approver"})
     ev.assess_claim(rw, ctx, sc, v, cid, "confirm")        # 검증됨으로 만들고
     with tenant_conn(rw, h, m) as cn:
         approve_version(cn, h, v, "policy-1")              # 승인
@@ -75,7 +81,7 @@ def test_assess_frozen_after_approval(rw, owner, tenant):
 
 def test_assess_rejects_foreign_claim(rw, owner, tenant):
     h = tenant["hospital_id"]; sc, v, _ = _seed_claim(owner, h)
-    ctx = _ctx(tenant, {"approver"})
+    ctx = _ctx(owner, tenant, {"approver"})
     with pytest.raises(NotFound):                          # 이 버전 소속 아닌 claim
         ev.assess_claim(rw, ctx, sc, v, uuid.uuid4(), "confirm")
 
@@ -84,12 +90,12 @@ def test_waive_requires_admin_and_reason(rw, owner, tenant):
     h = tenant["hospital_id"]; sc, v, cid = _seed_claim(owner, h)
     # approver는 waive 불가(admin capability)
     with pytest.raises(Forbidden):
-        ev.assess_claim(rw, _ctx(tenant, {"approver"}), sc, v, cid, "waive", reason="예외 사유")
+        ev.assess_claim(rw, _ctx(owner, tenant, {"approver"}), sc, v, cid, "waive", reason="예외 사유")
     # admin이라도 사유 없으면 불가
     with pytest.raises(InvalidStateTransition):
-        ev.assess_claim(rw, _ctx(tenant, {"admin"}), sc, v, cid, "waive", reason="   ")
+        ev.assess_claim(rw, _ctx(owner, tenant, {"admin"}), sc, v, cid, "waive", reason="   ")
     # admin + 사유 → 성공, human_decision=waived
-    r = ev.assess_claim(rw, _ctx(tenant, {"admin"}), sc, v, cid, "waive", reason="근거요건 예외 승인")
+    r = ev.assess_claim(rw, _ctx(owner, tenant, {"admin"}), sc, v, cid, "waive", reason="근거요건 예외 승인")
     assert r["human_decision"] == "waived"
     with owner.connect() as cn:
         hd = cn.execute(text("select human_decision, decision_reason from claim_assessments "
@@ -99,7 +105,7 @@ def test_waive_requires_admin_and_reason(rw, owner, tenant):
 
 def test_confirm_sets_accepted_decision(rw, owner, tenant):
     h = tenant["hospital_id"]; sc, v, cid = _seed_claim(owner, h)
-    r = ev.assess_claim(rw, _ctx(tenant, {"approver"}), sc, v, cid, "confirm")
+    r = ev.assess_claim(rw, _ctx(owner, tenant, {"approver"}), sc, v, cid, "confirm")
     assert r["human_decision"] == "accepted"
     with owner.connect() as cn:
         hd = cn.execute(text("select human_decision, verification_status from claim_assessments "

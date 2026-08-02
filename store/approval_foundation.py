@@ -126,6 +126,60 @@ CREATE TRIGGER trg_freeze_assessment BEFORE INSERT ON claim_assessments
 """
 
 
+# 사람 판정(human_review) 전용 쓰기 함수(GPT P0) — app_rw 직접 INSERT 회수, capability를 DB가 강제.
+# waive/not_applicable=admin, accepted/rejected=approver/admin. 승인/철회 version은 동결(P2013).
+_ROLE = ("EXISTS (SELECT 1 FROM public.hospital_memberships hm JOIN public.membership_roles mr "
+         "ON mr.hospital_id=hm.hospital_id AND mr.membership_id=hm.id "
+         "WHERE hm.hospital_id=p_hospital AND hm.id=v_actor AND hm.archived_at IS NULL AND mr.role IN ({roles}))")
+_FN_ADD_ASSESSMENT = ("""
+CREATE OR REPLACE FUNCTION public.fn_add_human_assessment(
+  p_hospital uuid, p_claim uuid, p_support text, p_verif text, p_risk text,
+  p_human_decision text, p_reason text)
+RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+DECLARE v_actor uuid; v_hospital uuid; v_ver uuid; v_status text; v_id uuid;
+BEGIN
+  v_actor := NULLIF(current_setting('app.membership_id', true), '')::uuid;
+  v_hospital := NULLIF(current_setting('app.hospital_id', true), '')::uuid;
+  IF v_actor IS NULL OR v_hospital IS NULL OR v_hospital <> p_hospital THEN
+    RAISE EXCEPTION 'session identity required / hospital mismatch' USING ERRCODE='42501';
+  END IF;
+  IF p_human_decision NOT IN ('accepted','rejected','waived','not_applicable') THEN
+    RAISE EXCEPTION 'invalid human_decision' USING ERRCODE='22023';
+  END IF;
+  -- capability: waive/not_applicable는 admin, accepted/rejected는 approver/admin
+  IF p_human_decision IN ('waived','not_applicable') THEN
+    IF NOT __ROLE_ADMIN__ THEN RAISE EXCEPTION 'waive/not_applicable requires admin' USING ERRCODE='42501'; END IF;
+  ELSE
+    IF NOT __ROLE_APPROVER__ THEN RAISE EXCEPTION 'active approver role required' USING ERRCODE='42501'; END IF;
+  END IF;
+  IF p_human_decision IN ('rejected','waived','not_applicable') AND (p_reason IS NULL OR btrim(p_reason)='') THEN
+    RAISE EXCEPTION 'reason required' USING ERRCODE='23514';
+  END IF;
+  -- claim 소속 + 승인/철회 version 동결
+  SELECT version_id INTO v_ver FROM public.claims WHERE hospital_id=p_hospital AND id=p_claim;
+  IF v_ver IS NULL THEN RAISE EXCEPTION 'claim not found' USING ERRCODE='P0002'; END IF;
+  SELECT status INTO v_status FROM public.version_approval_states WHERE hospital_id=p_hospital AND version_id=v_ver;
+  IF v_status IN ('approved','revoked') THEN
+    RAISE EXCEPTION 'decided version frozen' USING ERRCODE='P2013';
+  END IF;
+  v_id := gen_random_uuid();
+  INSERT INTO public.claim_assessments(id,hospital_id,claim_id,assessment_kind,idempotency_key,
+    support_level,verification_status,medical_risk,rationale,human_decision,decision_reason,created_by_membership_id)
+  VALUES(v_id, p_hospital, p_claim, 'human_review', gen_random_uuid()::text,
+    p_support, p_verif, p_risk, p_reason, p_human_decision, p_reason, v_actor);
+  RETURN v_id;
+END $$;
+""".replace("__ROLE_ADMIN__", _ROLE.format(roles="'admin'"))
+   .replace("__ROLE_APPROVER__", _ROLE.format(roles="'approver','admin'")))
+
+_FN_ADD_GRANTS = [
+    "REVOKE INSERT ON claim_assessments FROM app_rw;",   # 사람 판정은 전용 함수로만
+    "REVOKE ALL ON FUNCTION public.fn_add_human_assessment(uuid,uuid,text,text,text,text,text) FROM PUBLIC;",
+    "GRANT EXECUTE ON FUNCTION public.fn_add_human_assessment(uuid,uuid,text,text,text,text,text) TO app_rw;",
+    "ALTER FUNCTION public.fn_add_human_assessment(uuid,uuid,text,text,text,text,text) OWNER TO app_owner;",
+]
+
+
 def ensure_approval_foundation(owner_engine):
     with owner_engine.begin() as cn:
         for s in STMTS:
@@ -134,3 +188,6 @@ def ensure_approval_foundation(owner_engine):
         for s in _FN_GRANTS:
             cn.execute(text(s))
         cn.execute(text(_FN_FREEZE_ASSESS))
+        cn.execute(text(_FN_ADD_ASSESSMENT))
+        for s in _FN_ADD_GRANTS:
+            cn.execute(text(s))
