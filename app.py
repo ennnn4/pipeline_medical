@@ -225,7 +225,10 @@ def hospital(h):
         chk += f'<span class="pill {cls}">{label}</span>'
         if req and not n: miss.append(k)
     misswarn = (f'<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 필수 자료가 빠졌어요: {", ".join(miss)} — 넣을수록 대본 품질이 올라가요.</div>' if miss else "")
-    outlist = "".join(f'<div class=out><span>{os.path.basename(o)[:-5]}</span><a class=btn href="/h/{h}/view/{os.path.basename(o)}" target=_blank>대시보드 열기</a></div>' for o in outs) or '<div class=muted>아직 만든 대본이 없어요.</div>'
+    studio_url = _pg_studio_url(h)
+    studio_cta = (f'<a class="btn pri" href="{studio_url}" style="display:block;text-align:center;margin-bottom:12px">'
+                  f'✏️ 스튜디오에서 편집 · 근거검증 · 장면이미지 · 승인 →</a>') if studio_url else ''
+    outlist = studio_cta + ("".join(f'<div class=out><span>{os.path.basename(o)[:-5]}</span><a class=btn href="/h/{h}/view/{os.path.basename(o)}" target=_blank>대시보드 열기</a></div>' for o in outs) or '<div class=muted>아직 만든 대본이 없어요.</div>')
     dz_opts = "".join(f'<button type=button class="btn dz" onclick="setTopic(this)">{d}</button>' for d in diseases)
     job = job_get(h)
     running = job.get("running")
@@ -325,6 +328,51 @@ def upload(h):
         saved += 1
     return redirect(f"/h/{h}")
 
+def _pg_hospital_id(slug):
+    """대시보드 병원 slug ↔ PostgreSQL hospital 매핑. 없으면 None(구식 파일 흐름만)."""
+    try:
+        from store.db import make_engine
+        from sqlalchemy import text
+        with make_engine().connect() as cn:
+            return cn.execute(text("select id from hospitals where slug=:s"), {"s": slug}).scalar()
+    except Exception:
+        return None
+
+def _ingest_to_pg(h, topic):
+    """생성된 package.json을 스튜디오 PostgreSQL(대본→버전→블록→주장)에 적재. 반환: version_id or None."""
+    try:
+        import json as _json
+        from store.db import make_engine
+        from store.ingest import ingest_package
+        hid = _pg_hospital_id(h)
+        if not hid:
+            return None
+        p = os.path.join(data_dir(h, "out"), f"{topic}_package.json")
+        if not os.path.exists(p):
+            return None
+        pkg = _json.load(open(p, encoding="utf-8"))
+        res = ingest_package(make_engine(), hid, topic, pkg.get("script") or [], raw=pkg)
+        return res.get("version_id")
+    except Exception:
+        return None
+
+def _pg_studio_url(h):
+    """이 병원의 최신 PG 버전 편집 URL(스튜디오). 없으면 None."""
+    try:
+        from store.db import make_engine
+        from sqlalchemy import text
+        from store.repositories import tenant_conn
+        hid = _pg_hospital_id(h)
+        if not hid:
+            return None
+        with tenant_conn(make_engine(), hid) as cn:
+            vid = cn.execute(text("select current_version_id from scripts where hospital_id=:h "
+                                  "and current_version_id is not null order by updated_at desc limit 1"),
+                             {"h": hid}).scalar()
+        return f"/studio/ui/h/{h}/versions/{vid}" if vid else None
+    except Exception:
+        return None
+
 def _run_pipeline(h, topic, evidence=True):
     job_set(h, topic=topic, status="running", ok=None, log="")
     log = ""; ok = False
@@ -340,6 +388,11 @@ def _run_pipeline(h, topic, evidence=True):
         ok = (proc.returncode == 0)   # run.py all 이 검수 실패/오류 시 non-zero 반환
     except Exception as e:
         log += f"\n[오류] {e}"
+    if ok:
+        vid = _ingest_to_pg(h, topic)     # 스튜디오 PostgreSQL 적재(편집·근거·이미지·승인용)
+        if vid:
+            log += f"\n[스튜디오] 편집·근거·이미지 화면 준비 완료."
+            job_set(h, log=log)
     job_set(h, status="done", ok=ok, log=log)
 
 @app.route("/h/<h>/run", methods=["POST"])
@@ -380,6 +433,20 @@ def _login_page(err=""):
             else '<span class=dot style="width:44px;height:44px;border-radius:13px;font-size:23px">본</span>')
     return render_template_string(LOGIN, css=CSS, err_html=err_html, logo=logo)
 
+def _pg_login(email, pw):
+    """스튜디오와 동일한 PostgreSQL 사용자로 인증(이메일/비번). 성공 시 PG user_id(str) 반환.
+    DATABASE_URL 미설정/오류면 None → 레거시 users.yaml로 폴백."""
+    try:
+        from store.db import make_engine
+        from sqlalchemy import text
+        with make_engine().connect() as cn:
+            row = cn.execute(text("select id, pw_hash from lookup_user_for_login(:e)"), {"e": email}).first()
+        if row and row.pw_hash and check_password_hash(row.pw_hash, pw):
+            return str(row.id)
+    except Exception:
+        pass
+    return None
+
 @app.route("/login", methods=["GET","POST"])
 def login():
     if session.get("user"): return redirect("/")
@@ -387,6 +454,11 @@ def login():
     load_users()  # 첫 실행 시 기본 계정 생성(콘솔에 안내 출력)
     if request.method == "POST":
         u = request.form.get("username","").strip(); p = request.form.get("password","")
+        # 1) PostgreSQL 사용자(스튜디오와 단일 계정) — 한 번 로그인으로 대시보드+스튜디오
+        pg_uid = _pg_login(u, p)
+        if pg_uid:
+            session["user"] = u; session["user_id"] = pg_uid; return redirect("/")
+        # 2) 레거시 users.yaml(관리자 등) 폴백
         users = load_users()
         if u in users and check_password_hash(users[u], p):
             session["user"] = u; return redirect("/")
