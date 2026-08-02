@@ -15,3 +15,5 @@ youtube-transcript-api>=0.6.2
 google-api-python-client>=2.0   # YouTube Data API (조회수·길이·게시일)
 # hwp 지원(선택): pip install pyhwp  → hwp5txt
 # OCR(선택, 스캔본): tesseract 바이너리 + pytesseract
+openai>=1.100       # 장면 이미지 재생성(gpt-image-1)
+Pillow>=10.0         # 이미지 리사이즈(웹사이즈 JPEG)

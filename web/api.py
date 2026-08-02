@@ -8,7 +8,7 @@ CAS 충돌→409, 역할/권한(42501)→403, 미검증 claim(23514)→422, 없�
 """
 import os, uuid
 from contextlib import contextmanager
-from flask import Flask, request, jsonify, session, g, abort, redirect
+from flask import Flask, request, jsonify, session, g, abort, redirect, Response
 from markupsafe import escape
 from werkzeug.security import check_password_hash
 from sqlalchemy import text
@@ -26,7 +26,10 @@ h1{font-size:22px;letter-spacing:-.03em}h2{font-size:16px;margin:0 0 10px}.badge
 .btn{font:inherit;font-weight:700;border:0;border-radius:10px;padding:10px 18px;background:#3182f6;color:#fff;cursor:pointer}.btn.g{background:#f2f4f6;color:#191f28;border:1px solid #e5e8eb}
 label{font-size:12px;color:#8b95a1;font-weight:700}input{width:100%;font:inherit;border:1px solid #e5e8eb;border-radius:10px;padding:10px;margin:6px 0 12px}
 .msg{padding:10px 14px;border-radius:10px;margin:10px 0;font-weight:600}.msg.e{background:#fdeaec;color:#f04452}.msg.s{background:#e6f7f0;color:#12b886}
-.blk{border-top:1px solid #eef;padding:12px 0}.key{font-size:12px;color:#8b95a1;font-weight:700}small{color:#8b95a1}"""
+.blk{border-top:1px solid #eef;padding:12px 0}.key{font-size:12px;color:#8b95a1;font-weight:700}small{color:#8b95a1}
+.thumb{height:92px;border-radius:8px;cursor:pointer;border:1px solid #e5e8eb;object-fit:cover;display:block;margin-top:6px}
+.lb{display:none;position:fixed;inset:0;background:rgba(0,0,0,.86);z-index:100;align-items:center;justify-content:center}
+.lb img{max-width:92vw;max-height:88vh;border-radius:10px;box-shadow:0 8px 40px rgba(0,0,0,.5)}"""
 
 def _page(title, body):
     fav = f"<link rel=icon href='{ICON_URI}'>" if ICON_URI else ""
@@ -90,6 +93,37 @@ def _evidence_panel(slug, claims, is_current):
     summary = (f'검증됨 <b style="color:#12b886">{verified}</b> · '
                f'미검증 <b style="color:#8b95a1">{unver}</b> · 반려/실패 <b style="color:#f04452">{failed}</b> (총 {len(claims)})')
     return (f'<div class=card><h2>근거 검증 (4단계)</h2><p>{summary}</p>{note}{"".join(rows)}</div>')
+
+
+_LIGHTBOX = """<div class=lb id=lb onclick="if(event.target.id==='lb')this.style.display='none'"><img id=lbimg></div>
+<script>
+var TH=[].slice.call(document.querySelectorAll('.thumb')),ci=0;
+function LB(el){ci=TH.indexOf(el);_sh()}
+function _sh(){document.getElementById('lbimg').src=TH[ci].src;document.getElementById('lb').style.display='flex'}
+document.addEventListener('keydown',function(e){var lb=document.getElementById('lb');if(!lb||lb.style.display!=='flex')return;
+ if(e.key==='ArrowRight'){ci=(ci+1)%TH.length;_sh()}else if(e.key==='ArrowLeft'){ci=(ci-1+TH.length)%TH.length;_sh()}else if(e.key==='Escape')lb.style.display='none';});
+</script>"""
+
+def _images_panel(slug, version_id, blocks, img_keys, is_current):
+    """장면별 AI 이미지 썸네일(클릭=라이트박스) + 피드백 재생성 폼. 편집폼과 분리(폼 중첩 방지)."""
+    if not img_keys:
+        return ""
+    cells = []
+    for b in blocks:
+        key = b["stable_block_key"]
+        if key not in img_keys:
+            continue
+        regen = (f'<form method=post action="{_u(f"/ui/h/{slug}/versions/{version_id}/blocks/{key}/regen-image")}" '
+                 f'style="display:flex;gap:6px;margin-top:6px">'
+                 f'<input name=feedback placeholder="어떻게 바꿀까? (비우면 새 버전으로 재생성)" '
+                 f'style="flex:1;font-size:12px;padding:7px;margin:0"><button class="btn g" '
+                 f'style="padding:7px 12px;font-size:12px" onclick="this.innerHTML=\'생성중…\'">🎨 다시</button></form>') if is_current else ""
+        cells.append(
+            f'<div class=blk id="img_{escape(key)}"><div class=key>{escape(key)} · {escape((b["block_type"] or "")[:20])}</div>'
+            f'<img class=thumb src="{_u(f"/img/h/{slug}/{key}")}" alt="scene" onclick="LB(this)">{regen}</div>')
+    note = ('<p><small>영상용 <b>개념 B롤</b>(AI 생성)입니다. 실제 환자사진·논문 그림이 아니며, '
+            '사용 전 저작권·의학표현은 원장 확인. 마음에 안 들면 아래에 적고 “다시”.</small></p>')
+    return f'<div class=card><h2>장면 이미지 — 클릭하면 크게, ←→ 넘김</h2>{note}{"".join(cells)}</div>' + _LIGHTBOX
 
 
 def _sqlstate(exc):
@@ -234,7 +268,9 @@ def create_app(engine=None):
                "e403": '<div class="msg e">승인 권한(approver)이 없습니다.</div>',
                "e422": '<div class="msg e">미검증/미지원 claim이 있어 승인할 수 없습니다(4단계 근거검증 필요).</div>',
                "edited": '<div class="msg s">새 버전이 생성되었습니다(미승인).</div>',
-               "reviewed": '<div class="msg s">원장 검수가 반영되었습니다(자동판정보다 우선).</div>'}.get(request.args.get("m"), "")
+               "reviewed": '<div class="msg s">원장 검수가 반영되었습니다(자동판정보다 우선).</div>',
+               "regen": '<div class="msg s">이미지를 다시 생성했습니다.</div>',
+               "regenfail": '<div class="msg e">이미지 재생성 실패(OpenAI 키/네트워크 확인).</div>'}.get(request.args.get("m"), "")
         with tenant(slug) as (conn, hid, mid):
             sc = conn.execute(text("select script_id, version_no, parent_version_id from script_versions where hospital_id=:h and id=:v"),
                               {"h": hid, "v": uuid.UUID(version_id)}).first()
@@ -259,6 +295,10 @@ def create_app(engine=None):
                 "  on e.hospital_id=c.hospital_id and e.claim_id=c.id "
                 "where c.hospital_id=:h and c.version_id=:v order by c.claim_index"),
                 {"h": hid, "v": uuid.UUID(version_id)}).mappings().all()
+            has_img_tbl = conn.execute(text("select to_regclass('public.scene_images')")).scalar()
+            img_keys = ({r[0] for r in conn.execute(text(
+                "select block_key from scene_images where hospital_id=:h"), {"h": hid})}
+                if has_img_tbl else set())   # scene_images 미설치 환경(테스트 등) 안전
         badge = '<span class="badge stale">미승인/stale</span>' if stale else '<span class="badge ok">승인됨</span>'
         rows = "".join(f'<div class=blk><div class=key>{escape(b["stable_block_key"])} · {escape(b["block_type"])}</div>'
                        f'<textarea name="edit__{escape(b["stable_block_key"])}">{escape(b["text"])}</textarea></div>' for b in blocks)
@@ -270,10 +310,11 @@ def create_app(engine=None):
                    f'<button class=btn type=submit>✅ 승인</button></form>') if (is_current and stale) else ""
         diff = f'<a class="btn g" href="{_u(f"/api/h/{slug}/versions/{version_id}/diff")}?from={sc.parent_version_id}">diff(JSON)</a>' if sc.parent_version_id else ""
         evidence = _evidence_panel(slug, claims, is_current)
+        images = _images_panel(slug, version_id, blocks, img_keys, is_current)
         return _page(f"버전 {sc.version_no}",
                      f'<div class=card><h1>버전 v{sc.version_no} {badge}</h1>{msg}'
                      f'<h2>블록 (편집 → 새 immutable 버전)</h2>{editform}{approve} {diff} '
-                     f'<a class="btn g" href="{_u("/logout")}">로그아웃</a></div>{evidence}')
+                     f'<a class="btn g" href="{_u("/logout")}">로그아웃</a></div>{images}{evidence}')
 
     @app.post("/ui/h/<slug>/scripts/<script_id>/edit")
     def ui_edit(slug, script_id):
@@ -340,5 +381,41 @@ def create_app(engine=None):
                  "ra": ("원장 확정" if decision == "confirm" else "원장 반려"), "mid": mid})
             vid = row.version_id
         return redirect(_u(f"/ui/h/{slug}/versions/{vid}?m=reviewed"))
+
+    # ── 장면 이미지 서빙(DB bytea) ──
+    @app.get("/img/h/<slug>/<block_key>")
+    def scene_img(slug, block_key):
+        with tenant(slug) as (conn, hid, mid):
+            row = conn.execute(text("select mime, data from scene_images "
+                                    "where hospital_id=:h and block_key=:k limit 1"),
+                               {"h": hid, "k": block_key}).first()
+        if not row:
+            abort(404)
+        return Response(bytes(row.data), mimetype=row.mime or "image/jpeg",
+                        headers={"Cache-Control": "no-store"})
+
+    # ── 피드백 반영 이미지 재생성(사람 피드백 → 프롬프트 조정 → gpt-image-1) ──
+    @app.post("/ui/h/<slug>/versions/<version_id>/blocks/<block_key>/regen-image")
+    def regen_image(slug, version_id, block_key):
+        if not session.get("user_id"):
+            abort(401)
+        feedback = (request.form.get("feedback") or "").strip()
+        try:
+            from assets.gen_images import gen_image_bytes
+            from store.seed_images import web_jpeg_bytes
+            with tenant(slug) as (conn, hid, mid):
+                row = conn.execute(text("select prompt, topic from scene_images "
+                                        "where hospital_id=:h and block_key=:k limit 1"),
+                                   {"h": hid, "k": block_key}).first()
+            base = (row.prompt if row else None) or f"clean medical educational illustration for scene {block_key}"
+            prompt = base + (f" Reviewer adjustment: {feedback}." if feedback else " Provide a fresh alternative composition.")
+            jpg = web_jpeg_bytes(gen_image_bytes(prompt))       # OpenAI 호출은 DB 트랜잭션 밖
+            with tenant(slug) as (conn, hid, mid):
+                conn.execute(text("update scene_images set data=:d, updated_at=now() "
+                                  "where hospital_id=:h and block_key=:k"),
+                             {"d": jpg, "h": hid, "k": block_key})
+            return redirect(_u(f"/ui/h/{slug}/versions/{version_id}?m=regen#{block_key}"))
+        except Exception:
+            return redirect(_u(f"/ui/h/{slug}/versions/{version_id}?m=regenfail"))
 
     return app
