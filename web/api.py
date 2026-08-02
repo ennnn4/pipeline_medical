@@ -8,6 +8,9 @@ CAS 충돌→409, 역할/권한(42501)→403, 미검증 claim(23514)→422, 없�
 """
 import os, uuid, secrets, hmac
 from contextlib import contextmanager
+from services.context import ActorContext
+from services import scripts as scripts_service
+from services.exceptions import ServiceError
 from flask import Flask, request, jsonify, session, g, abort, redirect, Response
 from markupsafe import escape
 from werkzeug.security import check_password_hash
@@ -219,15 +222,12 @@ def create_app(engine=None):
         edits = body.get("edits") or {}
         if not expected or not edits:
             return jsonify(error="expected_current_version과 edits 필요"), 400
-        try:
-            with tenant(slug) as (conn, hid, mid):
-                res = repo.apply_block_edit(conn, hid, uuid.UUID(script_id), uuid.UUID(expected), edits)
-            res["version_id"] = str(res["version_id"])
-            res["compliance"] = {k: [f[0] if isinstance(f, (list, tuple)) else str(f) for f in v]
-                                 for k, v in res["compliance"].items()}
-            return jsonify(res), 201
-        except repo.Conflict as e:
-            return jsonify(error="conflict", detail=str(e)), 409       # 다른 편집 선반영
+        try:      # 업무 규칙은 공통 scripts service (라우트는 파싱+매핑만)
+            ctx = ActorContext.resolve(app.config["ENGINE"], session.get("user_id"), slug, g.request_id)
+            res = scripts_service.edit_blocks(app.config["ENGINE"], ctx, script_id, expected, edits)
+            return jsonify(res), (200 if res.get("no_change") else 201)
+        except ServiceError as e:
+            return jsonify(error=e.code, detail=str(e)), e.http_status
 
     # ── 승인 ──
     @app.post("/api/h/<slug>/versions/<version_id>/approve")
@@ -360,27 +360,22 @@ def create_app(engine=None):
 
     @app.post("/ui/h/<slug>/scripts/<script_id>/edit")
     def ui_edit(slug, script_id):
-        if not session.get("user_id"): abort(401)
         expected = request.form.get("expected")
         try:
-            exp_uuid, sc_uuid = uuid.UUID(expected), uuid.UUID(script_id)   # 폼 누락/오형식 → 400(500 방지)
+            uuid.UUID(expected); uuid.UUID(script_id)      # 폼 누락/오형식 → 400(500 방지)
         except (TypeError, ValueError):
             abort(400)
         edits = {k[6:]: v for k, v in request.form.items() if k.startswith("edit__")}
-        try:
-            with tenant(slug) as (conn, hid, mid):
-                _require_role(conn, hid, mid, {"editor", "approver", "admin"})   # 편집 권한
-                # 원문과 다른 블록만 편집으로 간주(apply_block_edit이 변경분만 처리)
-                cur = {r.stable_block_key: r.text for r in conn.execute(text(
-                    "select stable_block_key, text from script_blocks where hospital_id=:h and version_id=:v"),
-                    {"h": hid, "v": exp_uuid})}
-                changed = {k: v for k, v in edits.items() if cur.get(k) != v}
-                if not changed:
-                    return redirect(_u(f"/ui/h/{slug}/versions/{expected}"))
-                res = repo.apply_block_edit(conn, hid, sc_uuid, exp_uuid, changed)
+        try:      # 편집 규칙(권한·변경필터·새버전)은 공통 scripts service
+            ctx = ActorContext.resolve(app.config["ENGINE"], session.get("user_id"), slug, g.request_id)
+            res = scripts_service.edit_blocks(app.config["ENGINE"], ctx, script_id, expected, edits)
+            if res.get("no_change"):
+                return redirect(_u(f"/ui/h/{slug}/versions/{expected}"))
             return redirect(_u(f"/ui/h/{slug}/versions/{res['version_id']}?m=edited"))
-        except repo.Conflict:
-            return redirect(_u(f"/ui/h/{slug}/versions/{expected}?m=conflict"))
+        except ServiceError as e:
+            if e.http_status == 409:
+                return redirect(_u(f"/ui/h/{slug}/versions/{expected}?m=conflict"))
+            abort(e.http_status)
 
     @app.post("/ui/h/<slug>/versions/<version_id>/approve")
     def ui_approve(slug, version_id):
