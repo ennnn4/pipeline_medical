@@ -63,14 +63,7 @@ def _csrf_field():
     return f'<input type=hidden name=_csrf value="{session.get("_csrf", "")}">'
 
 
-def _require_role(conn, hid, mid, allowed):
-    """병원 내부 역할 게이트(P1). membership의 role이 allowed에 없으면 403.
-    RLS는 병원 간 격리만 하므로 병원 내부 행동 제한은 여기서."""
-    roles = {r[0] for r in conn.execute(text(
-        "select role from membership_roles where hospital_id=:h and membership_id=:m"),
-        {"h": hid, "m": mid})}
-    if not (roles & set(allowed)):
-        abort(403)
+# (권한 게이트는 services/permissions로 이전됨 — 라우트는 service만 호출. _require_role 제거)
 
 
 _SUPPORT_KO = {"direct": "직접근거", "partial": "부분근거", "inferred": "추론", "unsupported": "근거없음", "unverified": "미검증"}
