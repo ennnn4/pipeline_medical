@@ -31,14 +31,13 @@ STMTS = [
     "FOREIGN KEY (hospital_id, generation_job_id) REFERENCES generation_jobs(hospital_id, id) NOT VALID; END IF; END $$;",
     "DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_versions_generation_job' AND NOT convalidated) THEN "
     "ALTER TABLE script_versions VALIDATE CONSTRAINT fk_versions_generation_job; END IF; END $$;",
-    # source↔generation_job_id 구조 일관성(GPT). NOT VALID: 신규 INSERT만 강제(과거 데이터 관대).
-    # 작성자(created_by_membership_id) 채우기는 코드 책임 — editor=편집 membership, ai=요청자(알려질 때).
-    # ai의 requester membership을 대시보드 생성경로에서 포착하면 이후 created_by NOT NULL로 강화 가능.
+    # generation_job_id는 ai 버전만 가질 수 있다(GPT 구조 일관성, 버전 스큐 안전).
+    # 코드 버전과 무관하게 성립(과거 ai=NULL도, 신규 ai=job도 통과). editor/migration은 job 링크 없음.
+    # 작성자(created_by_membership_id) 채우기·ai→job NOT NULL 강화는 대시보드가 requester membership을
+    # 포착하고 새 코드 배포가 확정된 뒤 후속으로.
     "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='ck_versions_provenance') THEN "
     "ALTER TABLE script_versions ADD CONSTRAINT ck_versions_provenance CHECK ("
-    "(source='editor' AND generation_job_id IS NULL) OR "
-    "(source='ai' AND generation_job_id IS NOT NULL) OR "
-    "(source='migration' AND generation_job_id IS NULL)) NOT VALID; END IF; END $$;",
+    "generation_job_id IS NULL OR source='ai') NOT VALID; END IF; END $$;",
 ]
 
 # superseded 기록은 edit/version 트랜잭션 책임(GPT Step2.5.1). version_approval_states는 app_rw UPDATE
