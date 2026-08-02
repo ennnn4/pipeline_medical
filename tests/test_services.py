@@ -80,7 +80,9 @@ def test_edit_records_author_and_supersedes(rw, owner, tenant):
         # 새 버전 작성자 = 편집 membership(source=editor)
         assert str(cn.execute(text("select created_by_membership_id from script_versions where id=:v"),
                               {"v": v2}).scalar()) == str(m)
-        # superseded는 파생: v1은 더 이상 current 아님(=superseded)
+        # superseded 명시 기록(Step2.5.1): v1.superseded_by = v2, 그리고 current도 v2
+        assert str(cn.execute(text("select superseded_by_version_id from version_approval_states where version_id=:v"),
+                              {"v": v1}).scalar()) == v2
         cur = str(cn.execute(text("select current_version_id from scripts where id=:s"), {"s": sc}).scalar())
         assert cur == v2 and cur != str(v1)
 

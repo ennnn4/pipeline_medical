@@ -78,9 +78,11 @@ def create_edited_version(conn, hospital_id, script_id, expected_current_version
                  {"v": new_v, "h": hospital_id, "s": script_id, "p": expected_current_version_id, "n": new_no})
     conn.execute(text("insert into version_approval_states(id,hospital_id,version_id,status) values(:i,:h,:v,'none')"),
                  {"i": uuid.uuid4(), "h": hospital_id, "v": new_v})
-    # superseded는 파생(version.id != scripts.current_version_id)으로 판정 — version_approval_states는
-    # app_rw UPDATE 잠금(승인 상태는 definer만). 명시적 superseded_by 기록은 Step4 approval service의
-    # SECURITY DEFINER 함수에서 수행(컬럼은 스키마에 준비됨).
+    # 이전 버전을 superseded로 명시 기록(같은 TX 책임, GPT Step2.5.1). app_rw UPDATE 잠금이라
+    # 좁은 definer 함수로만. content_fn(블록 생성)·CAS 전에 계보를 결착.
+    conn.execute(text("select fn_mark_version_superseded(:h,:old,:new,"
+                      "NULLIF(current_setting('app.membership_id', true), '')::uuid)"),
+                 {"h": hospital_id, "old": expected_current_version_id, "new": new_v})
     content_fn(conn, hospital_id, new_v)              # 블록·문장·claim(동일 TX) — CAS 이전
     cnt = conn.execute(text("select count(*) from script_blocks where hospital_id=:h and version_id=:v"),
                        {"h": hospital_id, "v": new_v}).scalar()

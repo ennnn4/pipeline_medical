@@ -1,4 +1,4 @@
-<title>본큐어 파이프라인 — service 추출 Step 0–2</title>
+<title>본큐어 파이프라인 — Step 2.5 승인 기반</title>
 <style>
   :root{
     --bg:#f6f7f9; --card:#fff; --ink:#0b1524; --muted:#5b6b7f; --line:#e6e9ef;
@@ -32,11 +32,13 @@
   h2 .n{flex:none;min-width:26px;height:26px;padding:0 7px;border-radius:8px;background:var(--brand-soft);color:var(--brand);font-size:12px;font-weight:800;display:grid;place-items:center}
   .row{display:flex;gap:10px;padding:9px 0;border-top:1px solid var(--line)}
   .row:first-of-type{border-top:0}
-  .row .tag{flex:none;font-size:11px;font-weight:700;color:var(--ok);align-self:flex-start;margin-top:3px;min-width:52px}
-  .row .tag.todo{color:var(--warn)}
+  .row .tag{flex:none;font-size:11px;font-weight:700;color:var(--ok);align-self:flex-start;margin-top:3px;min-width:50px}
   .row p{margin:0;font-size:14.5px}
   .row small{color:var(--muted);display:block;font-size:12.5px;margin-top:2px}
   pre{background:var(--code);color:var(--code-ink);border-radius:12px;padding:13px;overflow-x:auto;font-family:var(--mono);font-size:12px;line-height:1.55;margin:10px 0 0}
+  table{width:100%;border-collapse:collapse;margin:10px 0 0;font-size:13px}
+  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
+  th{color:var(--muted);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em}
   .note{background:var(--warn-soft);border-radius:12px;padding:12px 14px;margin:14px 0;font-size:13.5px}
   .note b{color:var(--warn)}
   .copybar{position:sticky;bottom:0;margin:22px -16px -72px;padding:14px 16px calc(14px + env(safe-area-inset-bottom));background:linear-gradient(to top,var(--bg) 70%,transparent);display:flex;gap:10px}
@@ -49,77 +51,72 @@
 <div class="wrap">
   <header class="hd">
     <div class="eyebrow">본큐어 파이프라인 · service 추출</div>
-    <h1>service 추출 Step 0–2</h1>
-    <div class="sub">P2-1 최종 승인 후, 지정한 순서(정책 먼저 · edit 먼저 · 추출 즉시 /studio 교체)대로 계약과 edit service를 만들고 /studio를 교체했습니다.</div>
+    <h1>Step 2.5 승인 기반</h1>
+    <div class="sub">"evidence 전에 작성자 스키마·상태모델·자기승인 기반을 먼저"라는 교정대로, 지금 생성되는 version부터 작성자를 남기도록 기반을 먼저 넣었습니다.</div>
     <div class="status">
-      <span class="chip ok">✓ 테스트 93 통과</span>
-      <span class="chip brand">라우트=파싱+매핑만</span>
+      <span class="chip ok">✓ 테스트 95 통과</span>
+      <span class="chip ok">✓ Alembic 0001→0013</span>
+      <span class="chip ok">✓ 라이브 반영</span>
     </div>
   </header>
 
   <div class="card">
-    <h2><span class="n">0</span>계약(정책 먼저)</h2>
-    <div class="row"><span class="tag">문서</span><p><code>docs/승인_불변식.md</code> — 확정 15 불변식 + 상태 모델(<code>none/pending/approved/rejected/revoked/superseded</code>) + 전제조건 + 예외→HTTP 표.</p></div>
-    <div class="row"><span class="tag">예외</span><p><code>services/exceptions.py</code> — 타입 예외 9종 + SQLSTATE→예외 번역(라우트가 DB 세부 비의존).</p></div>
-    <div class="row"><span class="tag">컨텍스트</span><p><code>ActorContext.resolve()</code> — hospital·membership·roles를 <b>서버가 DB에서 결정</b>(요청값 신뢰 안 함). <code>permissions</code>로 역할 게이트.</p></div>
+    <h2><span class="n">1</span>작성자 추적</h2>
+    <div class="row"><span class="tag">editor</span><p>편집으로 만든 version은 <code>created_by_membership_id</code> = 세션 membership(GUC).</p></div>
+    <div class="row"><span class="tag">ai</span><p>생성 version은 <code>generation_job_id</code> 링크 + <code>created_by_membership_id</code> = 생성 <b>요청자</b>(job). 복합 FK로 테넌트 결착.</p>
+      <small>자기승인 판정: editor=편집 membership, ai=생성 요청자, migration=NULL.</small></div>
   </div>
 
   <div class="card">
-    <h2><span class="n">1·2</span>query + edit service, /studio 교체</h2>
-    <div class="row"><span class="tag">edit</span><p><code>scripts.edit_blocks</code> — 권한(editor/approver/admin) + <b>실제 변경 블록만 필터</b> + <code>apply_block_edit</code> 단일 TX 래핑 + <code>Conflict→VersionConflict</code>. 변경 규칙을 라우트에서 service로 이관.</p>
-      <pre>@app.post(".../edit")            # /api·/ui 둘 다
-def edit(...):
-    ctx = ActorContext.resolve(engine, session.user_id, slug)
-    res = scripts_service.edit_blocks(engine, ctx, script_id, expected, edits)
-    return ...                    # 라우트: 파싱 + 예외 매핑만</pre></div>
+    <h2><span class="n">2</span>상태모델 분리 · 자기승인 정책</h2>
+    <div class="row"><span class="tag">supersede</span><p><code>superseded</code>를 approval status에서 분리 — 컬럼(<code>superseded_by_version_id</code>/<code>superseded_at</code>)은 준비하되 <b>현재는 파생</b>(version ≠ current)으로 판정. 명시적 기록은 Step 4 approval service의 definer 함수에서(승인 상태 테이블은 app_rw UPDATE 잠금 유지).</p></div>
+    <div class="row"><span class="tag">status</span><p><code>revoked</code> 상태 + revoked_fields CHECK 추가. 전이표 문서화.</p></div>
+    <div class="row"><span class="tag">self</span><p><code>hospitals.allow_self_approval</code>(기본 false). capability = <b>admin</b> + 사유 + 별도 audit(<code>approval.self_approve</code>).</p></div>
   </div>
 
   <div class="card">
-    <h2><span class="n">✓</span>기존 구현이 이미 강제하던 불변식</h2>
-    <div class="row"><span class="tag">1·9·10·15</span><p><code>fn_approve_version</code> — version 귀속 · 미검증 claim 게이트(422) · approver 역할 · audit.</p></div>
-    <div class="row"><span class="tag">3·13</span><p><code>fn_reject_if_version_approved</code> 트리거 — 승인된 version의 blocks/sentences/claims/assessments INSERT 동결.</p></div>
-    <div class="row"><span class="tag">4·5·6·7·8</span><p><code>create_edited_version</code> — script FOR UPDATE + CAS + 새 version 미승인 단일 TX.</p></div>
+    <h2><span class="n">▲</span>edit service 하드닝(지적 반영)</h2>
+    <div class="row"><span class="tag">block</span><p>base version에 없는 블록 편집을 <b>조용히 무시하지 않고</b> <code>NotFound</code>.</p></div>
   </div>
 
   <div class="card">
-    <h2><span class="n">▲</span>approval service에서 추가할 격차 4</h2>
-    <div class="row"><span class="tag todo">inv 2</span><p>current version만 승인(<code>fn_approve_version</code>에 <code>scripts.current_version_id</code> 비교 추가).</p></div>
-    <div class="row"><span class="tag todo">inv 11·12</span><p>작성자≠승인자(<code>script_versions.created_by</code> 추가) + 자기승인 override(<code>hospitals.allow_self_approval</code> + 사유 + 별도 audit).</p></div>
-    <div class="row"><span class="tag todo">상태</span><p><code>reject/revoke/superseded</code> 상태 전이.</p></div>
-    <div class="row"><span class="tag todo">inv 14</span><p>publish/export = current이며 approved인 version만.</p></div>
+    <h2><span class="n">↔</span>승인 상태 전이표(확정)</h2>
+    <table>
+      <tr><th>현재</th><th>동작</th><th>결과</th></tr>
+      <tr><td>none/pending</td><td>approve</td><td>approved (current + 전제조건)</td></tr>
+      <tr><td>none/pending</td><td>reject</td><td>rejected</td></tr>
+      <tr><td>rejected</td><td>resubmit</td><td>pending</td></tr>
+      <tr><td>approved</td><td>revoke</td><td>revoked (사유+admin)</td></tr>
+      <tr><td>approved→reject, rejected→revoke</td><td colspan="2">금지</td></tr>
+    </table>
   </div>
 
-  <div class="note">테스트 <b>93개 통과</b>(신규 service 6: resolve·비멤버 거부·버전 생성·no_change·권한·충돌). 통합앱 import·라우트 정상. <code>master</code> 푸시.</div>
+  <div class="note">테스트 <b>95개 통과</b>(신규: 작성자 기록·파생 supersede·미지 블록 거부). <code>alembic 0001→0013</code> 성공. 라이브 반영(컬럼·CHECK·FK 확인) + 푸시.</div>
 
   <div class="copybar"><button class="copy" onclick="copyGpt()">📋 GPT용 전체 복사</button></div>
-  <div class="foot">본큐어 파이프라인 · service 추출 Step 0–2 · 2026-08-02</div>
-  <textarea id="gpt" readonly>[본큐어 파이프라인 — service 추출 Step 0–2 확인 요청]
+  <div class="foot">본큐어 파이프라인 · Step 2.5 · 2026-08-02</div>
+  <textarea id="gpt" readonly>[본큐어 파이프라인 — Step 2.5 승인 기반 확인 요청]
 
-배경: P2-1 최종 승인 후 지정 순서(정책 먼저, 코드는 edit 먼저, service 추출 즉시 /studio 교체)로 진행. 93 tests green, 푸시 완료.
+배경: Step0-2 승인 후 "evidence 전에 작성자 스키마·상태모델·자기승인 기반 먼저"라는 교정대로 Step 2.5를 먼저 적용. 95 tests green, alembic 0001→0013 fresh 통과, 라이브 반영+푸시.
 
-Step 0 계약:
-- docs/승인_불변식.md: 확정 15 불변식 + 상태모델(none/pending/approved/rejected/revoked/superseded) + 승인 전제조건 + 예외→HTTP 표.
-- services/exceptions.py: 타입 예외 9종(Unauthorized/NotFound/Forbidden/VersionConflict/InvalidStateTransition/ApprovalPrerequisiteFailed/SelfApprovalNotAllowed/SnapshotIntegrityError/HospitalBusy) + SQLSTATE→예외 번역.
-- services/context.py: ActorContext.resolve(engine,user_id,slug) — hospital·membership·roles를 서버가 DB에서 결정(SDR, 요청 body의 membership/role 신뢰 안 함).
-- services/permissions.py: 역할 게이트.
+작성자 추적(inv11/12 근거):
+- create_edited_version: created_by_membership_id = 세션 membership(app.membership_id GUC), source=editor.
+- ingest_content: source=ai 버전에 generation_job_id + created_by_membership_id=생성 요청자(job.created_by_membership_id).
+- script_versions.generation_job_id 컬럼 + 복합 FK (hospital_id,generation_job_id)→generation_jobs(hospital_id,id). (created_by_membership_id 컬럼은 원래 있었으나 채워지지 않던 것.)
+- 작성자 정의: source=editor→그 편집 membership, source=ai→생성 요청자, source=migration→NULL.
 
-Step 1 query service: scripts.get_current_version / list_versions.
-Step 2 edit service: scripts.edit_blocks — 권한(editor/approver/admin) + 실제 변경 블록만 필터(원문과 다른 것만) + apply_block_edit 단일 TX 래핑 + Conflict→VersionConflict + no_change 처리. /studio의 /api·/ui edit 라우트를 service 호출로 교체(라우트는 request 파싱 + ActorContext.resolve + service 호출 + 예외→HTTP 매핑만; 직접 SQL·업무규칙 없음).
+상태모델 분리(GPT 권고: superseded를 승인 상태에서 분리):
+- version_approval_states.superseded_by_version_id/superseded_at 컬럼 + 복합 FK 추가.
+- 단, version_approval_states는 rls_sql에서 REVOKE UPDATE app_rw로 잠겨 있어(승인 상태는 SECURITY DEFINER 함수만 변경) create_edited_version이 직접 UPDATE 못 함. 그래서 현재 superseded는 파생(version.id != scripts.current_version_id)으로 판정하고, 명시적 superseded_by 기록은 Step4 approval service의 definer 함수에서 수행(컬럼은 준비 완료).
+- status CHECK에 'revoked' 추가 + revoked_fields(revoked→approver+decided_at) CHECK. 전이표 문서 확정.
 
-기존 구현이 이미 강제하던 불변식 확인:
-- fn_approve_version: inv1(version 귀속)·9(미검증/미지원 claim 게이트 23514)·10(active approver/admin 역할)·15(audit_events).
-- fn_reject_if_version_approved 트리거: inv3·13(승인된 version의 blocks/sentences/claims/claim_assessments INSERT 동결).
-- create_edited_version: inv4·5·6·7·8(script FOR UPDATE + CAS + 새 version status='none' 미승인, 단일 TX).
+자기승인 정책(inv12): hospitals.allow_self_approval(기본 false). capability=admin(approval.self_override, 일반 approver와 분리)+사유(trimmed)+별도 audit action 'approval.self_approve'+당시 정책값 snapshot. 승인_불변식.md에 명시.
 
-approval service(다음 순서 ④)에서 추가할 격차 4:
-- inv2: 승인 대상 = 승인 시점 current_version (fn_approve_version에 scripts.current_version_id 비교 추가, FOR UPDATE).
-- inv11/12: 작성자≠승인자 (script_versions.created_by_membership_id 추가, create_edited_version이 기록) + 자기승인 override(hospitals.allow_self_approval + 사유 필수 + audit action 'approval.self_approve').
-- reject/revoke/superseded 상태 전이 함수 + audit.
-- inv14: 최종 publish/export = current이며 approved인 version만.
+edit service 하드닝(지적 a): base version에 없는 블록 편집은 조용히 무시하지 않고 NotFound.
 
-다음 순서(그대로 진행 예정): ③evidence service→/studio 교체 ④approval service(격차 4 구현)→교체 ⑤image service→교체 ⑥/studio가 service만 쓰는지 검증 ⑦대시보드 직접 렌더 ⑧기능별 parity test ⑨/studio 은퇴.
+구현: store/approval_foundation.py(멱등 ensure) + Alembic 0013. core 테이블 additive.
 
-질문: (a) Step 0–2(계약·edit service·/studio 교체) 방향과 ActorContext(서버 결정 hospital/membership/role) 설계가 맞는지. (b) 격차 4의 구현 방식(특히 자기승인 override를 hospitals.allow_self_approval + 사유 + 별도 audit로, 작성자 추적을 script_versions.created_by_membership_id로)이 적절한지, 스키마·함수에서 주의할 점. (c) 다음을 evidence service부터(③) 이어가도 되는지, 아니면 approval 격차(④)를 먼저 볼지.</textarea>
+질문: (a) superseded를 지금은 파생(version≠current)으로 판정하고 명시적 superseded_by 기록은 Step4 definer 함수로 미루는 것이 맞는지(version_approval_states app_rw UPDATE 잠금 유지 목적). (b) 작성자 유형을 별도 created_by_type 컬럼 없이 기존 source(ai/editor/migration)+generation_job_id+created_by_membership_id 조합으로 표현한 것으로 충분한지, 아니면 created_by_type을 명시적으로 둘지. (c) 이제 Step3 evidence service로 진행해도 되는지.</textarea>
 </div>
 <script>
   function copyGpt(){var t=document.getElementById('gpt'),b=document.querySelector('.copy');

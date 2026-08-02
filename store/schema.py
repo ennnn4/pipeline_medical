@@ -148,6 +148,7 @@ script_versions = Table(
     UniqueConstraint("hospital_id", "script_id", "id", name="uq_versions_hospital_script_id"),  # current/parent/edit 참조용
     tenant_id_uq("script_versions"),                 # block/comment/link/approval 참조용
     CheckConstraint("source IN ('ai','editor','migration')", name="source"),
+    # source↔provenance 조합 CHECK는 approval_foundation(ensure/alembic)에서 NOT VALID로(과거 데이터 관대)
     Index("ix_versions_script", "hospital_id", "script_id"),
     Index("ix_versions_parent", "hospital_id", "parent_version_id"),
 )

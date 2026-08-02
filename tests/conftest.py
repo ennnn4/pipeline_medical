@@ -23,6 +23,8 @@ def base_url():
                         "FOREIGN KEY (hospital_id, id, current_version_id) "
                         "REFERENCES script_versions (hospital_id, script_id, id)"))
     R.apply(eng)
+    from store.approval_foundation import ensure_approval_foundation
+    ensure_approval_foundation(eng)      # fn_mark_version_superseded + provenance CHECK(멱등)
     eng.dispose()
     return url
 
