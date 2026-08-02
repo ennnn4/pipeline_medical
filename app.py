@@ -210,7 +210,7 @@ def hospital(h):
     cfg = _yaml().safe_load(open(cfg_path(h), encoding="utf-8")) or {}
     name = cfg.get("hospital",{}).get("name", h)
     diseases = cfg.get("diseases") or []
-    raw = [os.path.basename(p) for p in glob.glob(os.path.join(data_dir(h,"raw"),"*")) if os.path.isfile(p)]
+    raw = _material_names(h)     # 영속(PG) 우선, 없으면 disk
     outs = sorted(glob.glob(os.path.join(data_dir(h,"out"),"*.html")))
     filelist = "".join(f"<li>{f}</li>" for f in raw) or "<li class=muted>아직 업로드된 자료가 없어요.</li>"
     # 필요 자료 체크리스트 (config의 input_checklist 기준, 파일명 매칭)
@@ -322,13 +322,29 @@ def safe_filename(fn):
 def upload(h):
     if not os.path.exists(cfg_path(h)): abort(404)
     dest = data_dir(h, "raw")
+    hid = _pg_hospital_id(h)     # PG 병원이면 자료를 PostgreSQL에도 저장(영속, 재배포에도 안 사라짐)
+    eng = None
+    if hid:
+        try:
+            from store.db import make_engine
+            from store.materials import ensure_materials_schema, save_material
+            eng = make_engine()
+        except Exception:
+            eng = None
     saved = 0
     for f in request.files.getlist("files"):
         if not f or not f.filename: continue
         name = safe_filename(f.filename)     # 한글 유지 + 경로탈출 방지
         if not name: continue
         if os.path.splitext(name)[1].lower() not in ALLOWED_EXT: continue  # 허용 확장자만
-        f.save(os.path.join(dest, name))
+        raw = f.read()
+        with open(os.path.join(dest, name), "wb") as out:   # 즉시 사용용 disk 캐시
+            out.write(raw)
+        if eng:
+            try:
+                save_material(eng, hid, name, raw)           # 영속 저장(PostgreSQL bytea)
+            except Exception:
+                pass
         saved += 1
     return redirect(f"/h/{h}")
 
@@ -341,6 +357,19 @@ def _pg_hospital_id(slug):
             return cn.execute(text("select id from hospitals where slug=:s"), {"s": slug}).scalar()
     except Exception:
         return None
+
+def _material_names(h):
+    """업로드 자료 목록 — PG(영속) ∪ disk. 재배포로 disk가 비어도 PG에 남아있음."""
+    names = {os.path.basename(p) for p in glob.glob(os.path.join(data_dir(h, "raw"), "*")) if os.path.isfile(p)}
+    hid = _pg_hospital_id(h)
+    if hid:
+        try:
+            from store.db import make_engine
+            from store.materials import list_materials
+            names |= {m["filename"] for m in list_materials(make_engine(), hid)}
+        except Exception:
+            pass
+    return sorted(names)
 
 def _pg_script_id_for_topic(hid, topic):
     """이 병원에서 해당 topic의 기존 대본 script_id(있으면) → 재생성 시 그 대본의 새 버전으로 이어짐(topic은 표시용)."""
@@ -383,6 +412,11 @@ def _run_pipeline(h, topic, evidence=True, request_key=None):
     request_key = request_key or _uuid.uuid4().hex
     job_id = None
     if hid:
+        try:    # 재배포로 disk가 비었을 수 있으니 PG의 영속 자료를 raw/로 복원 후 생성
+            from store.materials import materialize_to_disk
+            materialize_to_disk(make_engine(), hid, data_dir(h, "raw"))
+        except Exception:
+            pass
         try:
             cj = _ing.create_job(make_engine(), hid, topic, request_key,
                                  target_script_id=_pg_script_id_for_topic(hid, topic))
