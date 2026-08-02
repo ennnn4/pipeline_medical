@@ -222,7 +222,17 @@ def new():
     src = re.sub(r'\ndiseases:.*', "\ndiseases: [" + ", ".join(diseases) + "]", src, count=1)
     open(cfg_path(hid), "w", encoding="utf-8").write(src)
     for s in ("raw","corpus","kb","out"): data_dir(hid, s)
+    _provision_pg(hid, name)      # PostgreSQL 병원 생성 → 업로드 영속 + 스튜디오 연결
     return redirect(f"/h/{hid}")
+
+def _provision_pg(slug, name):
+    """새 병원을 PostgreSQL에 provisioning(SECURITY DEFINER 함수). 로그인 PG유저면 creator admin."""
+    try:
+        from store.db import make_engine
+        from store.provision import provision_hospital
+        provision_hospital(make_engine(), slug, name, owner_user=session.get("user_id"))
+    except Exception:
+        pass
 
 @app.route("/h/<h>")
 def hospital(h):
