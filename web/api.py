@@ -57,6 +57,16 @@ def _csrf_field():
     return f'<input type=hidden name=_csrf value="{session.get("_csrf", "")}">'
 
 
+def _require_role(conn, hid, mid, allowed):
+    """병원 내부 역할 게이트(P1). membership의 role이 allowed에 없으면 403.
+    RLS는 병원 간 격리만 하므로 병원 내부 행동 제한은 여기서."""
+    roles = {r[0] for r in conn.execute(text(
+        "select role from membership_roles where hospital_id=:h and membership_id=:m"),
+        {"h": hid, "m": mid})}
+    if not (roles & set(allowed)):
+        abort(403)
+
+
 _SUPPORT_KO = {"direct": "직접근거", "partial": "부분근거", "inferred": "추론", "unsupported": "근거없음", "unverified": "미검증"}
 _KIND_KO = {"automated": "자동검증", "human_review": "원장검수", "override": "원장확정", "migration": "이관"}
 
@@ -357,6 +367,7 @@ def create_app(engine=None):
         edits = {k[6:]: v for k, v in request.form.items() if k.startswith("edit__")}
         try:
             with tenant(slug) as (conn, hid, mid):
+                _require_role(conn, hid, mid, {"editor", "approver", "admin"})   # 편집 권한
                 # 원문과 다른 블록만 편집으로 간주(apply_block_edit이 변경분만 처리)
                 cur = {r.stable_block_key: r.text for r in conn.execute(text(
                     "select stable_block_key, text from script_blocks where hospital_id=:h and version_id=:v"),
@@ -398,6 +409,7 @@ def create_app(engine=None):
         else:
             abort(400)
         with tenant(slug) as (conn, hid, mid):
+            _require_role(conn, hid, mid, {"approver", "admin"})   # 근거 검수는 원장(approver/admin)
             row = conn.execute(text("select version_id from claims where hospital_id=:h and id=:c"),
                                {"h": hid, "c": cl_uuid}).first()
             if not row: abort(404)
@@ -434,6 +446,7 @@ def create_app(engine=None):
             from assets.gen_images import gen_image_bytes
             from store.seed_images import web_jpeg_bytes
             with tenant(slug) as (conn, hid, mid):
+                _require_role(conn, hid, mid, {"editor", "approver", "admin"})   # 이미지 재생성 권한
                 row = conn.execute(text("select prompt, topic from scene_images "
                                         "where hospital_id=:h and block_key=:k limit 1"),
                                    {"h": hid, "k": block_key}).first()
