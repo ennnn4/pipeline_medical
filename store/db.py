@@ -10,6 +10,7 @@ import os, ssl
 from sqlalchemy import create_engine
 
 DEFAULT_TEST_URL = "postgresql+pg8000://postgres@127.0.0.1:55432/boncure_test"
+DATABASE_URL = os.environ.get("DATABASE_URL", DEFAULT_TEST_URL)   # 하위호환(alembic env.py 등이 참조)
 
 def _normalize(url: str) -> str:
     for p in ("postgresql+pg8000://",):

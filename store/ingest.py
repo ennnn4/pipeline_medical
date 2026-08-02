@@ -78,8 +78,11 @@ def _gen_policies():
         "CREATE POLICY gj_def ON generation_jobs TO app_owner USING (true) WITH CHECK (true);",
         "GRANT SELECT, INSERT, UPDATE, DELETE ON generation_jobs TO app_rw;",
         "GRANT SELECT, INSERT, UPDATE, DELETE ON generation_jobs TO app_owner;",
-        # request_idempotency_key 유니크 — 이름은 같아도 정의가 다를 수 있으니 DROP 후 재생성(비-partial).
-        # ON CONFLICT (hospital_id, request_idempotency_key) 가 정확히 매칭되도록.
+        # 유니크 인덱스 전, 기존 데이터에 중복 키가 있으면 명확한 메시지로 실패(단순 unique violation 방지)
+        "DO $$ BEGIN IF EXISTS (SELECT 1 FROM generation_jobs WHERE request_idempotency_key IS NOT NULL "
+        "GROUP BY hospital_id, request_idempotency_key HAVING count(*) > 1) "
+        "THEN RAISE EXCEPTION 'generation_jobs에 중복 request_idempotency_key가 있어 유니크 인덱스 생성 불가'; END IF; END $$;",
+        # request_idempotency_key 유니크 — 이름 같아도 정의 다를 수 있으니 DROP 후 non-partial 재생성(ON CONFLICT 매칭)
         "DROP INDEX IF EXISTS uq_genjobs_reqkey;",
         "CREATE UNIQUE INDEX uq_genjobs_reqkey ON generation_jobs(hospital_id, request_idempotency_key);",
     ]
@@ -97,15 +100,23 @@ def _content_hash(script_list):
     return hashlib.sha256(canon.encode("utf-8")).hexdigest()
 
 # ── job 생명주기 (각자 별도 트랜잭션 = 실패 추적 보존) ──
+def _norm_uuid(v):
+    return None if v is None else str(uuid.UUID(str(v)))
+
 def create_job(engine, hospital_id, topic, request_key, target_script_id=None,
                reason="initial", membership_id=None, prompt_version=None):
     """run.py 실행 '전에' pending job을 원자적으로 만들고 COMMIT.
     동일 request_key 동시 요청도 job 하나만 생성(ON CONFLICT DO NOTHING) — 경합 안전.
-    같은 key인데 요청 내용(topic/script)이 다르면 Conflict."""
+    같은 key인데 요청 내용(topic/script_id/reason/prompt)이 다르면 Conflict.
+    request_key·script_id는 canonical UUID로 정규화(대소문자 차이로 다른 값 저장 방지)."""
     try:
-        uuid.UUID(str(request_key))     # 서버가 request_key를 신뢰하지 않음(형식 강제)
+        request_key = str(uuid.UUID(str(request_key)))     # canonical, 형식 강제(서버 신뢰 안 함)
     except (TypeError, ValueError):
         raise ValueError("request_idempotency_key는 UUID여야 함")
+    try:
+        norm_sc = _norm_uuid(target_script_id)
+    except (TypeError, ValueError):
+        raise ValueError("target_script_id는 UUID여야 함")
     with tenant_conn(engine, hospital_id, membership_id=membership_id) as cn:
         row = cn.execute(text(
             "insert into generation_jobs(id,hospital_id,script_id,topic,status,phase,"
@@ -113,14 +124,19 @@ def create_job(engine, hospital_id, topic, request_key, target_script_id=None,
             "values(:j,:h,:sc,:t,'pending','created',:k,:rs,:m,:pv) "
             "on conflict (hospital_id, request_idempotency_key) do nothing "
             "returning id, status"),
-            {"j": uuid.uuid4(), "h": hospital_id, "sc": target_script_id, "t": topic, "k": request_key,
+            {"j": uuid.uuid4(), "h": hospital_id, "sc": norm_sc, "t": topic, "k": request_key,
              "rs": reason, "m": membership_id, "pv": prompt_version}).first()
         if row:
             return {"job_id": row.id, "status": row.status, "reused": False}
-        ex = cn.execute(text("select id, status, topic, script_id from generation_jobs "
-                             "where hospital_id=:h and request_idempotency_key=:k"),
+        ex = cn.execute(text("select id, status, topic, script_id, generation_reason, prompt_version "
+                             "from generation_jobs where hospital_id=:h and request_idempotency_key=:k"),
                         {"h": hospital_id, "k": request_key}).first()
-        if ex.topic != topic or (target_script_id and ex.script_id and str(ex.script_id) != str(target_script_id)):
+        if ex is None:
+            raise Conflict("idempotency 충돌 행을 조회할 수 없음")
+        ex_sc = None if ex.script_id is None else str(ex.script_id)
+        same = (ex.topic == topic and ex_sc == norm_sc
+                and ex.generation_reason == reason and ex.prompt_version == prompt_version)
+        if not same:      # None↔UUID 포함 완전 비교(새 대본 vs 재생성 오인 방지)
             raise Conflict("동일 request_key로 다른 요청 내용")
         return {"job_id": ex.id, "status": ex.status, "reused": True}
 
@@ -143,8 +159,8 @@ def mark_job(engine, hospital_id, job_id, status, allowed_from=None, phase=None,
     if allowed_from:
         where += " and status = any(:af)"; p["af"] = list(allowed_from)
     with tenant_conn(engine, hospital_id, membership_id=membership_id) as cn:
-        r = cn.execute(text(f"update generation_jobs set {', '.join(sets)} where {where} returning id"), p)
-        return r.rowcount == 1
+        row = cn.execute(text(f"update generation_jobs set {', '.join(sets)} where {where} returning id"), p).first()
+        return row is not None
 
 def reap_stale(engine, hospital_id, older_than_sec=1800):
     """heartbeat가 오래 멈춘 generating/ingesting job → stale."""
@@ -155,12 +171,12 @@ def reap_stale(engine, hospital_id, older_than_sec=1800):
                    {"h": hospital_id, "s": str(older_than_sec)})
 
 # ── 콘텐츠 적재 (별도 트랜잭션, job 잠금 + job.script_id 기준) ──
-def ingest_content(engine, hospital_id, job_id, topic, script_list, membership_id=None):
+def ingest_content(engine, hospital_id, job_id, script_list, membership_id=None):
     """생성 결과를 job.script_id(있으면 그 대본의 새 버전, 없으면 새 대본)의 새 immutable 버전으로 적재.
-    - job 행을 FOR UPDATE 잠금 → 같은 job 이중 적재/중복 버전 방지.
+    topic·script_id 모두 job에서 읽음(호출자가 job과 다른 값을 넘길 여지 원천 차단).
+    - job 행 FOR UPDATE 잠금 → 같은 job 이중 적재/중복 버전 방지.
     - 적재 가능 상태(generated/ingesting)만 허용, 아니면 InvalidJobState.
-    - script 행도 FOR UPDATE → version_no 경합 방지.
-    - 빈 결과(유효 블록 0)는 적재 안 함(ValueError).
+    - script 행 FOR UPDATE → version_no 경합 방지. 빈 결과(유효 블록 0)는 거부(ValueError).
     반환: {"version_id","blocks","claims","content_hash","reused"}."""
     if not isinstance(script_list, list):
         raise ValueError("script_list must be a list")
@@ -169,7 +185,7 @@ def ingest_content(engine, hospital_id, job_id, topic, script_list, membership_i
         raise ValueError("생성된 유효 대본 블록이 없음")
     ch = _content_hash(script_list)
     with tenant_conn(engine, hospital_id, membership_id=membership_id) as cn:
-        job = cn.execute(text("select status, script_id, version_id, content_hash from generation_jobs "
+        job = cn.execute(text("select status, script_id, topic, version_id, content_hash from generation_jobs "
                               "where id=:j and hospital_id=:h for update"),
                          {"j": job_id, "h": hospital_id}).first()
         if not job:
@@ -178,7 +194,7 @@ def ingest_content(engine, hospital_id, job_id, topic, script_list, membership_i
             return {"version_id": job.version_id, "blocks": 0, "claims": 0, "content_hash": ch, "reused": True}
         if job.status not in ("generated", "ingesting"):
             raise InvalidJobState(f"적재 불가 상태: {job.status}")
-        # script 식별 = job에 저장된 script_id (외부에서 다시 받지 않음). 버전번호 경합 방지 위해 script 잠금.
+        # script 식별·topic = job 값만 사용(외부 인자 없음). version_no 경합 방지 위해 script 잠금.
         if job.script_id:
             sc = cn.execute(text("select id from scripts where id=:s and hospital_id=:h for update"),
                             {"s": job.script_id, "h": hospital_id}).scalar()
@@ -187,7 +203,7 @@ def ingest_content(engine, hospital_id, job_id, topic, script_list, membership_i
         else:
             sc = uuid.uuid4()
             cn.execute(text("insert into scripts(id,hospital_id,topic) values(:s,:h,:t)"),
-                       {"s": sc, "h": hospital_id, "t": topic})
+                       {"s": sc, "h": hospital_id, "t": job.topic})
         maxno = cn.execute(text("select coalesce(max(version_no),0) from script_versions "
                                 "where hospital_id=:h and script_id=:s"), {"h": hospital_id, "s": sc}).scalar()
         v = uuid.uuid4()

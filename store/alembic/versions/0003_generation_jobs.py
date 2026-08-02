@@ -59,6 +59,10 @@ def upgrade():
         "CREATE POLICY gj_def ON generation_jobs TO app_owner USING (true) WITH CHECK (true);",
         "GRANT SELECT, INSERT, UPDATE, DELETE ON generation_jobs TO app_rw;",
         "GRANT SELECT, INSERT, UPDATE, DELETE ON generation_jobs TO app_owner;",
+        # 기존 데이터 중복 키 사전검사(명확한 실패 메시지)
+        "DO $$ BEGIN IF EXISTS (SELECT 1 FROM generation_jobs WHERE request_idempotency_key IS NOT NULL "
+        "GROUP BY hospital_id, request_idempotency_key HAVING count(*) > 1) "
+        "THEN RAISE EXCEPTION 'generation_jobs에 중복 request_idempotency_key가 있어 유니크 인덱스 생성 불가'; END IF; END $$;",
         "DROP INDEX IF EXISTS uq_genjobs_reqkey;",
         "CREATE UNIQUE INDEX uq_genjobs_reqkey ON generation_jobs(hospital_id, request_idempotency_key);",
     ]:

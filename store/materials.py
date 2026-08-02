@@ -11,7 +11,17 @@ from sqlalchemy import text
 from store.repositories import tenant_conn
 
 _TENANT_SET = "NULLIF(current_setting('app.hospital_id', true), '')::uuid"
-MAX_BYTES = 40 * 1024 * 1024   # 파일당 상한(bytea 부담·과금 방지). 초과분은 disk만.
+MAX_BYTES = 40 * 1024 * 1024   # 파일당 상한(bytea 부담·과금 방지). 초과는 저장 안 하고 명시적 예외.
+
+class MaterialTooLarge(ValueError):
+    """파일이 영속 저장 한도(MAX_BYTES) 초과 — 임시 disk fallback 금지, 명시적 실패."""
+
+def _normalize_filename(filename):
+    """저장·복원 파일명을 basename으로 정규화(DB unique 기준과 disk 이름 일치)."""
+    n = os.path.basename(str(filename)).strip()
+    if not n or n in {".", ".."}:
+        raise ValueError("유효하지 않은 파일명")
+    return n
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS materials (
@@ -47,9 +57,13 @@ def ensure_materials_schema(owner_engine):
             cn.execute(text(s))
 
 def save_material(engine, hospital_id, filename, raw, mime=None):
-    """같은 파일명은 교체(upsert). 상한 초과면 저장 안 함(False)."""
+    """같은 파일명은 교체(upsert). 상한 초과는 MaterialTooLarge(임시 disk fallback 금지)."""
+    if not isinstance(raw, (bytes, bytearray, memoryview)):
+        raise TypeError("raw는 bytes 계열이어야 함")
+    raw = bytes(raw)
     if len(raw) > MAX_BYTES:
-        return False
+        raise MaterialTooLarge(f"업로드 파일은 최대 {MAX_BYTES // (1024 * 1024)}MB까지 저장할 수 있습니다.")
+    filename = _normalize_filename(filename)
     mime = mime or mimetypes.guess_type(filename)[0] or "application/octet-stream"
     ck = hashlib.sha256(raw).hexdigest()
     with tenant_conn(engine, hospital_id) as cn:
@@ -88,12 +102,13 @@ def materialize_to_disk(engine, hospital_id, dest_dir):
         rows = cn.execute(text("select filename, data from materials where hospital_id=:h"),
                           {"h": hospital_id}).all()
     keep = {os.path.basename(r.filename) for r in rows}
-    for existing in os.listdir(dest_dir):     # DB에 없는 stale 파일 제거
-        if existing not in keep and os.path.isfile(os.path.join(dest_dir, existing)):
+    for existing in os.listdir(dest_dir):     # DB에 없는 stale 파일 제거(정합 보장 — 실패 시 중단)
+        path = os.path.join(dest_dir, existing)
+        if existing not in keep and os.path.isfile(path):
             try:
-                os.remove(os.path.join(dest_dir, existing))
-            except OSError:
-                pass
+                os.remove(path)
+            except OSError as e:
+                raise RuntimeError(f"stale 자료 제거 실패(삭제자료 혼입 위험): {existing}") from e
     n = 0
     for r in rows:
         with io.open(os.path.join(dest_dir, os.path.basename(r.filename)), "wb") as f:

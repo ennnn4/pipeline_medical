@@ -44,10 +44,10 @@ def test_ingest_lifecycle_and_script_id(rw, tenant, gen):
     j = I.create_job(rw, h, "오십견", k)["job_id"]
     I.mark_job(rw, h, j, "generating", allowed_from={"pending"}, started=True)
     I.mark_job(rw, h, j, "generated", allowed_from={"generating"})
-    r = I.ingest_content(rw, h, j, "오십견", _script())
+    r = I.ingest_content(rw, h, j, _script())
     assert r["blocks"] == 1 and not r["reused"]
     # 같은 job·같은 content 재적재 → reused(새 버전 안 만듦)
-    assert I.ingest_content(rw, h, j, "오십견", _script())["reused"] is True
+    assert I.ingest_content(rw, h, j, _script())["reused"] is True
 
 
 def test_completed_not_overwritten_by_late_failed(rw, tenant, gen):
@@ -55,7 +55,7 @@ def test_completed_not_overwritten_by_late_failed(rw, tenant, gen):
     j = I.create_job(rw, h, "오십견", k)["job_id"]
     I.mark_job(rw, h, j, "generating", allowed_from={"pending"})
     I.mark_job(rw, h, j, "generated", allowed_from={"generating"})
-    I.ingest_content(rw, h, j, "오십견", _script())          # completed
+    I.ingest_content(rw, h, j, _script())          # completed
     ok = I.mark_job(rw, h, j, "failed", allowed_from={"pending", "generating", "generated", "ingesting"})
     assert ok is False   # 전이 안 됨
     with tenant_conn(rw, h) as cn:
@@ -66,7 +66,7 @@ def test_ingest_rejects_non_ingestable_status(rw, tenant, gen):
     h = tenant["hospital_id"]; k = str(uuid.uuid4())
     j = I.create_job(rw, h, "오십견", k)["job_id"]      # pending
     with pytest.raises(I.InvalidJobState):
-        I.ingest_content(rw, h, j, "오십견", _script())
+        I.ingest_content(rw, h, j, _script())
 
 
 def test_ingest_rejects_empty_blocks(rw, tenant, gen):
@@ -75,4 +75,53 @@ def test_ingest_rejects_empty_blocks(rw, tenant, gen):
     I.mark_job(rw, h, j, "generating", allowed_from={"pending"})
     I.mark_job(rw, h, j, "generated", allowed_from={"generating"})
     with pytest.raises(ValueError):
-        I.ingest_content(rw, h, j, "오십견", [{"say": ""}, {"say": "   "}])
+        I.ingest_content(rw, h, j, [{"say": ""}, {"say": "   "}])
+
+
+def _run_to_script(rw, h, topic="이명"):
+    """job 하나를 completed까지 돌려 그 script_id 반환."""
+    j = I.create_job(rw, h, topic, str(uuid.uuid4()))["job_id"]
+    I.mark_job(rw, h, j, "generating", allowed_from={"pending"})
+    I.mark_job(rw, h, j, "generated", allowed_from={"generating"})
+    I.ingest_content(rw, h, j, _script())
+    with tenant_conn(rw, h) as cn:
+        return cn.execute(text("select script_id from generation_jobs where id=:j"), {"j": j}).scalar()
+
+
+def test_same_key_none_vs_script_conflict(rw, tenant, gen):
+    h = tenant["hospital_id"]; sid = _run_to_script(rw, h); k = str(uuid.uuid4())
+    I.create_job(rw, h, "이명", k, target_script_id=None)
+    with pytest.raises(Conflict):
+        I.create_job(rw, h, "이명", k, target_script_id=sid)
+
+
+def test_same_key_script_vs_none_conflict(rw, tenant, gen):
+    h = tenant["hospital_id"]; sid = _run_to_script(rw, h); k = str(uuid.uuid4())
+    I.create_job(rw, h, "이명", k, target_script_id=sid)
+    with pytest.raises(Conflict):
+        I.create_job(rw, h, "이명", k, target_script_id=None)
+
+
+def test_uuid_key_is_canonicalized(rw, tenant, gen):
+    h = tenant["hospital_id"]; up = str(uuid.uuid4()).upper()
+    a = I.create_job(rw, h, "이명", up)
+    b = I.create_job(rw, h, "이명", up.lower())   # 대소문자만 다른 같은 UUID → 같은 job
+    assert a["job_id"] == b["job_id"] and b["reused"] is True
+
+
+def test_ingest_uses_job_topic(rw, tenant, gen):
+    h = tenant["hospital_id"]
+    j = I.create_job(rw, h, "자율신경", str(uuid.uuid4()))["job_id"]   # job.topic
+    I.mark_job(rw, h, j, "generating", allowed_from={"pending"})
+    I.mark_job(rw, h, j, "generated", allowed_from={"generating"})
+    I.ingest_content(rw, h, j, _script())     # topic 인자 없음 → job.topic 사용
+    with tenant_conn(rw, h) as cn:
+        sid = cn.execute(text("select script_id from generation_jobs where id=:j"), {"j": j}).scalar()
+        assert cn.execute(text("select topic from scripts where id=:s"), {"s": sid}).scalar() == "자율신경"
+
+
+def test_material_too_large_raises(owner, rw, tenant):
+    from store.materials import ensure_materials_schema, save_material, MAX_BYTES, MaterialTooLarge
+    ensure_materials_schema(owner)
+    with pytest.raises(MaterialTooLarge):
+        save_material(rw, tenant["hospital_id"], "big.pdf", b"x" * (MAX_BYTES + 1))

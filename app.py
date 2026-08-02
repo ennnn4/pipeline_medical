@@ -451,7 +451,7 @@ def _run_pipeline(h, topic, evidence=True, request_key=None):
             _ing.mark_job(make_engine(), hid, job_id, "generated", allowed_from={"generating"}, phase="parsed")
             pkg = _json.load(open(os.path.join(data_dir(h, "out"), f"{topic}_package.json"), encoding="utf-8"))
             _ing.mark_job(make_engine(), hid, job_id, "ingesting", allowed_from={"generated"}, phase="ingest")
-            res = _ing.ingest_content(make_engine(), hid, job_id, topic, pkg.get("script") or [])  # script_id는 job에서
+            res = _ing.ingest_content(make_engine(), hid, job_id, pkg.get("script") or [])  # topic·script_id 모두 job에서
             log += f"\n[스튜디오] 편집·근거·이미지 준비 완료(블록 {res['blocks']}·주장 {res['claims']})."
             job_set(h, log=log)
         except Exception as e:
