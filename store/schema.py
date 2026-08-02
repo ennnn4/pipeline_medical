@@ -238,6 +238,7 @@ claim_assessments = Table(
     # 사람 최종 결정(검증 결과와 별개 축, GPT): accepted|rejected|waived|not_applicable. automated는 NULL.
     Column("human_decision", Text),
     Column("decision_reason", Text),
+    Column("review_seq", Integer),                   # claim별 판정 순번(결정적 최신 선택 기준, GPT)
     Column("created_by_membership_id", UUID(as_uuid=True)),
     ts("created_at"),
     ForeignKeyConstraint(["hospital_id", "claim_id"], ["claims.hospital_id", "claims.id"],

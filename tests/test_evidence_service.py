@@ -111,7 +111,10 @@ def test_review_seq_increments(rw, owner, tenant):
     with owner.connect() as cn:
         seqs = [r[0] for r in cn.execute(text("select review_seq from claim_assessments where claim_id=:c "
                                               "and assessment_kind='human_review' order by review_seq"), {"c": cid})]
+        # effective는 최신 review_seq(=confirm) 반영
+        eff = cn.execute(text("select human_decision from claim_effective_assessment where claim_id=:c"), {"c": cid}).scalar()
     assert seqs == [1, 2]                                    # claim별 결정적 순번
+    assert eff == "accepted"                                 # 최신 판정(2차 confirm)이 effective
 
 
 def test_confirm_sets_accepted_decision(rw, owner, tenant):

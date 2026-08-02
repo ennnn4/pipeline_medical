@@ -83,9 +83,9 @@ CREATE OR REPLACE VIEW public.claim_latest_assessment
 WITH (security_invoker = true) AS
 SELECT DISTINCT ON (hospital_id, claim_id) *
 FROM public.claim_assessments
-ORDER BY hospital_id, claim_id, created_at DESC, id DESC;
+ORDER BY hospital_id, claim_id, review_seq DESC NULLS LAST, created_at DESC, id DESC;
 """
-# effective: 사람 판정 우선(override>human_review>automated), migration 제외
+# effective: 사람 판정 우선(override>human_review>automated), 사람은 review_seq DESC(결정적 최신), migration 제외
 EFFECTIVE_VIEW = """
 CREATE OR REPLACE VIEW public.claim_effective_assessment
 WITH (security_invoker = true) AS
@@ -94,7 +94,7 @@ FROM public.claim_assessments
 WHERE assessment_kind IN ('override','human_review','automated')
 ORDER BY hospital_id, claim_id,
   CASE assessment_kind WHEN 'override' THEN 3 WHEN 'human_review' THEN 2 WHEN 'automated' THEN 1 ELSE 0 END DESC,
-  created_at DESC, id DESC;
+  review_seq DESC NULLS LAST, created_at DESC, id DESC;
 """
 VIEW_GRANTS = [
     "GRANT SELECT ON public.claim_latest_assessment TO app_rw;",
