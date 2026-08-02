@@ -228,8 +228,14 @@ def hospital(h):
         chk += f'<span class="pill {cls}">{label}</span>'
         if req and not n: miss.append(k)
     misswarn = (f'<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 필수 자료가 빠졌어요: {", ".join(miss)} — 넣을수록 대본 품질이 올라가요.</div>' if miss else "")
-    if request.args.get("err") == "big":
-        misswarn += '<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 40MB 넘는 파일은 업로드 안 됩니다(영속 저장 한도). 나눠서 올려주세요.</div>'
+    _ok = request.args.get("ok")
+    if _ok and _ok.isdigit() and int(_ok) > 0:
+        _persist = "(영구 저장됨)" if _pg_hospital_id(h) else "(임시 저장 — 이 병원은 영구저장 미연결)"
+        misswarn += f'<div class=note style="border-color:var(--good);color:var(--good)">✅ {_ok}개 자료가 업로드됐어요 {_persist}.</div>'
+    elif _ok == "0":
+        misswarn += '<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 업로드된 파일이 없어요. 파일이 선택됐는지, 허용 형식(pdf·docx·txt·zip 등)인지 확인해 주세요.</div>'
+    if request.args.get("big") == "1":
+        misswarn += '<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 40MB 넘는 파일은 제외됐어요(영구저장 한도). 나눠서 올려주세요.</div>'
     studio_url = _pg_studio_url(h)
     studio_cta = (f'<a class="btn pri" href="{studio_url}" style="display:block;text-align:center;margin-bottom:12px">'
                   f'✏️ 스튜디오에서 편집 · 근거검증 · 장면이미지 · 승인 →</a>') if studio_url else ''
@@ -350,7 +356,8 @@ def upload(h):
             except Exception:
                 pass
         saved += 1
-    return redirect(f"/h/{h}" + ("?err=big" if rejected else ""))
+    q = f"?ok={saved}" + ("&big=1" if rejected else "")
+    return redirect(f"/h/{h}{q}")
 
 def _pg_hospital_id(slug):
     """대시보드 병원 slug ↔ PostgreSQL hospital 매핑. 없으면 None(구식 파일 흐름만)."""
