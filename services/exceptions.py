@@ -62,6 +62,7 @@ _SQLSTATE_MAP = {
     "P0002": NotFound,
     "P2013": InvalidStateTransition,   # decided_version_frozen(승인/철회 version 내용·근거 동결)
     "P2014": VersionConflict,          # version supersede 충돌(다른 버전이 이미 supersede)
+    "P2015": VersionConflict,          # 승인/반려 대상이 current version 아님
 }
 
 

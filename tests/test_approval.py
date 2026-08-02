@@ -19,6 +19,7 @@ def _membership(owner, h):
 def _version_with_claim(owner, h, support="direct", kind="automated", actor=None, key="a:1"):
     with owner.begin() as cn:
         sc, v = new_version(cn, h)
+        cn.execute(text("update scripts set current_version_id=:v where id=:s"), {"v": v, "s": sc})  # 승인 대상=current
         b = new_block(cn, h, v); s = new_sentence(cn, h, v, b); c = new_claim(cn, h, v, s)
         cn.execute(text("insert into claim_assessments(id,hospital_id,claim_id,assessment_kind,idempotency_key,"
                         "support_level,verification_status,medical_risk,created_by_membership_id) "

@@ -66,12 +66,19 @@ def test_approve_requires_role_403(client, owner):
     assert r.status_code == 403
 
 def test_approve_blocks_unverified_422(client, owner):
-    # 편집으로 미검증 claim 생성 → 승인 422
+    # 미검증 claim이 있는 current version(작성자 NULL=migration) → 승인 422(자기승인 아님)
     d = _setup(owner, role="approver"); _login(client, d["user_id"])
-    r = client.post(f"/api/h/{d['slug']}/scripts/{d['script_id']}/edit",
-                    json={"expected_current_version": str(d["version_id"]), "edits": {"blk_2": "THI가 54점에서 2점으로 개선됐습니다."}})
-    v2 = r.get_json()["version_id"]
-    ra = client.post(f"/api/h/{d['slug']}/versions/{v2}/approve", json={"policy": "p1"})
+    with owner.begin() as cn:
+        hid = cn.execute(text("select hospital_id from script_versions where id=:v"), {"v": d["version_id"]}).scalar()
+        b = cn.execute(text("select id from script_blocks where version_id=:v limit 1"), {"v": d["version_id"]}).scalar()
+        s_id, c_id = uuid.uuid4(), uuid.uuid4()
+        cn.execute(text("insert into script_sentences(id,hospital_id,version_id,block_id,sentence_index,text,start_offset,end_offset,offset_unit,segmenter_version) "
+                        "values(:s,:h,:v,:b,0,'원문',0,2,'codepoint','v1')"), {"s": s_id, "h": hid, "v": d["version_id"], "b": b})
+        cn.execute(text("insert into claims(id,hospital_id,version_id,sentence_id,claim_index,claim_text,claim_type,detection_method) "
+                        "values(:c,:h,:v,:s,0,'원문','statistic','migration')"), {"c": c_id, "h": hid, "v": d["version_id"], "s": s_id})
+        cn.execute(text("insert into claim_assessments(id,hospital_id,claim_id,assessment_kind,idempotency_key,support_level,verification_status,medical_risk) "
+                        "values(:i,:h,:c,'automated','a1','unverified','pending','low')"), {"i": uuid.uuid4(), "h": hid, "c": c_id})
+    ra = client.post(f"/api/h/{d['slug']}/versions/{d['version_id']}/approve", json={"policy": "p1"})
     assert ra.status_code == 422
 
 def test_approve_success_and_audit(client, owner):

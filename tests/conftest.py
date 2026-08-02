@@ -25,6 +25,8 @@ def base_url():
     R.apply(eng)
     from store.approval_foundation import ensure_approval_foundation
     ensure_approval_foundation(eng)      # fn_mark_version_superseded + provenance CHECK(멱등)
+    from store.approval_fns import ensure_approval_fns
+    ensure_approval_fns(eng)             # 승인 core+wrappers(fn_approve_version 위임형으로 교체)
     eng.dispose()
     return url
 

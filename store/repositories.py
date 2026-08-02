@@ -153,6 +153,25 @@ def approve_version(conn, hospital_id, version_id, policy_version):
                  {"h": hospital_id, "v": version_id, "p": policy_version, "ch": ch, "ah": ah})
     return {"content_hash": ch, "assessment_set_hash": ah}
 
+def self_approve_version(conn, hospital_id, version_id, policy_version, reason):
+    """자기승인(작성자==승인자) — 별도 함수. allow_self_approval+admin+사유는 DB가 강제."""
+    conn.execute(text("select pg_advisory_xact_lock(hashtextextended(:v, 0))"), {"v": str(version_id)})
+    ch = version_content_hash(conn, hospital_id, version_id)
+    ah = assessment_set_hash(conn, hospital_id, version_id)
+    conn.execute(text("select fn_self_approve_version(:h,:v,:p,:ch,:ah,:r)"),
+                 {"h": hospital_id, "v": version_id, "p": policy_version, "ch": ch, "ah": ah, "r": reason})
+    return {"content_hash": ch, "assessment_set_hash": ah}
+
+def reject_version(conn, hospital_id, version_id, reason):
+    """반려(none/pending→rejected, current·사유). DB가 상태·권한 강제."""
+    conn.execute(text("select fn_reject_version(:h,:v,:r)"),
+                 {"h": hospital_id, "v": version_id, "r": reason})
+
+def revoke_version(conn, hospital_id, version_id, reason):
+    """승인 철회(approved→revoked, 비-current 과거승인도 허용·admin·사유). DB가 강제."""
+    conn.execute(text("select fn_revoke_version(:h,:v,:r)"),
+                 {"h": hospital_id, "v": version_id, "r": reason})
+
 def is_stale(conn, hospital_id, version_id, policy_version):
     st = conn.execute(text(
         "select status, version_content_hash, assessment_set_hash, compliance_policy_version "

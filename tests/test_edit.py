@@ -45,14 +45,21 @@ def test_apply_block_edit_creates_unapproved_version(owner, rw, tenant):
 
 def test_edited_version_not_approvable_until_verified(owner, rw, tenant):
     h, m = tenant["hospital_id"], tenant["membership_id"]
-    sc, v1 = _seed(owner, h); _grant_approver(owner, h, m)
+    sc, v1 = _seed(owner, h)
     with tenant_conn(rw, h, m) as cn:
-        v2 = apply_block_edit(cn, h, sc, v1, {"blk_2": "THI가 54점에서 2점으로 개선됐습니다."})["version_id"]
+        v2 = apply_block_edit(cn, h, sc, v1, {"blk_2": "THI가 54점에서 2점으로 개선됐습니다."})["version_id"]  # 작성자=m
+    # 승인자는 작성자와 다른 membership이어야(작성자≠승인자) evidence gate에 도달
+    m2, u2 = uuid.uuid4(), uuid.uuid4()
+    with owner.begin() as cn:
+        cn.execute(text("insert into users(id,email) values(:u,:e)"), {"u": u2, "e": u2.hex + "@t.c"})
+        cn.execute(text("insert into hospital_memberships(id,hospital_id,user_id) values(:m,:h,:u)"), {"m": m2, "h": h, "u": u2})
+        cn.execute(text("insert into membership_roles(id,hospital_id,membership_id,role) values(:i,:h,:m,'approver')"),
+                   {"i": uuid.uuid4(), "h": h, "m": m2})
     with pytest.raises(Exception) as ei:                               # unverified claim → 승인 차단
-        with tenant_conn(rw, h, m) as cn:
+        with tenant_conn(rw, h, m2) as cn:
             approve_version(cn, h, v2, "policy-1")
     assert sqlstate(ei.value) == "23514"
-    with tenant_conn(rw, h, m) as cn:
+    with tenant_conn(rw, h, m2) as cn:
         assert is_stale(cn, h, v2, "policy-1") is True                 # 미승인 → 출력 차단
 
 def test_edit_compliance_recheck_flags_banned(owner, rw, tenant):

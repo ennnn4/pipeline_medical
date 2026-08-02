@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from services.context import ActorContext
 from services import scripts as scripts_service
 from services import evidence as evidence_service
+from services import approvals as approvals_service
 from services.exceptions import ServiceError
 from flask import Flask, request, jsonify, session, g, abort, redirect, Response
 from markupsafe import escape
@@ -233,19 +234,16 @@ def create_app(engine=None):
         except ServiceError as e:
             return jsonify(error=e.code, detail=str(e)), e.http_status
 
-    # ── 승인 ──
+    # ── 승인(공통 approval service) ──
     @app.post("/api/h/<slug>/versions/<version_id>/approve")
     def approve(slug, version_id):
         policy = (request.get_json(force=True) or {}).get("policy", "policy-1")
-        try:
-            with tenant(slug) as (conn, hid, mid):
-                out = repo.approve_version(conn, hid, uuid.UUID(version_id), policy)
+        try:      # 작성자≠승인자·current·evidence gate는 service/DB가 강제
+            ctx = ActorContext.resolve(app.config["ENGINE"], session.get("user_id"), slug, g.request_id)
+            out = approvals_service.approve(app.config["ENGINE"], ctx, version_id, policy=policy)
             return jsonify(ok=True, **out), 200
-        except Exception as e:
-            status, code = _map_pg(e)
-            if status == 400 and code is None:
-                raise
-            return jsonify(error="approve_failed", sqlstate=code), status
+        except ServiceError as e:
+            return jsonify(error=e.code, detail=str(e)), e.http_status
 
     # ── 버전 조회(+stale) ──
     @app.get("/api/h/<slug>/versions/<version_id>")
@@ -315,7 +313,9 @@ def create_app(engine=None):
                "e422": '<div class="msg e">미검증/미지원 claim이 있어 승인할 수 없습니다(4단계 근거검증 필요).</div>',
                "edited": '<div class="msg s">새 버전이 생성되었습니다(미승인).</div>',
                "reviewed": '<div class="msg s">원장 검수가 반영되었습니다(자동판정보다 우선).</div>',
-               "conflict": '<div class="msg e">현재 버전이 바뀌었거나 승인된 버전이라 검수를 반영하지 못했습니다.</div>',
+               "conflict": '<div class="msg e">현재 버전이 바뀌었거나 승인된 버전이라 반영하지 못했습니다.</div>',
+               "rejected": '<div class="msg s">반려되었습니다.</div>',
+               "revoked": '<div class="msg s">승인이 철회되었습니다.</div>',
                "regen": '<div class="msg s">이미지를 다시 생성했습니다.</div>',
                "regenfail": '<div class="msg e">이미지 재생성 실패(OpenAI 키/네트워크 확인).</div>'}.get(request.args.get("m"), "")
         with tenant(slug) as (conn, hid, mid):
@@ -382,18 +382,46 @@ def create_app(engine=None):
                 return redirect(_u(f"/ui/h/{slug}/versions/{expected}?m=conflict"))
             abort(e.http_status)
 
+    def _approval_action(slug, version_id, action, ok_msg):
+        """승인/반려/철회 공통 — ctx resolve + service 호출 + 결과 메시지 리다이렉트(라우트=파싱+매핑)."""
+        try:
+            uuid.UUID(version_id)
+        except (TypeError, ValueError):
+            abort(400)
+        try:
+            ctx = ActorContext.resolve(app.config["ENGINE"], session.get("user_id"), slug, g.request_id)
+            action(ctx)
+            return redirect(_u(f"/ui/h/{slug}/versions/{version_id}?m={ok_msg}"))
+        except ServiceError as e:
+            m = {401: None, 403: "e403", 422: "e422", 409: "conflict"}.get(e.http_status, None)
+            if m is None:
+                if e.http_status == 401:
+                    return redirect(_u("/login"))
+                abort(e.http_status)
+            return redirect(_u(f"/ui/h/{slug}/versions/{version_id}?m={m}"))
+
     @app.post("/ui/h/<slug>/versions/<version_id>/approve")
     def ui_approve(slug, version_id):
-        if not session.get("user_id"): abort(401)
-        try:
-            with tenant(slug) as (conn, hid, mid):
-                repo.approve_version(conn, hid, uuid.UUID(version_id), "policy-1")
-            return redirect(_u(f"/ui/h/{slug}/versions/{version_id}?m=approved"))
-        except Exception as e:
-            code = _sqlstate(e)
-            m = {"42501": "e403", "23514": "e422"}.get(code)
-            if not m: raise
-            return redirect(_u(f"/ui/h/{slug}/versions/{version_id}?m={m}"))
+        return _approval_action(slug, version_id,
+                                lambda ctx: approvals_service.approve(app.config["ENGINE"], ctx, version_id), "approved")
+
+    @app.post("/ui/h/<slug>/versions/<version_id>/reject")
+    def ui_reject(slug, version_id):
+        reason = (request.form.get("reason") or "").strip()
+        return _approval_action(slug, version_id,
+                                lambda ctx: approvals_service.reject(app.config["ENGINE"], ctx, version_id, reason), "rejected")
+
+    @app.post("/ui/h/<slug>/versions/<version_id>/revoke")
+    def ui_revoke(slug, version_id):
+        reason = (request.form.get("reason") or "").strip()
+        return _approval_action(slug, version_id,
+                                lambda ctx: approvals_service.revoke(app.config["ENGINE"], ctx, version_id, reason), "revoked")
+
+    @app.post("/ui/h/<slug>/versions/<version_id>/self-approve")
+    def ui_self_approve(slug, version_id):
+        reason = (request.form.get("reason") or "").strip()
+        return _approval_action(slug, version_id,
+                                lambda ctx: approvals_service.self_approve(app.config["ENGINE"], ctx, version_id, reason), "approved")
 
     # ── 원장 검수/반려: 주장별 사람 판정(human_review) — 자동판정보다 우선 ──
     @app.post("/ui/h/<slug>/claims/<claim_id>/review")
