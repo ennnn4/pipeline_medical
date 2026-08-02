@@ -71,11 +71,16 @@ def create_edited_version(conn, hospital_id, script_id, expected_current_version
     if row.current_version_id != expected_current_version_id:
         raise Conflict("current_version 변경됨(다른 편집 선반영)")
     new_v = uuid.uuid4(); new_no = row.maxno + 1
-    conn.execute(text("insert into script_versions(id,hospital_id,script_id,parent_version_id,version_no,source) "
-                      "values(:v,:h,:s,:p,:n,'editor')"),
+    # 작성자 = 세션 membership(app.membership_id GUC). inv11/12 자기승인 판정 근거.
+    conn.execute(text("insert into script_versions(id,hospital_id,script_id,parent_version_id,version_no,source,"
+                      "created_by_membership_id) values(:v,:h,:s,:p,:n,'editor',"
+                      "NULLIF(current_setting('app.membership_id', true), '')::uuid)"),
                  {"v": new_v, "h": hospital_id, "s": script_id, "p": expected_current_version_id, "n": new_no})
     conn.execute(text("insert into version_approval_states(id,hospital_id,version_id,status) values(:i,:h,:v,'none')"),
                  {"i": uuid.uuid4(), "h": hospital_id, "v": new_v})
+    # superseded는 파생(version.id != scripts.current_version_id)으로 판정 — version_approval_states는
+    # app_rw UPDATE 잠금(승인 상태는 definer만). 명시적 superseded_by 기록은 Step4 approval service의
+    # SECURITY DEFINER 함수에서 수행(컬럼은 스키마에 준비됨).
     content_fn(conn, hospital_id, new_v)              # 블록·문장·claim(동일 TX) — CAS 이전
     cnt = conn.execute(text("select count(*) from script_blocks where hospital_id=:h and version_id=:v"),
                        {"h": hospital_id, "v": new_v}).scalar()

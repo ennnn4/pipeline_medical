@@ -241,7 +241,8 @@ def ingest_content(engine, hospital_id, job_id, script_list, membership_id=None)
         raise ValueError("생성된 유효 대본 블록이 없음")
     ch = _content_hash(script_list)
     with tenant_conn(engine, hospital_id, membership_id=membership_id) as cn:
-        job = cn.execute(text("select status, script_id, topic, version_id, content_hash from generation_jobs "
+        job = cn.execute(text("select status, script_id, topic, version_id, content_hash, "
+                              "created_by_membership_id from generation_jobs "
                               "where id=:j and hospital_id=:h for update"),
                          {"j": job_id, "h": hospital_id}).first()
         if not job:
@@ -263,9 +264,11 @@ def ingest_content(engine, hospital_id, job_id, script_list, membership_id=None)
         maxno = cn.execute(text("select coalesce(max(version_no),0) from script_versions "
                                 "where hospital_id=:h and script_id=:s"), {"h": hospital_id, "s": sc}).scalar()
         v = uuid.uuid4()
-        cn.execute(text("insert into script_versions(id,hospital_id,script_id,version_no,source,creation_reason) "
-                        "values(:v,:h,:s,:n,'ai','생성 파이프라인')"),
-                   {"v": v, "h": hospital_id, "s": sc, "n": maxno + 1})
+        cn.execute(text("insert into script_versions(id,hospital_id,script_id,version_no,source,creation_reason,"
+                        "generation_job_id,created_by_membership_id) "
+                        "values(:v,:h,:s,:n,'ai','생성 파이프라인',:j,:by)"),
+                   {"v": v, "h": hospital_id, "s": sc, "n": maxno + 1,
+                    "j": job_id, "by": job.created_by_membership_id})   # 작성자=생성 요청자(job)
         cn.execute(text("insert into version_approval_states(id,hospital_id,version_id,status) values(:i,:h,:v,'none')"),
                    {"i": uuid.uuid4(), "h": hospital_id, "v": v})
         nb = ncl = 0

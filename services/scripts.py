@@ -61,6 +61,9 @@ def edit_blocks(engine, ctx, script_id, base_version_id, edits, category="tone")
             cur = {r.stable_block_key: r.text for r in conn.execute(text(
                 "select stable_block_key, text from script_blocks where hospital_id=:h and version_id=:v"),
                 {"h": ctx.hospital_id, "v": bvid})}
+            unknown = [k for k in (edits or {}) if k not in cur]   # base version에 없는 블록은 조용히 무시 금지
+            if unknown:
+                raise NotFound(f"base version에 없는 블록: {', '.join(sorted(unknown))}")
             changed = {k: v for k, v in (edits or {}).items() if cur.get(k) != v}  # 실제 변경만
             if not changed:
                 return {"version_id": None, "changed": [], "compliance": {}, "no_change": True}

@@ -1,4 +1,4 @@
-<title>본큐어 파이프라인 — P2-1 완전 종료</title>
+<title>본큐어 파이프라인 — service 추출 Step 0–2</title>
 <style>
   :root{
     --bg:#f6f7f9; --card:#fff; --ink:#0b1524; --muted:#5b6b7f; --line:#e6e9ef;
@@ -32,7 +32,8 @@
   h2 .n{flex:none;min-width:26px;height:26px;padding:0 7px;border-radius:8px;background:var(--brand-soft);color:var(--brand);font-size:12px;font-weight:800;display:grid;place-items:center}
   .row{display:flex;gap:10px;padding:9px 0;border-top:1px solid var(--line)}
   .row:first-of-type{border-top:0}
-  .row .tag{flex:none;font-size:11px;font-weight:700;color:var(--ok);align-self:flex-start;margin-top:3px;min-width:22px}
+  .row .tag{flex:none;font-size:11px;font-weight:700;color:var(--ok);align-self:flex-start;margin-top:3px;min-width:52px}
+  .row .tag.todo{color:var(--warn)}
   .row p{margin:0;font-size:14.5px}
   .row small{color:var(--muted);display:block;font-size:12.5px;margin-top:2px}
   pre{background:var(--code);color:var(--code-ink);border-radius:12px;padding:13px;overflow-x:auto;font-family:var(--mono);font-size:12px;line-height:1.55;margin:10px 0 0}
@@ -47,62 +48,78 @@
 
 <div class="wrap">
   <header class="hd">
-    <div class="eyebrow">본큐어 파이프라인 · P2-1 조건부승인 종료</div>
-    <h1>P2-1 데이터 무결성 완전 종료</h1>
-    <div class="sub">P2-1 완료 조건으로 지정한 마지막 5건(봉인 원자성·SHA-256·worker_token·병원당 active 1개·작업 격리)을 모두 반영했습니다. 이제 service 계층 추출 단계로 갑니다.</div>
+    <div class="eyebrow">본큐어 파이프라인 · service 추출</div>
+    <h1>service 추출 Step 0–2</h1>
+    <div class="sub">P2-1 최종 승인 후, 지정한 순서(정책 먼저 · edit 먼저 · 추출 즉시 /studio 교체)대로 계약과 edit service를 만들고 /studio를 교체했습니다.</div>
     <div class="status">
-      <span class="chip ok">✓ 테스트 87 통과</span>
-      <span class="chip ok">✓ Alembic 0001→0012</span>
-      <span class="chip ok">✓ 라이브 반영</span>
+      <span class="chip ok">✓ 테스트 93 통과</span>
+      <span class="chip brand">라우트=파싱+매핑만</span>
     </div>
   </header>
 
   <div class="card">
-    <h2><span class="n">a</span>봉인 원자성 + SHA-256</h2>
-    <div class="row"><span class="tag">1</span><p><b>봉인 원자성.</b> snapshot이 job 행을 <code>FOR UPDATE</code>로 잠근 뒤 GJM을 확정하고 같은 트랜잭션에서 <code>material_snapshot_at</code>을 기록. seal 트리거를 status뿐 아니라 <b>봉인 시각에도 연결</b> — 봉인 후에는 pending이라도 GJM 변경을 거부. 재봉인은 멱등 no-op.</p>
-      <pre>SELECT … FOR UPDATE (job)
-→ INSERT GJM (pending)
-→ count + SHA-256 manifest + material_snapshot_at (봉인)
-seal 트리거: material_snapshot_at IS NOT NULL → 변경 거부</pre></div>
-    <div class="row"><span class="tag">2</span><p><b>manifest SHA-256.</b> md5→sha256로 통일. <code>{ordinal, material_version_id, byte_size, content_sha256}</code>를 정렬·UTF-8·무공백 canonical로 직렬화해 해시.</p></div>
+    <h2><span class="n">0</span>계약(정책 먼저)</h2>
+    <div class="row"><span class="tag">문서</span><p><code>docs/승인_불변식.md</code> — 확정 15 불변식 + 상태 모델(<code>none/pending/approved/rejected/revoked/superseded</code>) + 전제조건 + 예외→HTTP 표.</p></div>
+    <div class="row"><span class="tag">예외</span><p><code>services/exceptions.py</code> — 타입 예외 9종 + SQLSTATE→예외 번역(라우트가 DB 세부 비의존).</p></div>
+    <div class="row"><span class="tag">컨텍스트</span><p><code>ActorContext.resolve()</code> — hospital·membership·roles를 <b>서버가 DB에서 결정</b>(요청값 신뢰 안 함). <code>permissions</code>로 역할 게이트.</p></div>
   </div>
 
   <div class="card">
-    <h2><span class="n">a</span>worker_token 실행권</h2>
-    <div class="row"><span class="tag">3</span><p><code>claim_job</code>이 CAS로 <code>worker_token</code>·<code>claimed_at</code>을 기록하고, 이후 상태전이는 <b>토큰이 일치할 때만</b> 허용. stale 워커가 뒤늦게 다른 워커의 job을 완료 처리하는 것을 차단합니다.</p></div>
+    <h2><span class="n">1·2</span>query + edit service, /studio 교체</h2>
+    <div class="row"><span class="tag">edit</span><p><code>scripts.edit_blocks</code> — 권한(editor/approver/admin) + <b>실제 변경 블록만 필터</b> + <code>apply_block_edit</code> 단일 TX 래핑 + <code>Conflict→VersionConflict</code>. 변경 규칙을 라우트에서 service로 이관.</p>
+      <pre>@app.post(".../edit")            # /api·/ui 둘 다
+def edit(...):
+    ctx = ActorContext.resolve(engine, session.user_id, slug)
+    res = scripts_service.edit_blocks(engine, ctx, script_id, expected, edits)
+    return ...                    # 라우트: 파싱 + 예외 매핑만</pre></div>
   </div>
 
   <div class="card">
-    <h2><span class="n">d</span>병원당 실행 중 job 1개</h2>
-    <div class="row"><span class="tag">4</span><p>부분 유니크 인덱스(<code>generating/generated/ingesting</code>)로 <b>같은 병원 동시 실행을 1개로</b> 강제(병원 간 병렬은 허용). 위반은 <code>hospital_busy</code>로 안내. 인덱스 생성 전 기존 중복 active는 병원별 최신 1개만 남기고 stale 정리.</p></div>
-    <div class="row"><span class="tag">5</span><p><b>작업 격리.</b> 병원당 active 1개 + 생성 전 raw/ 정리로 동시 오염을 방지. 완전한 job별 디렉터리 격리는 병원 내 병렬 실행을 여는 시점(heartbeat·queue와 함께)에 적용.</p></div>
+    <h2><span class="n">✓</span>기존 구현이 이미 강제하던 불변식</h2>
+    <div class="row"><span class="tag">1·9·10·15</span><p><code>fn_approve_version</code> — version 귀속 · 미검증 claim 게이트(422) · approver 역할 · audit.</p></div>
+    <div class="row"><span class="tag">3·13</span><p><code>fn_reject_if_version_approved</code> 트리거 — 승인된 version의 blocks/sentences/claims/assessments INSERT 동결.</p></div>
+    <div class="row"><span class="tag">4·5·6·7·8</span><p><code>create_edited_version</code> — script FOR UPDATE + CAS + 새 version 미승인 단일 TX.</p></div>
   </div>
 
-  <div class="note">테스트 <b>87개 통과</b>(신규: 재봉인 no-op·worker_token 가드·병원당 active 1개·미봉인 시 획득 거부·cross-tenant FK 거부). <code>alembic upgrade head</code> <b>0001→0012</b> 성공. 라이브 반영(active 인덱스·worker_token·claimed_at·seal 갱신 확인) + <code>master</code> 푸시.</div>
+  <div class="card">
+    <h2><span class="n">▲</span>approval service에서 추가할 격차 4</h2>
+    <div class="row"><span class="tag todo">inv 2</span><p>current version만 승인(<code>fn_approve_version</code>에 <code>scripts.current_version_id</code> 비교 추가).</p></div>
+    <div class="row"><span class="tag todo">inv 11·12</span><p>작성자≠승인자(<code>script_versions.created_by</code> 추가) + 자기승인 override(<code>hospitals.allow_self_approval</code> + 사유 + 별도 audit).</p></div>
+    <div class="row"><span class="tag todo">상태</span><p><code>reject/revoke/superseded</code> 상태 전이.</p></div>
+    <div class="row"><span class="tag todo">inv 14</span><p>publish/export = current이며 approved인 version만.</p></div>
+  </div>
 
-  <div class="note"><b>다음 단계(지정 순서대로):</b> ① 승인 불변식 문서화+테스트 → ② query service → ③ edit/version service → ④ evidence → ⑤ approval → ⑥ /studio를 service 기반으로 → ⑦ 대시보드 직접 렌더 → ⑧ parity test → ⑨ /studio 은퇴. <b>정책은 승인 먼저, 코드 추출은 edit 먼저.</b></div>
+  <div class="note">테스트 <b>93개 통과</b>(신규 service 6: resolve·비멤버 거부·버전 생성·no_change·권한·충돌). 통합앱 import·라우트 정상. <code>master</code> 푸시.</div>
 
   <div class="copybar"><button class="copy" onclick="copyGpt()">📋 GPT용 전체 복사</button></div>
-  <div class="foot">본큐어 파이프라인 · P2-1 완전 종료 · 2026-08-02</div>
-  <textarea id="gpt" readonly>[본큐어 파이프라인 — P2-1 완전 종료, service 추출 착수 보고]
+  <div class="foot">본큐어 파이프라인 · service 추출 Step 0–2 · 2026-08-02</div>
+  <textarea id="gpt" readonly>[본큐어 파이프라인 — service 추출 Step 0–2 확인 요청]
 
-배경: P2-1 조건부 승인에서 지정한 마지막 5건을 모두 반영. 87 tests green, alembic 0001→0012 fresh 통과, 라이브 반영+푸시 완료.
+배경: P2-1 최종 승인 후 지정 순서(정책 먼저, 코드는 edit 먼저, service 추출 즉시 /studio 교체)로 진행. 93 tests green, 푸시 완료.
 
-1) 봉인 원자성(§a): snapshot_job_materials가 generation_jobs 행을 SELECT…FOR UPDATE로 잠근 뒤 GJM INSERT..SELECT 확정, 같은 트랜잭션에서 material_snapshot_at 기록(봉인). seal 트리거 조건을 status<>'pending' OR material_snapshot_at IS NOT NULL로 확장 → 봉인 후에는 pending이라도 GJM INSERT/UPDATE/DELETE 거부. 재봉인 호출은 멱등 None.
+Step 0 계약:
+- docs/승인_불변식.md: 확정 15 불변식 + 상태모델(none/pending/approved/rejected/revoked/superseded) + 승인 전제조건 + 예외→HTTP 표.
+- services/exceptions.py: 타입 예외 9종(Unauthorized/NotFound/Forbidden/VersionConflict/InvalidStateTransition/ApprovalPrerequisiteFailed/SelfApprovalNotAllowed/SnapshotIntegrityError/HospitalBusy) + SQLSTATE→예외 번역.
+- services/context.py: ActorContext.resolve(engine,user_id,slug) — hospital·membership·roles를 서버가 DB에서 결정(SDR, 요청 body의 membership/role 신뢰 안 함).
+- services/permissions.py: 역할 게이트.
 
-2) manifest SHA-256 canonical(§a): md5→sha256. {ordinal, material_version_id, byte_size, content_sha256}를 정렬·UTF-8·무공백 JSON으로 직렬화해 sha256. 복원 검증(bytes size·sha256)과 알고리즘 통일.
+Step 1 query service: scripts.get_current_version / list_versions.
+Step 2 edit service: scripts.edit_blocks — 권한(editor/approver/admin) + 실제 변경 블록만 필터(원문과 다른 것만) + apply_block_edit 단일 TX 래핑 + Conflict→VersionConflict + no_change 처리. /studio의 /api·/ui edit 라우트를 service 호출로 교체(라우트는 request 파싱 + ActorContext.resolve + service 호출 + 예외→HTTP 매핑만; 직접 SQL·업무규칙 없음).
 
-3) worker_token(§a): claim_job이 CAS(UPDATE…WHERE status='pending' AND material_snapshot_at IS NOT NULL RETURNING)로 worker_token·claimed_at 기록. mark_job에 worker_token 파라미터 추가 → 이후 generated/ingesting/failed 전이는 worker_token 일치 시만. stale 워커의 늦은 완료 차단.
+기존 구현이 이미 강제하던 불변식 확인:
+- fn_approve_version: inv1(version 귀속)·9(미검증/미지원 claim 게이트 23514)·10(active approver/admin 역할)·15(audit_events).
+- fn_reject_if_version_approved 트리거: inv3·13(승인된 version의 blocks/sentences/claims/claim_assessments INSERT 동결).
+- create_edited_version: inv4·5·6·7·8(script FOR UPDATE + CAS + 새 version status='none' 미승인, 단일 TX).
 
-4) 병원당 active job 1개(§d): 부분 유니크 uq_genjobs_one_active ON generation_jobs(hospital_id) WHERE status IN ('generating','generated','ingesting'). claim_job이 유니크 위반을 hospital_busy로 처리(사용자엔 "다른 대본 생성 중" 안내). 인덱스 생성 전 기존 중복 active는 병원별 최신 1개만 남기고 stale로 정리. 병원 간 병렬은 허용.
+approval service(다음 순서 ④)에서 추가할 격차 4:
+- inv2: 승인 대상 = 승인 시점 current_version (fn_approve_version에 scripts.current_version_id 비교 추가, FOR UPDATE).
+- inv11/12: 작성자≠승인자 (script_versions.created_by_membership_id 추가, create_edited_version이 기록) + 자기승인 override(hospitals.allow_self_approval + 사유 필수 + audit action 'approval.self_approve').
+- reject/revoke/superseded 상태 전이 함수 + audit.
+- inv14: 최종 publish/export = current이며 approved인 version만.
 
-5) 작업 격리(§d): 병원당 active 1개 + 생성 전 raw/ 정리(_clear_raw_dir)로 동시 오염 방지. 완전한 job별 디렉터리 격리(run.py가 job dir 입력받게)는 병원 내 병렬 실행을 여는 시점에 heartbeat·queue와 함께 적용 예정.
+다음 순서(그대로 진행 예정): ③evidence service→/studio 교체 ④approval service(격차 4 구현)→교체 ⑤image service→교체 ⑥/studio가 service만 쓰는지 검증 ⑦대시보드 직접 렌더 ⑧기능별 parity test ⑨/studio 은퇴.
 
-_run_pipeline 순서: create_job(pending) → snapshot 봉인 → claim_job(원자획득, busy 안내) → materialize_job_snapshot 정확 복원(checksum 검증).
-
-다음 단계로 지정한 service 추출을 착수합니다. 순서: ①승인 불변식 문서화+테스트 ②query service ③edit/version service ④evidence ⑤approval ⑥/studio를 service 기반으로 ⑦대시보드 직접 렌더 ⑧parity test ⑨/studio 은퇴. 정책은 승인 먼저, 코드 추출은 edit 먼저로 진행.
-
-질문: (a) 이로써 P2-1 데이터 무결성을 "완전히 닫음"으로 최종 승인하는지. (b) 승인 불변식(승인=version_id 귀속/승인된 version 직접수정 금지=새 immutable version+미승인/자동승계 없음/편집=단일TX+optimistic lock base_version_id/작성자≠승인자·자기승인 예외+audit)을 이대로 확정해도 되는지, 추가/수정할 불변식이 있는지. (c) service 추출 착수 순서는 이대로 OK인지.</textarea>
+질문: (a) Step 0–2(계약·edit service·/studio 교체) 방향과 ActorContext(서버 결정 hospital/membership/role) 설계가 맞는지. (b) 격차 4의 구현 방식(특히 자기승인 override를 hospitals.allow_self_approval + 사유 + 별도 audit로, 작성자 추적을 script_versions.created_by_membership_id로)이 적절한지, 스키마·함수에서 주의할 점. (c) 다음을 evidence service부터(③) 이어가도 되는지, 아니면 approval 격차(④)를 먼저 볼지.</textarea>
 </div>
 <script>
   function copyGpt(){var t=document.getElementById('gpt'),b=document.querySelector('.copy');

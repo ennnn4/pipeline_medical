@@ -71,6 +71,27 @@ def test_edit_service_requires_role(rw, owner, tenant):
         svc.edit_blocks(rw, ctx, sc, v1, {"blk_2": "바뀐 내용"})
 
 
+def test_edit_records_author_and_supersedes(rw, owner, tenant):
+    h, m = tenant["hospital_id"], tenant["membership_id"]
+    sc, v1 = _seed(owner, h)
+    ctx = _ctx(tenant, {"editor"})
+    v2 = svc.edit_blocks(rw, ctx, sc, v1, {"blk_2": "THI가 54에서 2로 개선됐습니다."})["version_id"]
+    with owner.connect() as cn:
+        # 새 버전 작성자 = 편집 membership(source=editor)
+        assert str(cn.execute(text("select created_by_membership_id from script_versions where id=:v"),
+                              {"v": v2}).scalar()) == str(m)
+        # superseded는 파생: v1은 더 이상 current 아님(=superseded)
+        cur = str(cn.execute(text("select current_version_id from scripts where id=:s"), {"s": sc}).scalar())
+        assert cur == v2 and cur != str(v1)
+
+
+def test_edit_rejects_unknown_block(rw, owner, tenant):
+    h = tenant["hospital_id"]; sc, v1 = _seed(owner, h)
+    ctx = _ctx(tenant, {"editor"})
+    with pytest.raises(NotFound):                          # base version에 없는 블록 → 조용히 무시 안 함
+        svc.edit_blocks(rw, ctx, sc, v1, {"nonexistent_block": "x"})
+
+
 def test_edit_service_version_conflict(rw, owner, tenant):
     h = tenant["hospital_id"]; sc, v1 = _seed(owner, h)
     ctx = _ctx(tenant, {"editor"})

@@ -48,6 +48,8 @@ hospitals = Table(
     Column("slug", Text, nullable=False),
     Column("name", Text, nullable=False),
     Column("status", Text, nullable=False, server_default=text("'active'")),
+    # 자기승인 정책(inv12) — 기본 금지. true여도 admin(self_override capability)+사유 필요.
+    Column("allow_self_approval", Boolean, nullable=False, server_default=text("false")),
     ts("created_at"),
     UniqueConstraint("slug", name="uq_hospitals_slug"),
     CheckConstraint("status IN ('active','suspended','archived')", name="status"),
@@ -129,7 +131,9 @@ script_versions = Table(
     Column("source", Text, nullable=False),          # ai|editor|migration
     Column("creation_reason", Text),
     Column("source_package_hash", Text),             # 마이그레이션 원본 checksum
-    Column("created_by_membership_id", UUID(as_uuid=True)),   # AI/migration은 NULL
+    Column("created_by_membership_id", UUID(as_uuid=True)),   # 편집자(source=editor) 또는 생성 요청자(source=ai)
+    Column("generation_job_id", UUID(as_uuid=True)),          # source=ai일 때 어떤 job이 만들었는지(작성자 유형)
+    # (hospital_id, generation_job_id)→generation_jobs 복합 FK는 Alembic/ensure에서(메타데이터 밖 테이블)
     ts("created_at"),
     ForeignKeyConstraint(["hospital_id", "script_id"], ["scripts.hospital_id", "scripts.id"],
                          name="fk_versions_script"),
@@ -321,15 +325,24 @@ version_approval_states = Table(
     Column("version_content_hash", Text),
     Column("compliance_policy_version", Text),
     Column("decided_at", TIMESTAMP(timezone=True)),
+    # superseded는 승인 상태가 아니라 '더 이상 current 아님' 수명주기(inv14, GPT) — 승인 이력은 status로 보존.
+    Column("superseded_by_version_id", UUID(as_uuid=True)),
+    Column("superseded_at", TIMESTAMP(timezone=True)),
     ts("updated_at"),
     ForeignKeyConstraint(["hospital_id", "version_id"], ["script_versions.hospital_id", "script_versions.id"],
                          name="fk_approval_states_version"),
     ForeignKeyConstraint(["hospital_id", "approver_membership_id"],
                          ["hospital_memberships.hospital_id", "hospital_memberships.id"],
                          name="fk_approval_states_approver"),
+    ForeignKeyConstraint(["hospital_id", "superseded_by_version_id"],
+                         ["script_versions.hospital_id", "script_versions.id"],
+                         name="fk_approval_states_superseded_by"),
     UniqueConstraint("hospital_id", "version_id", name="uq_approval_states_version"),  # 버전당 1행
     tenant_id_uq("version_approval_states"),
-    CheckConstraint("status IN ('none','approved','rejected')", name="status"),
+    CheckConstraint("status IN ('none','approved','rejected','revoked')", name="status"),
+    # revoked(승인 철회) → 결정자·시각 필수(rejected와 동일)
+    CheckConstraint("status <> 'revoked' OR (approver_membership_id IS NOT NULL AND decided_at IS NOT NULL)",
+                    name="revoked_fields"),
     # approved → 승인 메타 전부 NOT NULL
     CheckConstraint(
         "status <> 'approved' OR ("
