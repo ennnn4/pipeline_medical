@@ -258,8 +258,7 @@ END $$;
 FN_GRANTS = [
     "DROP FUNCTION IF EXISTS public.fn_approve_version(uuid,uuid,uuid,text,text,text);",  # 구 6인자(p_approver 신뢰) 제거
     "DROP FUNCTION IF EXISTS public.fn_revoke_review_link(uuid,uuid);",                   # 구 2인자(p_hospital 신뢰) 제거
-    "REVOKE ALL ON FUNCTION public.fn_approve_version(uuid,uuid,text,text,text) FROM PUBLIC;",
-    "GRANT EXECUTE ON FUNCTION public.fn_approve_version(uuid,uuid,text,text,text) TO app_rw;",
+    # fn_approve_version REVOKE/GRANT는 approval_fns가 담당(단일 소유)
     "REVOKE ALL ON FUNCTION public.fn_revoke_review_link(uuid) FROM PUBLIC;",
     "GRANT EXECUTE ON FUNCTION public.fn_revoke_review_link(uuid) TO app_rw;",
     "REVOKE ALL ON FUNCTION public.fn_create_review_link(uuid,bytea,text,timestamptz) FROM PUBLIC;",
@@ -299,7 +298,7 @@ DEFINER_FUNCS = [
     "public.get_current_user(uuid)",
     "public.fn_reject_if_version_approved()",
     "public.fn_lock_version_of_claim()",
-    "public.fn_approve_version(uuid,uuid,text,text,text)",
+    # fn_approve_version 소유권은 approval_fns가 설정(단일 소유)
     "public.fn_revoke_review_link(uuid)",
     "public.fn_create_review_link(uuid,bytea,text,timestamptz)",
 ]
@@ -323,7 +322,8 @@ def statements():
     sts.append("GRANT SELECT ON hospitals TO app_rw;")
     # 불변 테이블/승인 상태 DML 봉쇄 + 승인·폐기 전용 함수(blanket GRANT 이후에 REVOKE)
     sts += LOCKDOWN
-    sts.append(FN_APPROVE); sts.append(FN_REVOKE_LINK); sts.append(FN_CREATE_LINK); sts += FN_GRANTS
+    # fn_approve_version 계열(core+wrappers)은 store/approval_fns가 단일 소유 — 여기서 만들지 않음.
+    sts.append(FN_REVOKE_LINK); sts.append(FN_CREATE_LINK); sts += FN_GRANTS
     sts.append(TRIGGER_FROZEN); sts += TRIGGERS      # 승인 버전 콘텐츠 동결 트리거
     # 관리형 PG 대응: definer 허용 정책 + app_owner grant + 함수 소유권 이전(모든 함수 생성 후)
     for t in FORCE_RLS_TABLES:

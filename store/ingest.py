@@ -213,6 +213,16 @@ def claim_job(engine, hospital_id, job_id, worker_token, membership_id=None):
     except IntegrityError:
         return (False, "hospital_busy")   # 병원당 active job 부분유니크 위반(다른 job 실행 중)
 
+def heartbeat_job(engine, hospital_id, job_id, worker_token):
+    """실행 중 워커가 살아있음을 표시(heartbeat_at 갱신) — reap_stale이 살아있는 워커를 stale로 오판하지
+    않게. worker_token 일치할 때만(실행권 소유자). 반환: 갱신 여부."""
+    with tenant_conn(engine, hospital_id) as cn:
+        r = cn.execute(text("update generation_jobs set heartbeat_at=now(), updated_at=now() "
+                            "where id=:j and hospital_id=:h and worker_token=:w "
+                            "and status in ('generating','generated','ingesting') returning id"),
+                       {"j": job_id, "h": hospital_id, "w": worker_token}).first()
+        return r is not None
+
 def reap_stale(engine, hospital_id, older_than_sec=1800):
     """heartbeat가 오래 멈춘 active(generating/generated/ingesting) job → stale.
     worker_token을 무효화(NULL)해 늦은 워커가 뒤늦게 상태전이/적재하지 못하게 함(GPT)."""

@@ -142,6 +142,18 @@ def test_one_active_job_per_hospital(rw, tenant, mats):
     assert acquired is False and reason == "hospital_busy"
 
 
+def test_heartbeat_keeps_job_alive(rw, tenant, mats):
+    h = tenant["hospital_id"]
+    M.save_material(rw, h, "hb.txt", b"D")
+    j = I.create_job(rw, h, "hb", str(uuid.uuid4()))["job_id"]
+    M.snapshot_job_materials(rw, h, j)
+    I.claim_job(rw, h, j, "tok")
+    assert I.heartbeat_job(rw, h, j, "tok") is True         # 소유자 heartbeat OK
+    assert I.heartbeat_job(rw, h, j, "WRONG") is False      # 옛/틀린 토큰은 heartbeat 불가
+    I.reap_stale(rw, h, older_than_sec=0)                   # 방금 heartbeat했지만 0초라 stale
+    assert I.heartbeat_job(rw, h, j, "tok") is False        # stale 이후엔 heartbeat 불가(active 아님)
+
+
 def test_reap_invalidates_worker_token(rw, tenant, mats):
     h = tenant["hospital_id"]
     M.save_material(rw, h, "r.txt", b"D")

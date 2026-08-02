@@ -581,9 +581,15 @@ def _run_pipeline(h, topic, evidence=True, request_key=None, membership_id=None)
         if evidence: cmd.append("--evidence")   # 논문 근거 대조 + 시각자료 추출
         proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 env={**os.environ, "PYTHONUTF8": "1"})
+        import time as _t
+        _last_hb = _t.monotonic()
         for line in io.TextIOWrapper(proc.stdout, encoding="utf-8", errors="ignore"):
             log += line
             job_set(h, log=log)
+            if hid and job_id and _t.monotonic() - _last_hb > 30:   # 살아있음 표시(reap 오판 방지)
+                try: _ing.heartbeat_job(make_engine(), hid, job_id, worker_token)
+                except Exception: pass
+                _last_hb = _t.monotonic()
         proc.wait()
         ok = (proc.returncode == 0)   # run.py all 이 검수 실패/오류 시 non-zero 반환
     except Exception as e:

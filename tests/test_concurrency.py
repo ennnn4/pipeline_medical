@@ -85,9 +85,16 @@ def test_advisory_lock_blocks_content_during_approval(owner, rw, tenant):
 def test_rls_apply_idempotent(owner):
     """rls_sql.apply()를 두 번 실행해도 실패하지 않음(정책/함수/트리거 재적용)."""
     R.apply(owner)                                         # base_url이 이미 1회, 여기서 2회째
-    # R.apply는 fn_approve_version을 rls_sql 기본형으로 되돌리므로, 이후 테스트를 위해 Step4 함수 복원
-    from store.approval_fns import ensure_approval_fns
-    ensure_approval_fns(owner)
+
+
+def test_approve_fn_single_owner_after_rls_apply(owner):
+    """단일 소유 회귀 관문: R.apply가 fn_approve_version을 되돌리지 않음(강화형 유지·구형 overload 없음)."""
+    R.apply(owner)                                         # rls_sql 재적용
+    with owner.connect() as cn:
+        d = cn.execute(text("select pg_get_functiondef('public.fn_approve_version(uuid,uuid,text,text,text)'::regprocedure)")).scalar()
+        n = cn.execute(text("select count(*) from pg_proc where proname='fn_approve_version'")).scalar()
+    assert "fn_approve_core" in d                          # core 위임형(강화) 유지 — reseed 버그 영구 차단
+    assert n == 1                                          # 구형 overload 부재
 
 # ── lease (owner/마이그레이션 role) ──
 def _pending(owner, h):

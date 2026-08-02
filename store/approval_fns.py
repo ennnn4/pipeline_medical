@@ -198,6 +198,9 @@ _GRANTS = [
     "REVOKE ALL ON FUNCTION public.fn_revoke_version(uuid,uuid,text) FROM PUBLIC;",
     "GRANT EXECUTE ON FUNCTION public.fn_revoke_version(uuid,uuid,text) TO app_rw;",
     "ALTER FUNCTION public.fn_revoke_version(uuid,uuid,text) OWNER TO app_owner;",
+    # fn_approve_version 단일 소유(rls_sql은 더 이상 생성/grant/owner 안 함)
+    "REVOKE ALL ON FUNCTION public.fn_approve_version(uuid,uuid,text,text,text) FROM PUBLIC;",
+    "GRANT EXECUTE ON FUNCTION public.fn_approve_version(uuid,uuid,text,text,text) TO app_rw;",
     "ALTER FUNCTION public.fn_approve_version(uuid,uuid,text,text,text) OWNER TO app_owner;",
     "GRANT SELECT ON hospitals TO app_owner;",           # core가 allow_self_approval 읽음(멱등)
     "REVOKE CREATE ON SCHEMA public FROM PUBLIC;",        # definer 안전(untrusted가 public에 객체 못 만들게)
