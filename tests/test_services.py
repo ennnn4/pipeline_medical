@@ -94,6 +94,24 @@ def test_edit_rejects_unknown_block(rw, owner, tenant):
         svc.edit_blocks(rw, ctx, sc, v1, {"nonexistent_block": "x"})
 
 
+def test_workspace_returns_render_data(rw, owner, tenant):
+    from services import workspace as ws
+    h = tenant["hospital_id"]; sc, v1 = _seed(owner, h)
+    ctx = _ctx(tenant, {"editor"})
+    w = ws.get_version_workspace(rw, ctx, v1)
+    assert w["script_id"] == str(sc) and w["is_current"] is True and w["approval_status"] == "none"
+    assert [b["stable_block_key"] for b in w["blocks"]] == ["blk_1", "blk_2"]
+    assert w["available_actions"]["can_edit"] is True and w["available_actions"]["can_export"] is False
+
+
+def test_workspace_missing_version(rw, owner, tenant):
+    from services import workspace as ws
+    from services.exceptions import NotFound
+    ctx = _ctx(tenant, {"editor"})
+    with pytest.raises(NotFound):
+        ws.get_version_workspace(rw, ctx, uuid.uuid4())
+
+
 def test_edit_service_version_conflict(rw, owner, tenant):
     h = tenant["hospital_id"]; sc, v1 = _seed(owner, h)
     ctx = _ctx(tenant, {"editor"})

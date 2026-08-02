@@ -14,6 +14,7 @@ from services import evidence as evidence_service
 from services import approvals as approvals_service
 from services import exports as exports_service
 from services import images as images_service
+from services import workspace as workspace_service
 from services.exceptions import ServiceError
 from flask import Flask, request, jsonify, session, g, abort, redirect, Response
 from markupsafe import escape
@@ -317,66 +318,40 @@ def create_app(engine=None):
                "revoked": '<div class="msg s">승인이 철회되었습니다.</div>',
                "regen": '<div class="msg s">이미지를 다시 생성했습니다.</div>',
                "regenfail": '<div class="msg e">이미지 재생성 실패(OpenAI 키/네트워크 확인).</div>'}.get(request.args.get("m"), "")
-        with tenant(slug) as (conn, hid, mid):
-            sc = conn.execute(text("select script_id, version_no, parent_version_id from script_versions where hospital_id=:h and id=:v"),
-                              {"h": hid, "v": uuid.UUID(version_id)}).first()
-            if not sc: abort(404)
-            blocks = conn.execute(text("select stable_block_key, order_index, block_type, text from script_blocks "
-                                       "where hospital_id=:h and version_id=:v order by order_index"),
-                                  {"h": hid, "v": uuid.UUID(version_id)}).mappings().all()
-            stale = repo.is_stale(conn, hid, uuid.UUID(version_id), "policy-1")
-            is_current = conn.execute(text("select current_version_id=:v from scripts where id=:s"),
-                                      {"v": uuid.UUID(version_id), "s": sc.script_id}).scalar()
-            appr_status = conn.execute(text("select status from version_approval_states where hospital_id=:h and version_id=:v"),
-                                       {"h": hid, "v": uuid.UUID(version_id)}).scalar() or "none"
-            # 4단계: 이 버전의 의학주장 + 유효 근거판정(사람>자동, migration 제외) + 출처
-            claims = conn.execute(text(
-                "select c.id, c.claim_text, e.support_level, e.verification_status, e.medical_risk, "
-                "e.assessment_kind, e.rationale, "
-                "(select s.title from claim_sources cs join source_versions sv "
-                "  on sv.hospital_id=cs.hospital_id and sv.id=cs.source_version_id "
-                "  join sources s on s.hospital_id=sv.hospital_id and s.id=sv.source_id "
-                "  where cs.hospital_id=c.hospital_id and cs.claim_id=c.id limit 1) as source_title, "
-                "(select cs.source_quote from claim_sources cs "
-                "  where cs.hospital_id=c.hospital_id and cs.claim_id=c.id limit 1) as source_quote "
-                "from claims c left join claim_effective_assessment e "
-                "  on e.hospital_id=c.hospital_id and e.claim_id=c.id "
-                "where c.hospital_id=:h and c.version_id=:v order by c.claim_index"),
-                {"h": hid, "v": uuid.UUID(version_id)}).mappings().all()
-            has_img_tbl = conn.execute(text("select to_regclass('public.scene_images')")).scalar()
-            img_keys = ({r[0] for r in conn.execute(text(
-                "select block_key from scene_images where hospital_id=:h"), {"h": hid})}
-                if has_img_tbl else set())   # scene_images 미설치 환경(테스트 등) 안전
+        try:      # 읽기 데이터는 공통 query service(get_version_workspace) 한 번으로
+            _ctx = ActorContext.resolve(app.config["ENGINE"], session.get("user_id"), slug, g.request_id)
+            ws = workspace_service.get_version_workspace(app.config["ENGINE"], _ctx, version_id)
+        except ServiceError as e:
+            if e.http_status == 401:
+                return redirect(_u("/login") + "?next=" + _u(f"/ui/h/{slug}/versions/{version_id}"))
+            abort(e.http_status)
+        script_id = ws["script_id"]; blocks = ws["blocks"]; claims = ws["claims"]
+        is_current = ws["is_current"]; appr_status = ws["approval_status"]; stale = ws["stale"]
         badge = '<span class="badge stale">미승인/stale</span>' if stale else '<span class="badge ok">승인됨</span>'
         rows = "".join(f'<div class=blk><div class=key>{escape(b["stable_block_key"])} · {escape(b["block_type"])}</div>'
                        f'<textarea name="edit__{escape(b["stable_block_key"])}">{escape(b["text"])}</textarea></div>' for b in blocks)
-        editform = (f'<form method=post action="{_u(f"/ui/h/{slug}/scripts/{sc.script_id}/edit")}">{_csrf_field()}'
+        editform = (f'<form method=post action="{_u(f"/ui/h/{slug}/scripts/{script_id}/edit")}">{_csrf_field()}'
                     f'<input type=hidden name=expected value="{version_id}">{rows}'
                     f'<button class=btn type=submit>💾 편집 저장(새 버전 생성)</button></form>') if is_current else \
                    f'<p><small>이 버전은 현재 버전이 아니라 편집할 수 없습니다(불변).</small></p>{rows}'
-        _rj = _u(f"/ui/h/{slug}/versions/{version_id}")
+        _rj = _u(f"/ui/h/{slug}/versions/{version_id}"); act = ws["available_actions"]
         approve = reject = revoke = export = ""
-        if is_current and appr_status in ("none", "pending"):
+        if act["can_approve"]:
             approve = (f'<form method=post action="{_rj}/approve" style="display:inline-block;margin-top:12px">{_csrf_field()}'
                        f'<button class=btn type=submit>✅ 승인</button></form>')
             reject = (f'<form method=post action="{_rj}/reject" style="display:inline-block;margin-top:12px;margin-left:6px">{_csrf_field()}'
                       f'<input name=reason placeholder="반려 사유" style="padding:6px 8px;font-size:13px">'
                       f'<button class=btn type=submit style="background:#f04452">반려</button></form>')
-        if appr_status == "approved":
-            export = f'<a class="btn g" style="margin-left:6px" href="{_u(f"/api/h/{slug}/scripts/{sc.script_id}/versions/{version_id}/export")}">⬇ export(JSON)</a>'
+        if act["can_revoke"]:
+            export = f'<a class="btn g" style="margin-left:6px" href="{_u(f"/api/h/{slug}/scripts/{script_id}/versions/{version_id}/export")}">⬇ export(JSON)</a>'
             revoke = (f'<form method=post action="{_rj}/revoke" style="display:inline-block;margin-top:12px;margin-left:6px">{_csrf_field()}'
                       f'<input name=reason placeholder="철회 사유" style="padding:6px 8px;font-size:13px">'
                       f'<button class=btn type=submit style="background:#f04452">승인 철회</button></form>')
-        diff = f'<a class="btn g" href="{_u(f"/api/h/{slug}/versions/{version_id}/diff")}?from={sc.parent_version_id}">diff(JSON)</a>' if sc.parent_version_id else ""
-        evidence = _evidence_panel(slug, claims, is_current, version_id, sc.script_id)
-        try:      # 이미지 stale 파생 판정(대본 장면이 이미지 생성 당시와 달라졌는지)
-            _ctx_img = ActorContext.resolve(app.config["ENGINE"], session.get("user_id"), slug, g.request_id)
-            img_status = images_service.list_scene_status(app.config["ENGINE"], _ctx_img, version_id)
-        except Exception:
-            img_status = {}
-        images = _images_panel(slug, version_id, blocks, img_keys, is_current, img_status)
-        return _page(f"버전 {sc.version_no}",
-                     f'<div class=card><h1>버전 v{sc.version_no} {badge}</h1>{msg}'
+        diff = f'<a class="btn g" href="{_u(f"/api/h/{slug}/versions/{version_id}/diff")}?from={ws["parent_version_id"]}">diff(JSON)</a>' if ws["parent_version_id"] else ""
+        evidence = _evidence_panel(slug, claims, is_current, version_id, script_id)
+        images = _images_panel(slug, version_id, blocks, ws["img_keys"], is_current, ws["images_status"])
+        return _page(f"버전 {ws['version_no']}",
+                     f'<div class=card><h1>버전 v{ws["version_no"]} {badge}</h1>{msg}'
                      f'<h2>블록 (편집 → 새 immutable 버전)</h2>{editform}{approve}{reject}{revoke}{export} {diff} '
                      f'<a class="btn g" href="{_u("/logout")}">로그아웃</a></div>{images}{evidence}')
 
