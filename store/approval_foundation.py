@@ -7,6 +7,8 @@ from sqlalchemy import text
 STMTS = [
     # 자기승인 정책(inv12) — 기본 금지
     "ALTER TABLE hospitals ADD COLUMN IF NOT EXISTS allow_self_approval boolean NOT NULL DEFAULT false;",
+    # 승인 gate snapshot 등 감사 메타(GPT)
+    "ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS metadata jsonb;",
     # AI 버전의 생성 job 링크(작성자 유형)
     "ALTER TABLE script_versions ADD COLUMN IF NOT EXISTS generation_job_id uuid;",
     # superseded 분리(승인 상태가 아닌 수명주기) — inv14

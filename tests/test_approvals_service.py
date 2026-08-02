@@ -148,6 +148,17 @@ def test_new_editor_version_requires_human_signoff(rw, owner, tenant):
         ap.approve(rw, _ctx(h, appr_m, appr_u, {"approver"}), v)
 
 
+def test_approve_records_gate_snapshot(rw, owner, tenant):
+    h = tenant["hospital_id"]
+    appr_m, appr_u = _member(owner, h, "approver")
+    _, v, _ = _approvable(owner, h)   # migration + automated verified 1건
+    ap.approve(rw, _ctx(h, appr_m, appr_u, {"approver"}), v)
+    with owner.connect() as cn:
+        meta = cn.execute(text("select metadata from audit_events where action='approval.approve' and entity_id=:v "
+                               "order by created_at desc limit 1"), {"v": v}).scalar()
+    assert meta and meta["claim_count"] == 1 and meta["gate_policy"] and "assessment_hash" in meta
+
+
 def test_revoke_records_actor_and_reason(rw, owner, tenant):
     h = tenant["hospital_id"]
     appr_m, appr_u = _member(owner, h, "approver")

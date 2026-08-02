@@ -548,6 +548,7 @@ audit_events = Table(
     Column("entity_type", Text), Column("entity_id", UUID(as_uuid=True)),
     Column("request_id", Text),
     Column("before_hash", Text), Column("after_hash", Text),
+    Column("metadata", JSONB),                       # 승인 gate snapshot 등(counts·policy·hash)
     Column("ip_hash", Text), Column("ua_hash", Text),
     ts("created_at"),
     Index("ix_audit_hospital_created", "hospital_id", text("created_at DESC")),

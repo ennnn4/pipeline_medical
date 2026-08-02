@@ -22,7 +22,7 @@ CREATE OR REPLACE FUNCTION public.fn_approve_core(
   p_mode text, p_reason text)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE v_approver uuid; v_hospital uuid; v_script uuid; v_creator uuid; v_source text; v_current uuid;
-        v_status text; v_is_admin boolean; v_allow_self boolean; v_action text; v_legacy boolean;
+        v_status text; v_is_admin boolean; v_allow_self boolean; v_action text; v_legacy boolean; v_snap jsonb;
 BEGIN
   v_approver := NULLIF(current_setting('app.membership_id', true), '')::uuid;
   v_hospital := NULLIF(current_setting('app.hospital_id', true), '')::uuid;
@@ -86,8 +86,21 @@ BEGIN
     assessment_set_hash=p_assessment_hash, version_content_hash=p_content_hash,
     compliance_policy_version=p_policy, decided_at=now(), updated_at=now()
   WHERE hospital_id=p_hospital AND version_id=p_version;
-  INSERT INTO public.audit_events(id,hospital_id,actor_membership_id,action,entity_type,entity_id,after_hash,request_id)
-    VALUES(gen_random_uuid(), p_hospital, v_approver, v_action, 'version', p_version, p_assessment_hash,
+  -- gate snapshot(감사·설명가능성): 당시 판정 분포·정책·해시
+  SELECT jsonb_build_object(
+    'gate_policy', p_policy, 'mode', p_mode, 'legacy_allowed', v_legacy,
+    'claim_count', count(*),
+    'accepted', count(*) FILTER (WHERE e.human_decision='accepted' AND e.verification_status='verified'),
+    'waived', count(*) FILTER (WHERE e.human_decision='waived'),
+    'not_applicable', count(*) FILTER (WHERE e.human_decision='not_applicable'),
+    'legacy_auto', count(*) FILTER (WHERE e.human_decision IS NULL AND e.verification_status='verified'),
+    'content_hash', p_content_hash, 'assessment_hash', p_assessment_hash)
+  INTO v_snap
+  FROM public.claims c LEFT JOIN public.claim_effective_assessment e
+    ON e.hospital_id=c.hospital_id AND e.claim_id=c.id
+  WHERE c.hospital_id=p_hospital AND c.version_id=p_version;
+  INSERT INTO public.audit_events(id,hospital_id,actor_membership_id,action,entity_type,entity_id,after_hash,metadata,request_id)
+    VALUES(gen_random_uuid(), p_hospital, v_approver, v_action, 'version', p_version, p_assessment_hash, v_snap,
            NULLIF(current_setting('app.request_id', true), ''));
 END $$;
 """.replace("__ROLE_APPROVER__", _ROLE_ACTIVE.format(m="v_approver", roles="'approver','admin'")) \
