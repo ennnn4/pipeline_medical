@@ -48,6 +48,9 @@ _sk = os.path.join(ROOT, ".secret")
 app.secret_key = (os.environ.get("SECRET_KEY")
                   or (open(_sk).read().strip() if os.path.exists(_sk)
                       else (lambda s: (open(_sk,"w").write(s), s)[1])(secrets.token_hex(32))))
+# 쿠키 보안(스튜디오와 동일 설정으로 세션 공유 안전). 배포(SECRET_KEY 존재)면 Secure.
+app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",
+                  SESSION_COOKIE_SECURE=bool(os.environ.get("SECRET_KEY")))
 def _users_path(): return os.path.join(ROOT, "config", "users.yaml")
 def load_users():
     import yaml
@@ -256,7 +259,8 @@ def hospital(h):
       <h2 style="margin-top:0">② 대본 만들기</h2>
       <div class=note>주력 질환: {", ".join(diseases) or "설정에 없음"} — 아래 버튼 누르면 주제 자동 입력</div>
       <div class=chk style="margin:10px 0">{dz_opts}</div>
-      <form id=runf method=post action="/h/{h}/run">
+      <form id=runf method=post action="/h/{h}/run" onsubmit="var r=document.getElementById('reqkey');r.value=(window.crypto&&crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random());document.getElementById('runbtn').disabled=true;">
+        <input type=hidden name=reqkey id=reqkey>
         <label>주제</label><input type=text id=topic name=topic placeholder="예: 오십견" required>
         <label class=opt style="display:flex;gap:9px;align-items:flex-start;margin-top:14px;padding:12px 14px;background:var(--surface);border:1px solid var(--border);border-radius:10px;cursor:pointer;font-weight:600">
           <input type=checkbox name=evidence value=1 checked style="margin-top:3px;width:17px;height:17px;accent-color:var(--accent)">
@@ -338,21 +342,15 @@ def _pg_hospital_id(slug):
     except Exception:
         return None
 
-def _ingest_to_pg(h, topic):
-    """생성된 package.json을 스튜디오 PostgreSQL(대본→버전→블록→주장)에 적재. 반환: version_id or None."""
+def _pg_script_id_for_topic(hid, topic):
+    """이 병원에서 해당 topic의 기존 대본 script_id(있으면) → 재생성 시 그 대본의 새 버전으로 이어짐(topic은 표시용)."""
     try:
-        import json as _json
         from store.db import make_engine
-        from store.ingest import ingest_package
-        hid = _pg_hospital_id(h)
-        if not hid:
-            return None
-        p = os.path.join(data_dir(h, "out"), f"{topic}_package.json")
-        if not os.path.exists(p):
-            return None
-        pkg = _json.load(open(p, encoding="utf-8"))
-        res = ingest_package(make_engine(), hid, topic, pkg.get("script") or [], raw=pkg)
-        return res.get("version_id")
+        from sqlalchemy import text
+        from store.repositories import tenant_conn
+        with tenant_conn(make_engine(), hid) as cn:
+            return cn.execute(text("select id from scripts where hospital_id=:h and topic=:t "
+                                   "order by created_at limit 1"), {"h": hid, "t": topic}).scalar()
     except Exception:
         return None
 
@@ -373,9 +371,27 @@ def _pg_studio_url(h):
     except Exception:
         return None
 
-def _run_pipeline(h, topic, evidence=True):
+def _run_pipeline(h, topic, evidence=True, request_key=None):
+    """GPT P0 반영: run.py '전에' PG generation_job(pending) 생성 → generating → generated →
+    ingesting → completed. 각 상태는 별도 트랜잭션이라 실패해도 job에 흔적이 남음."""
+    import uuid as _uuid, json as _json
+    from store.db import make_engine
+    from store import ingest as _ing
     job_set(h, topic=topic, status="running", ok=None, log="")
     log = ""; ok = False
+    hid = _pg_hospital_id(h)
+    request_key = request_key or _uuid.uuid4().hex
+    job_id = None
+    if hid:
+        try:
+            cj = _ing.create_job(make_engine(), hid, topic, request_key,
+                                 target_script_id=_pg_script_id_for_topic(hid, topic))
+            job_id = cj["job_id"]
+            if cj["reused"] and cj["status"] in ("pending", "generating", "ingesting"):
+                job_set(h, status="done", ok=False, log="[중복 요청] 이미 진행 중인 생성이 있습니다."); return
+            _ing.mark_job(make_engine(), hid, job_id, "generating", phase="run.py", started=True)
+        except Exception as e:
+            log += f"\n[스튜디오 job 경고] {e}"
     try:
         cmd = [PY, "run.py", "all", "--hospital", h, "--topic", topic]
         if evidence: cmd.append("--evidence")   # 논문 근거 대조 + 시각자료 추출
@@ -388,11 +404,24 @@ def _run_pipeline(h, topic, evidence=True):
         ok = (proc.returncode == 0)   # run.py all 이 검수 실패/오류 시 non-zero 반환
     except Exception as e:
         log += f"\n[오류] {e}"
-    if ok:
-        vid = _ingest_to_pg(h, topic)     # 스튜디오 PostgreSQL 적재(편집·근거·이미지·승인용)
-        if vid:
-            log += f"\n[스튜디오] 편집·근거·이미지 화면 준비 완료."
+        if hid and job_id:
+            try: _ing.mark_job(make_engine(), hid, job_id, "failed", error_code="run_error", error_message=str(e), finished=True)
+            except Exception: pass
+    if ok and hid and job_id:
+        try:
+            _ing.mark_job(make_engine(), hid, job_id, "generated", phase="parsed")
+            pkg = _json.load(open(os.path.join(data_dir(h, "out"), f"{topic}_package.json"), encoding="utf-8"))
+            _ing.mark_job(make_engine(), hid, job_id, "ingesting", phase="ingest")
+            res = _ing.ingest_content(make_engine(), hid, job_id, topic, pkg.get("script") or [],
+                                      target_script_id=_pg_script_id_for_topic(hid, topic))
+            log += f"\n[스튜디오] 편집·근거·이미지 준비 완료(블록 {res['blocks']}·주장 {res['claims']})."
             job_set(h, log=log)
+        except Exception as e:
+            log += f"\n[스튜디오 적재 오류] {e}"
+            try: _ing.mark_job(make_engine(), hid, job_id, "failed", error_code="ingest_error", error_message=str(e), finished=True)
+            except Exception: pass
+    elif ok and not hid:
+        log += "\n[안내] 이 병원은 스튜디오(PostgreSQL) 연결이 없어 파일만 생성했습니다."
     job_set(h, status="done", ok=ok, log=log)
 
 @app.route("/h/<h>/run", methods=["POST"])
@@ -400,8 +429,9 @@ def run_ep(h):
     if not os.path.exists(cfg_path(h)): abort(404)
     topic = (request.form.get("topic","").strip() or "주제")[:60]
     evidence = bool(request.form.get("evidence"))
+    reqkey = (request.form.get("reqkey","").strip() or secrets.token_hex(16))[:64]   # 브라우저 생성 우선(더블클릭 방지)
     if not job_get(h).get("running"):
-        threading.Thread(target=_run_pipeline, args=(h, topic, evidence), daemon=True).start()
+        threading.Thread(target=_run_pipeline, args=(h, topic, evidence, reqkey), daemon=True).start()
     return redirect(f"/h/{h}")
 
 @app.route("/h/<h>/status")
@@ -457,11 +487,13 @@ def login():
         # 1) PostgreSQL 사용자(스튜디오와 단일 계정) — 한 번 로그인으로 대시보드+스튜디오
         pg_uid = _pg_login(u, p)
         if pg_uid:
+            session.clear()   # 세션 고정 공격 방지
             session["user"] = u; session["user_id"] = pg_uid; return redirect("/")
-        # 2) 레거시 users.yaml(관리자 등) 폴백
-        users = load_users()
-        if u in users and check_password_hash(users[u], p):
-            session["user"] = u; return redirect("/")
+        # 2) 레거시 users.yaml 폴백 — DISABLE_YAML_FALLBACK=1 이면 비활성(PG 단일화 후 제거 예정)
+        if os.environ.get("DISABLE_YAML_FALLBACK") != "1":
+            users = load_users()
+            if u in users and check_password_hash(users[u], p):
+                session.clear(); session["user"] = u; return redirect("/")
         err = "아이디 또는 비밀번호가 올바르지 않습니다."
     return _login_page(err)
 

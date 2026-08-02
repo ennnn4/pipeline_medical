@@ -147,6 +147,8 @@ def _sqlstate(exc):
 def create_app(engine=None):
     app = Flask(__name__)
     app.secret_key = os.environ.get("SECRET_KEY", "dev-" + uuid.uuid4().hex)
+    app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",
+                      SESSION_COOKIE_SECURE=bool(os.environ.get("SECRET_KEY")))  # 대시보드와 동일(세션 공유 안전)
     app.config["ENGINE"] = engine or make_engine()  # app_rw 엔진(운영은 DATABASE_URL)
 
     @app.before_request
@@ -258,6 +260,7 @@ def create_app(engine=None):
             with eng.connect() as cn:
                 row = cn.execute(text("select id, pw_hash from lookup_user_for_login(:e)"), {"e": email}).first()
             if row and row.pw_hash and check_password_hash(row.pw_hash, pw):
+                session.clear()   # 세션 고정 방지
                 session["user_id"] = str(row.id)
                 return redirect(request.args.get("next") or _u("/"))
             err = '<div class="msg e">이메일 또는 비밀번호가 올바르지 않습니다.</div>'
