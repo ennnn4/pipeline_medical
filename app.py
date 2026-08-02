@@ -228,6 +228,8 @@ def hospital(h):
         chk += f'<span class="pill {cls}">{label}</span>'
         if req and not n: miss.append(k)
     misswarn = (f'<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 필수 자료가 빠졌어요: {", ".join(miss)} — 넣을수록 대본 품질이 올라가요.</div>' if miss else "")
+    if request.args.get("err") == "big":
+        misswarn += '<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 40MB 넘는 파일은 업로드 안 됩니다(영속 저장 한도). 나눠서 올려주세요.</div>'
     studio_url = _pg_studio_url(h)
     studio_cta = (f'<a class="btn pri" href="{studio_url}" style="display:block;text-align:center;margin-bottom:12px">'
                   f'✏️ 스튜디오에서 편집 · 근거검증 · 장면이미지 · 승인 →</a>') if studio_url else ''
@@ -323,21 +325,23 @@ def upload(h):
     if not os.path.exists(cfg_path(h)): abort(404)
     dest = data_dir(h, "raw")
     hid = _pg_hospital_id(h)     # PG 병원이면 자료를 PostgreSQL에도 저장(영속, 재배포에도 안 사라짐)
-    eng = None
+    eng = None; _MAT_MAX = 40 * 1024 * 1024
     if hid:
         try:
             from store.db import make_engine
-            from store.materials import ensure_materials_schema, save_material
+            from store.materials import save_material, MAX_BYTES as _MAT_MAX
             eng = make_engine()
         except Exception:
             eng = None
-    saved = 0
+    saved = 0; rejected = []
     for f in request.files.getlist("files"):
         if not f or not f.filename: continue
         name = safe_filename(f.filename)     # 한글 유지 + 경로탈출 방지
         if not name: continue
         if os.path.splitext(name)[1].lower() not in ALLOWED_EXT: continue  # 허용 확장자만
         raw = f.read()
+        if eng and len(raw) > _MAT_MAX:      # PG 영속 불가 크기 → 명시적 거부(임시디스크 fallback 안 함)
+            rejected.append(name); continue
         with open(os.path.join(dest, name), "wb") as out:   # 즉시 사용용 disk 캐시
             out.write(raw)
         if eng:
@@ -346,7 +350,7 @@ def upload(h):
             except Exception:
                 pass
         saved += 1
-    return redirect(f"/h/{h}")
+    return redirect(f"/h/{h}" + ("?err=big" if rejected else ""))
 
 def _pg_hospital_id(slug):
     """대시보드 병원 slug ↔ PostgreSQL hospital 매핑. 없으면 None(구식 파일 흐름만)."""
@@ -423,7 +427,7 @@ def _run_pipeline(h, topic, evidence=True, request_key=None):
             job_id = cj["job_id"]
             if cj["reused"] and cj["status"] in ("pending", "generating", "ingesting"):
                 job_set(h, status="done", ok=False, log="[중복 요청] 이미 진행 중인 생성이 있습니다."); return
-            _ing.mark_job(make_engine(), hid, job_id, "generating", phase="run.py", started=True)
+            _ing.mark_job(make_engine(), hid, job_id, "generating", allowed_from={"pending"}, phase="run.py", started=True)
         except Exception as e:
             log += f"\n[스튜디오 job 경고] {e}"
     try:
@@ -439,20 +443,22 @@ def _run_pipeline(h, topic, evidence=True, request_key=None):
     except Exception as e:
         log += f"\n[오류] {e}"
         if hid and job_id:
-            try: _ing.mark_job(make_engine(), hid, job_id, "failed", error_code="run_error", error_message=str(e), finished=True)
+            try: _ing.mark_job(make_engine(), hid, job_id, "failed", allowed_from={"pending","generating","generated","ingesting"},
+                               error_code="run_error", error_message=str(e), finished=True)
             except Exception: pass
     if ok and hid and job_id:
         try:
-            _ing.mark_job(make_engine(), hid, job_id, "generated", phase="parsed")
+            _ing.mark_job(make_engine(), hid, job_id, "generated", allowed_from={"generating"}, phase="parsed")
             pkg = _json.load(open(os.path.join(data_dir(h, "out"), f"{topic}_package.json"), encoding="utf-8"))
-            _ing.mark_job(make_engine(), hid, job_id, "ingesting", phase="ingest")
-            res = _ing.ingest_content(make_engine(), hid, job_id, topic, pkg.get("script") or [],
-                                      target_script_id=_pg_script_id_for_topic(hid, topic))
+            _ing.mark_job(make_engine(), hid, job_id, "ingesting", allowed_from={"generated"}, phase="ingest")
+            res = _ing.ingest_content(make_engine(), hid, job_id, topic, pkg.get("script") or [])  # script_id는 job에서
             log += f"\n[스튜디오] 편집·근거·이미지 준비 완료(블록 {res['blocks']}·주장 {res['claims']})."
             job_set(h, log=log)
         except Exception as e:
             log += f"\n[스튜디오 적재 오류] {e}"
-            try: _ing.mark_job(make_engine(), hid, job_id, "failed", error_code="ingest_error", error_message=str(e), finished=True)
+            # completed는 덮지 않음(늦은 예외 방지)
+            try: _ing.mark_job(make_engine(), hid, job_id, "failed", allowed_from={"pending","generating","generated","ingesting"},
+                               error_code="ingest_error", error_message=str(e), finished=True)
             except Exception: pass
     elif ok and not hid:
         log += "\n[안내] 이 병원은 스튜디오(PostgreSQL) 연결이 없어 파일만 생성했습니다."

@@ -80,12 +80,21 @@ def delete_material(engine, hospital_id, filename):
                    {"h": hospital_id, "f": filename})
 
 def materialize_to_disk(engine, hospital_id, dest_dir):
-    """PG의 자료를 dest_dir로 복원(run.py가 읽게). 반환: 복원한 파일 수."""
+    """PG의 자료를 dest_dir로 복원(run.py가 읽게). 복원 전, DB에 없는 stale 파일은 제거해
+    disk == PG 정합을 보장(삭제된 자료가 생성에 섞이지 않음). 반환: 복원한 파일 수.
+    주의: 대시보드는 병원당 job 1개(running 가드)로 직렬화되므로 동시 materialize 없음."""
     os.makedirs(dest_dir, exist_ok=True)
-    n = 0
     with tenant_conn(engine, hospital_id) as cn:
         rows = cn.execute(text("select filename, data from materials where hospital_id=:h"),
                           {"h": hospital_id}).all()
+    keep = {os.path.basename(r.filename) for r in rows}
+    for existing in os.listdir(dest_dir):     # DB에 없는 stale 파일 제거
+        if existing not in keep and os.path.isfile(os.path.join(dest_dir, existing)):
+            try:
+                os.remove(os.path.join(dest_dir, existing))
+            except OSError:
+                pass
+    n = 0
     for r in rows:
         with io.open(os.path.join(dest_dir, os.path.basename(r.filename)), "wb") as f:
             f.write(bytes(r.data))
