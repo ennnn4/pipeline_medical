@@ -6,7 +6,7 @@ SDR 준수:
  - 승인은 repositories.approve_version 경로로만(advisory lock 하 hash).
 CAS 충돌→409, 역할/권한(42501)→403, 미검증 claim(23514)→422, 없음(P0002)→404.
 """
-import os, uuid
+import os, uuid, secrets, hmac
 from contextlib import contextmanager
 from flask import Flask, request, jsonify, session, g, abort, redirect, Response
 from markupsafe import escape
@@ -169,10 +169,12 @@ def create_app(engine=None):
     def _rid():
         g.request_id = uuid.uuid4().hex
         if "_csrf" not in session:
-            session["_csrf"] = uuid.uuid4().hex + uuid.uuid4().hex   # 대시보드와 공유 세션이면 이미 있음
+            session["_csrf"] = secrets.token_urlsafe(24)   # 대시보드와 공유 세션이면 이미 있음
         # 상태변경 CSRF 검증: /ui/ 폼만(브라우저). /api/(JSON)·로그인 POST는 면제(API는 추후 토큰인증).
         if request.method == "POST" and not request.path.startswith("/api/") and request.path != "/login":
-            if request.form.get("_csrf") != session.get("_csrf"):
+            sent = request.form.get("_csrf") or request.headers.get("X-CSRF-Token") or ""
+            good = session.get("_csrf") or ""
+            if not (sent and good and hmac.compare_digest(str(sent), str(good))):
                 abort(400)
 
     @contextmanager

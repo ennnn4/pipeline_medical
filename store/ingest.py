@@ -85,6 +85,15 @@ def _gen_policies():
         # request_idempotency_key 유니크 — 이름 같아도 정의 다를 수 있으니 DROP 후 non-partial 재생성(ON CONFLICT 매칭)
         "DROP INDEX IF EXISTS uq_genjobs_reqkey;",
         "CREATE UNIQUE INDEX uq_genjobs_reqkey ON generation_jobs(hospital_id, request_idempotency_key);",
+        # 상태값 화이트리스트 CHECK — 앱 검증 외 DB 최종 방어선(오타·미래 코드 실수 차단). 멱등 add.
+        "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='chk_genjobs_status') THEN "
+        "ALTER TABLE generation_jobs ADD CONSTRAINT chk_genjobs_status CHECK "
+        "(status IN ('pending','generating','generated','ingesting','completed','failed','cancelled','stale')) NOT VALID; "
+        "END IF; END $$;",
+        "ALTER TABLE generation_jobs VALIDATE CONSTRAINT chk_genjobs_status;",
+        # request key NOT NULL — 혹시 남은 NULL(구식 adoption)은 랜덤 UUID로 채운 뒤 강제.
+        "UPDATE generation_jobs SET request_idempotency_key = gen_random_uuid()::text WHERE request_idempotency_key IS NULL;",
+        "ALTER TABLE generation_jobs ALTER COLUMN request_idempotency_key SET NOT NULL;",
     ]
 
 def ensure_gen_schema(owner_engine):

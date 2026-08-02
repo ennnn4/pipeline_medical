@@ -50,19 +50,78 @@ def _policies():
         "GRANT SELECT, INSERT, UPDATE, DELETE ON materials TO app_owner;",
     ]
 
-# 자료 version snapshot(P1) — 생성 시점에 어떤 자료(파일명·체크섬)로 만들었는지 job에 결착(재현·책임소재).
+# 자료 immutable 버전(P2-1) — 파일 교체 시 기존 bytes를 UPDATE로 덮지 않고 새 version을 남겨,
+# 생성 job이 '그 시점의 정확한 원본'을 material_version_id로 가리켜 실제 재현이 가능하게 한다.
+#  materials              : 논리 자료항목 + current_version_id 포인터(+표시용 denormalized 현재값)
+#  material_versions      : 불변 이력(파일명·mime·size·checksum·bytes). UPDATE/DELETE 동결 트리거.
+#  generation_job_materials: 생성 시점 스냅샷 → material_version_id로 정확한 버전 결착.
+_MV_DDL = """
+CREATE TABLE IF NOT EXISTS material_versions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  material_id uuid REFERENCES materials(id) ON DELETE SET NULL,  -- 논리 자료 삭제해도 버전 이력은 보존(재현)
+  hospital_id uuid NOT NULL REFERENCES hospitals(id),
+  filename text NOT NULL,
+  mime text,
+  size_bytes bigint NOT NULL,
+  checksum text,
+  data bytea NOT NULL,
+  created_by uuid,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE materials ADD COLUMN IF NOT EXISTS current_version_id uuid;
+"""
+
+# material_versions 불변 보장(생성만 허용, 변경·삭제 금지). 재현 신뢰의 근거.
+_MV_FREEZE = """
+CREATE OR REPLACE FUNCTION public.fn_freeze_material_version() RETURNS trigger
+LANGUAGE plpgsql AS $$ BEGIN
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'material_versions는 불변입니다(삭제 불가)' USING ERRCODE = '0A000';
+  END IF;
+  -- 내용 컬럼 변경 금지(재현 신뢰). material_id는 부모 삭제 시 FK가 NULL로 바꾸므로 허용.
+  IF NEW.id IS DISTINCT FROM OLD.id
+     OR NEW.hospital_id IS DISTINCT FROM OLD.hospital_id
+     OR NEW.filename IS DISTINCT FROM OLD.filename
+     OR NEW.size_bytes IS DISTINCT FROM OLD.size_bytes
+     OR NEW.checksum IS DISTINCT FROM OLD.checksum
+     OR NEW.data IS DISTINCT FROM OLD.data
+     OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+    RAISE EXCEPTION 'material_versions 내용은 불변입니다' USING ERRCODE = '0A000';
+  END IF;
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS trg_freeze_material_version ON material_versions;
+CREATE TRIGGER trg_freeze_material_version BEFORE UPDATE OR DELETE ON material_versions
+  FOR EACH ROW EXECUTE FUNCTION public.fn_freeze_material_version();
+"""
+
 _SNAP_DDL = """
 CREATE TABLE IF NOT EXISTS generation_job_materials (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   hospital_id uuid NOT NULL REFERENCES hospitals(id),
   job_id uuid NOT NULL,
   material_id uuid,
+  material_version_id uuid,
   filename text NOT NULL,
   checksum text,
   size_bytes bigint,
   snapshot_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE generation_job_materials ADD COLUMN IF NOT EXISTS material_version_id uuid;
 """
+
+def _mv_policies():
+    return [
+        "ALTER TABLE material_versions ENABLE ROW LEVEL SECURITY;",
+        "ALTER TABLE material_versions FORCE ROW LEVEL SECURITY;",
+        "DROP POLICY IF EXISTS mv_rw ON material_versions;",
+        f"CREATE POLICY mv_rw ON material_versions TO app_rw "
+        f"USING (hospital_id = {_TENANT_SET}) WITH CHECK (hospital_id = {_TENANT_SET});",
+        "DROP POLICY IF EXISTS mv_def ON material_versions;",
+        "CREATE POLICY mv_def ON material_versions TO app_owner USING (true) WITH CHECK (true);",
+        "GRANT SELECT, INSERT, UPDATE, DELETE ON material_versions TO app_rw;",
+        "GRANT SELECT, INSERT, UPDATE, DELETE ON material_versions TO app_owner;",
+    ]
 
 def _snap_policies():
     return [
@@ -77,26 +136,47 @@ def _snap_policies():
         "GRANT SELECT, INSERT, UPDATE, DELETE ON generation_job_materials TO app_owner;",
     ]
 
+# 기존 materials 행(버전 없던 것)을 material_versions로 백필하고 current_version_id 결착. 멱등.
+_BACKFILL = """
+INSERT INTO material_versions(id, material_id, hospital_id, filename, mime, size_bytes, checksum, data, created_at)
+SELECT gen_random_uuid(), m.id, m.hospital_id, m.filename, m.mime, m.size_bytes, m.checksum, m.data, m.uploaded_at
+FROM materials m WHERE m.current_version_id IS NULL;
+UPDATE materials m SET current_version_id = v.id
+FROM material_versions v
+WHERE v.material_id = m.id AND m.current_version_id IS NULL;
+"""
+
 def ensure_materials_schema(owner_engine):
     with owner_engine.begin() as cn:
         cn.execute(text(_DDL))
         for s in _policies():
             cn.execute(text(s))
+        cn.execute(text(_MV_DDL))
+        for s in _mv_policies():
+            cn.execute(text(s))
         cn.execute(text(_SNAP_DDL))
         for s in _snap_policies():
             cn.execute(text(s))
+        for stmt in _BACKFILL.strip().split(";"):   # 기존 자료 백필(멱등) — freeze 트리거 전에
+            if stmt.strip():
+                cn.execute(text(stmt))
+        cn.execute(text(_MV_FREEZE))                 # 백필 후 불변 트리거 설치
 
 def snapshot_job_materials(engine, hospital_id, job_id):
-    """생성 시점의 자료(현재 materials)를 job에 스냅샷 결착. 반환: 스냅샷한 자료 수."""
+    """생성 시점의 자료를 job에 스냅샷 결착 — 현재 버전(current_version_id)을 정확히 기록.
+    반환: 스냅샷한 자료 수. 이후 파일이 바뀌어도 이 job은 당시 material_version을 가리킨다."""
     with tenant_conn(engine, hospital_id) as cn:
         r = cn.execute(text(
-            "insert into generation_job_materials(id,hospital_id,job_id,material_id,filename,checksum,size_bytes) "
-            "select gen_random_uuid(), :h, :j, id, filename, checksum, size_bytes from materials where hospital_id=:h"),
+            "insert into generation_job_materials"
+            "(id,hospital_id,job_id,material_id,material_version_id,filename,checksum,size_bytes) "
+            "select gen_random_uuid(), :h, :j, id, current_version_id, filename, checksum, size_bytes "
+            "from materials where hospital_id=:h"),
             {"h": hospital_id, "j": job_id})
         return r.rowcount
 
-def save_material(engine, hospital_id, filename, raw, mime=None):
-    """같은 파일명은 교체(upsert). 상한 초과는 MaterialTooLarge(임시 disk fallback 금지)."""
+def save_material(engine, hospital_id, filename, raw, mime=None, created_by=None):
+    """같은 파일명은 새 immutable 버전 추가 + current 포인터 갱신(기존 bytes는 보존).
+    상한 초과는 MaterialTooLarge(임시 disk fallback 금지). 반환: 새 version_id."""
     if not isinstance(raw, (bytes, bytearray, memoryview)):
         raise TypeError("raw는 bytes 계열이어야 함")
     raw = bytes(raw)
@@ -105,15 +185,28 @@ def save_material(engine, hospital_id, filename, raw, mime=None):
     filename = _normalize_filename(filename)
     mime = mime or mimetypes.guess_type(filename)[0] or "application/octet-stream"
     ck = hashlib.sha256(raw).hexdigest()
+    vid = uuid.uuid4()
     with tenant_conn(engine, hospital_id) as cn:
-        cn.execute(text("insert into materials(id,hospital_id,filename,mime,size_bytes,checksum,data) "
-                        "values(:i,:h,:f,:m,:s,:c,:d) "
-                        "on conflict (hospital_id,filename) do update set "
-                        "mime=excluded.mime, size_bytes=excluded.size_bytes, checksum=excluded.checksum, "
-                        "data=excluded.data, uploaded_at=now()"),
-                   {"i": uuid.uuid4(), "h": hospital_id, "f": filename, "m": mime,
-                    "s": len(raw), "c": ck, "d": raw})
-    return True
+        # 1) 논리 자료항목 확보(신규/기존 모두 id 반환)
+        mid = cn.execute(text(
+            "insert into materials(id,hospital_id,filename,mime,size_bytes,checksum,data) "
+            "values(:i,:h,:f,:m,:s,:c,:d) "
+            "on conflict (hospital_id,filename) do update set filename=excluded.filename "
+            "returning id"),
+            {"i": uuid.uuid4(), "h": hospital_id, "f": filename, "m": mime,
+             "s": len(raw), "c": ck, "d": raw}).scalar()
+        # 2) 불변 버전 추가(원본 보존)
+        cn.execute(text(
+            "insert into material_versions(id,material_id,hospital_id,filename,mime,size_bytes,checksum,data,created_by) "
+            "values(:v,:mid,:h,:f,:m,:s,:c,:d,:by)"),
+            {"v": vid, "mid": mid, "h": hospital_id, "f": filename, "m": mime,
+             "s": len(raw), "c": ck, "d": raw, "by": created_by})
+        # 3) current 포인터 + denormalized 현재값 갱신(교체 시)
+        cn.execute(text(
+            "update materials set current_version_id=:v, mime=:m, size_bytes=:s, checksum=:c, "
+            "data=:d, uploaded_at=now() where id=:mid"),
+            {"v": vid, "m": mime, "s": len(raw), "c": ck, "d": raw, "mid": mid})
+    return vid
 
 def list_materials(engine, hospital_id):
     with tenant_conn(engine, hospital_id) as cn:
@@ -150,6 +243,36 @@ def materialize_to_disk(engine, hospital_id, dest_dir):
                 os.remove(path)
             except OSError as e:
                 raise RuntimeError(f"stale 자료 제거 실패(삭제자료 혼입 위험): {existing}") from e
+    n = 0
+    for r in rows:
+        with io.open(os.path.join(dest_dir, os.path.basename(r.filename)), "wb") as f:
+            f.write(bytes(r.data))
+        n += 1
+    return n
+
+def list_material_versions(engine, hospital_id, filename=None):
+    """자료 버전 이력(최신순). filename 지정 시 그 자료만. 재현·감사용."""
+    q = ("select v.id, v.filename, v.size_bytes, v.checksum, v.created_at, "
+         "(v.id = m.current_version_id) as is_current "
+         "from material_versions v left join materials m on m.id = v.material_id "
+         "where v.hospital_id = :h" + (" and v.filename = :f" if filename else "") +
+         " order by v.created_at desc")
+    p = {"h": hospital_id}
+    if filename:
+        p["f"] = _normalize_filename(filename)
+    with tenant_conn(engine, hospital_id) as cn:
+        return [dict(r._mapping) for r in cn.execute(text(q), p)]
+
+def materialize_job_snapshot(engine, hospital_id, job_id, dest_dir):
+    """생성 job이 '그때 사용한 정확한 원본'을 material_version_id로 복원(재현). 반환: 복원 파일 수.
+    현재 자료가 바뀌었어도 스냅샷된 불변 버전의 bytes를 그대로 씀."""
+    os.makedirs(dest_dir, exist_ok=True)
+    with tenant_conn(engine, hospital_id) as cn:
+        rows = cn.execute(text(
+            "select g.filename, v.data from generation_job_materials g "
+            "join material_versions v on v.id = g.material_version_id "
+            "where g.hospital_id = :h and g.job_id = :j"),
+            {"h": hospital_id, "j": job_id}).all()
     n = 0
     for r in rows:
         with io.open(os.path.join(dest_dir, os.path.basename(r.filename)), "wb") as f:

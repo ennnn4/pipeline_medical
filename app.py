@@ -5,7 +5,7 @@ boncure-pipeline 로컬 웹앱 — 터미널·yaml 없이 브라우저로 쓴다
 기능: 병원 만들기(폼) · 자료 업로드(끌어놓기) · 대본 생성(버튼) · 대시보드 보기.
 엔진(run.py)을 그대로 호출하므로 파이프라인 로직은 재사용.
 """
-import os, sys, glob, subprocess, threading, re, io, secrets, sqlite3, datetime, unicodedata
+import os, sys, glob, subprocess, threading, re, io, secrets, sqlite3, datetime, unicodedata, hmac
 from flask import Flask, request, redirect, send_file, abort, render_template_string, jsonify, url_for, session
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -93,8 +93,11 @@ def _guard():
         session["_csrf"] = secrets.token_urlsafe(24)   # 세션당 CSRF 토큰
     if request.endpoint in ("login","static"): return   # 공개 회원가입 없음(로그인 POST는 세션전이라 면제)
     if not session.get("user"): return redirect("/login")
-    if request.method == "POST" and request.form.get("_csrf") != session.get("_csrf"):
-        abort(400)     # 상태변경 요청 CSRF 검증
+    if request.method == "POST":   # 상태변경 요청 CSRF 검증(상수시간 비교 + JSON/fetch는 헤더 토큰)
+        sent = request.form.get("_csrf") or request.headers.get("X-CSRF-Token") or ""
+        good = session.get("_csrf") or ""
+        if not (sent and good and hmac.compare_digest(str(sent), str(good))):
+            abort(400)
 
 def _yaml():
     import yaml; return yaml
@@ -190,9 +193,16 @@ def home():
     hs = hospitals()
     cards = "".join(f'<a class=hcard href="/h/{h["id"]}"><div class=n>{h["name"]}</div><div class=i>{h["id"]}</div></a>' for h in hs)
     cards += '<a class="hcard add" href="#new">+ 새 병원 만들기</a>'
+    _e = request.args.get("err")
+    emsg = ""
+    if _e == "exists":
+        emsg = '<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 같은 ID의 병원이 이미 있어요. 다른 이름을 써 주세요.</div>'
+    elif _e == "taken":
+        emsg = '<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 이미 사용 중인 병원 이름이에요(다른 사용자 소유). 다른 이름을 써 주세요.</div>'
     body = f"""
     <div class=hero><h1>병원 유튜브를,<br>대본이 아니라 버튼으로.</h1>
       <p>자료를 올리고 버튼만 누르면 촬영용 대본 패키지가 나옵니다. 병원을 고르거나 새로 만드세요.</p></div>
+    {emsg}
     <div class=hlist>{cards}</div>
     <div class=card id=new>
       <h2>+ 새 병원 만들기</h2>
@@ -215,6 +225,13 @@ def new():
         n = 1
         while os.path.exists(cfg_path(f"hosp-{n}")): n += 1
         hid = f"hosp-{n}"
+    elif os.path.exists(cfg_path(hid)):
+        return redirect(f"/?err=exists")   # 기존 병원 ID 덮어쓰기 금지(데이터 손실·탈취 방지)
+    # PG 먼저 provisioning → 충돌(다른 사람 소유 slug)이면 로컬 config 만들기 전에 차단
+    try:
+        _provision_pg(hid, name)
+    except _ProvConflict:
+        return redirect(f"/?err=taken")
     tpl = os.path.join(ROOT, "config", "_template.yaml")
     src = open(tpl, encoding="utf-8").read() if os.path.exists(tpl) else "hospital:\n  id: __HOSPITAL_ID__\n"
     src = src.replace("__HOSPITAL_ID__", hid)
@@ -228,17 +245,43 @@ def new():
     src = re.sub(r'\ndiseases:.*', "\ndiseases: [" + ", ".join(diseases) + "]", src, count=1)
     open(cfg_path(hid), "w", encoding="utf-8").write(src)
     for s in ("raw","corpus","kb","out"): data_dir(hid, s)
-    _provision_pg(hid, name)      # PostgreSQL 병원 생성 → 업로드 영속 + 스튜디오 연결
     return redirect(f"/h/{hid}")
 
+class _ProvConflict(Exception):
+    """provisioning 충돌(다른 사용자 소유 slug)을 /new 상위로 전달."""
+
 def _provision_pg(slug, name):
-    """새 병원을 PostgreSQL에 provisioning(SECURITY DEFINER 함수). 로그인 PG유저면 creator admin."""
+    """새 병원을 PostgreSQL에 provisioning(SECURITY DEFINER 함수). 로그인 PG유저면 creator admin.
+    slug가 다른 사용자 소유면 _ProvConflict. 그 외 오류(DB 미연결 등)는 삼켜서 파일 흐름 유지."""
     try:
         from store.db import make_engine
-        from store.provision import provision_hospital
+        from store.provision import provision_hospital, ProvisionConflict
+    except Exception:
+        return
+    try:
         provision_hospital(make_engine(), slug, name, owner_user=session.get("user_id"))
+    except ProvisionConflict:
+        raise _ProvConflict(slug)
+    except Exception:
+        pass   # DB 미연결 등은 비-PG 파일 흐름으로 진행(fallback 차단은 생성 시점에서)
+
+def _pg_required():
+    """이 배포가 PostgreSQL을 단일 원본으로 쓰는가(DATABASE_URL 설정). 순수 로컬 개발이면 False."""
+    return bool(os.environ.get("DATABASE_URL"))
+
+def _require_pg(h):
+    """병원의 PG hospital_id 확보. 없으면 config로 provision 자동복구 시도 후 재확인.
+    반환 None이면 이 병원은 PG에 없음(→ _pg_required 배포에선 신규쓰기 차단)."""
+    hid = _pg_hospital_id(h)
+    if hid:
+        return hid
+    try:   # 자동복구: config 있으면 provision 시도(멱등)
+        if os.path.exists(cfg_path(h)):
+            cfg = _yaml().safe_load(open(cfg_path(h), encoding="utf-8")) or {}
+            _provision_pg(h, cfg.get("hospital", {}).get("name", h))
     except Exception:
         pass
+    return _pg_hospital_id(h)
 
 @app.route("/h/<h>")
 def hospital(h):
@@ -273,6 +316,8 @@ def hospital(h):
         misswarn += '<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 업로드된 파일이 없어요. 파일이 선택됐는지, 허용 형식(pdf·docx·txt·zip 등)인지 확인해 주세요.</div>'
     if request.args.get("big") == "1":
         misswarn += '<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 40MB 넘는 파일은 제외됐어요(영구저장 한도). 나눠서 올려주세요.</div>'
+    if request.args.get("err") == "nopg":
+        misswarn += '<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 이 병원은 영구저장(PostgreSQL)에 등록되지 않아 업로드를 막았어요(임시저장 방지). 관리자에게 병원 재등록을 요청하세요.</div>'
     studio_url = _pg_studio_url(h)
     studio_cta = (f'<a class="btn pri" href="{studio_url}" style="display:block;text-align:center;margin-bottom:12px">'
                   f'✏️ 스튜디오에서 편집 · 근거검증 · 장면이미지 · 승인 →</a>') if studio_url else ''
@@ -367,7 +412,9 @@ def safe_filename(fn):
 def upload(h):
     if not os.path.exists(cfg_path(h)): abort(404)
     dest = data_dir(h, "raw")
-    hid = _pg_hospital_id(h)     # PG 병원이면 자료를 PostgreSQL에도 저장(영속, 재배포에도 안 사라짐)
+    hid = _require_pg(h)         # PG 병원 확보(자동복구 시도). 자료를 PostgreSQL에 영속 저장.
+    if _pg_required() and not hid:   # PG 단일원본 배포인데 이 병원이 PG에 없음 → 임시디스크 전용 쓰기 차단
+        return redirect(f"/h/{h}?err=nopg")
     eng = None; _MAT_MAX = 40 * 1024 * 1024
     if hid:
         try:
@@ -389,7 +436,7 @@ def upload(h):
             out.write(raw)
         if eng:
             try:
-                save_material(eng, hid, name, raw)           # 영속 저장(PostgreSQL bytea)
+                save_material(eng, hid, name, raw, created_by=session.get("user_id"))  # 영속 저장(PG bytea, 새 immutable 버전)
             except Exception:
                 pass
         saved += 1
@@ -466,7 +513,11 @@ def _run_pipeline(h, topic, evidence=True, request_key=None):
     from store import ingest as _ing
     job_set(h, topic=topic, status="running", ok=None, log="")
     log = ""; ok = False
-    hid = _pg_hospital_id(h)
+    hid = _require_pg(h)
+    if _pg_required() and not hid:   # PG 단일원본 배포인데 병원이 PG에 없음 → 신규 생성 차단(단일원본 원칙)
+        job_set(h, status="done", ok=False,
+                log="[생성 차단] 이 병원이 PostgreSQL에 등록되지 않았습니다. 자료·작업 보존을 위해 관리자에게 병원 재등록을 요청하세요.")
+        return
     request_key = request_key or _uuid.uuid4().hex
     job_id = None
     if hid:

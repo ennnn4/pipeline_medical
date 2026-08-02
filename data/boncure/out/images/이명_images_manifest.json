@@ -1,0 +1,106 @@
+{
+  "images": [
+    {
+      "block": "blk_1",
+      "prompt": "A dimly lit studio close-up of an anonymous doctor figure in a white coat, face obscured by soft shadow and shallow depth of field, seated facing the camera; empty blank caption bars stack one by one along the lower frame, no lettering, moody low-key lighting, cinematic teal-gray tone.",
+      "file": "이명_blk_1.png",
+      "bytes": 1985373
+    },
+    {
+      "block": "blk_2",
+      "prompt": "Medium shot of a faceless doctor silhouette in a white coat against a clean dark studio backdrop, calm reassuring open-palm gesture; a soft glowing rectangular banner with no text floats at chest level, subtle logo-free light bloom transition, professional medical channel look.",
+      "file": "이명_blk_2.png",
+      "bytes": 1847674
+    },
+    {
+      "block": "blk_3",
+      "prompt": "Anonymous doctor figure facing camera on the left, three clean floating UI cards on the right showing only simple icons (a stopwatch, an ear, a moon), all blank of text; a faint half-transparent line-graph panel flashes in the background, modern medical infographic style.",
+      "file": "이명_blk_3.png",
+      "bytes": 1774728
+    },
+    {
+      "block": "blk_4",
+      "prompt": "Black background with a glowing white cracking-glass graphic shaped like an ear symbol splitting apart, fracture lines radiating outward, no lettering; behind it a dim anonymous doctor silhouette gradually emerging, dramatic conceptual illustration.",
+      "file": "이명_blk_4.png",
+      "bytes": 1803927
+    },
+    {
+      "block": "blk_5",
+      "prompt": "Clean educational illustration of an unlabeled audiogram-style line chart dissolving into a stylized auditory pathway animation: cochlea to auditory nerve to brain, glowing signal flow; a small amplifier-switch icon lights up near the neck region, no text, teal and white medical vector style.",
+      "file": "이명_blk_5.png",
+      "bytes": 1705002
+    },
+    {
+      "block": "blk_7",
+      "prompt": "Educational anatomy illustration close-up of the four paired suboccipital muscles at the skull base, transitioning to the sternocleidomastoid overlapping the carotid vessel path, then a highlighted styloid process marker; inset live-action shot of anonymous hands pressing the back of one's own neck, no text.",
+      "file": "이명_blk_7.png",
+      "bytes": 2147304
+    },
+    {
+      "block": "blk_9",
+      "prompt": "Four clean floating classification cards arranged in sequence on a dark background, each showing a single simple icon only — a neck, an ear, a pulse wave, a jaw joint — no text anywhere, soft glowing edges, minimal medical UI design.",
+      "file": "이명_blk_9.png",
+      "bytes": 1880976
+    },
+    {
+      "block": "blk_10",
+      "prompt": "Three close-up live-action inserts of anonymous hands demonstrating self-palpation: fingertips at the suboccipital skull base, along the side neck muscle, and at the jaw joint; a small blank circular timer ring glows in the upper right corner, warm clean studio lighting, no text.",
+      "file": "이명_blk_10.png",
+      "bytes": 1929239
+    },
+    {
+      "block": "blk_11",
+      "prompt": "Fast montage collage of three previous concept frames — cervical spine, auditory pathway, autonomic seesaw — flashing in rapid motion-blurred sequence, then the screen fills with a bold empty caption band and dramatic light flare, no lettering.",
+      "file": "이명_blk_11.png",
+      "bytes": 1760775
+    },
+    {
+      "block": "blk_12",
+      "prompt": "Three sequential red X warning cards on a dark background, each with a single icon: earbuds with loud sound waves, a neck twisting motion arrow, a smartphone with a search magnifier; small inset live-action reenactments with anonymous cropped figures, textless design.",
+      "file": "이명_blk_12.png",
+      "bytes": 1758477
+    },
+    {
+      "block": "blk_13",
+      "prompt": "Split two-angle demonstration of an anonymous doctor figure in a white coat, front and side view, showing gentle self-massage of the suboccipital and side neck muscles; extreme close-up of finger placement and a rolled towel alternative, clean studio, no text or numbers.",
+      "file": "이명_blk_13.png",
+      "bytes": 1975298
+    },
+    {
+      "block": "blk_14",
+      "prompt": "Recreated dark bedroom set with warm dim lamp light, an anonymous seated figure in relaxed upright posture demonstrating slow breathing; a glowing circular breathing gauge expands and contracts beside them, no numerals or text, calm cinematic mood.",
+      "file": "이명_blk_14.png",
+      "bytes": 1984736
+    },
+    {
+      "block": "blk_15",
+      "prompt": "Clean split-screen desk setup comparison: left side a slumped anonymous silhouette with a low monitor and forward jaw, right side an upright silhouette with the monitor raised to eye level; a simple horizontal eye-level guideline glows across both halves, no text.",
+      "file": "이명_blk_15.png",
+      "bytes": 1852099
+    },
+    {
+      "block": "blk_16",
+      "prompt": "Silent-mode clinical evidence montage on a neutral background: a blurred generic journal cover mockup with no readable text, followed by a simple two-bar chart showing a tall bar dropping to a tiny bar, then three unlabeled pure-tone audiogram line charts in sequence, clean minimal data-visualization style.",
+      "file": "이명_blk_16.png",
+      "bytes": 1793456
+    },
+    {
+      "block": "blk_17",
+      "prompt": "Five sequential emergency warning cards on a deep red background, each carrying only a bold white pictogram — sudden hearing loss ear, spinning vertigo arrows, pulsing vessel, one-sided ear, drooping face outline — no lettering, urgent high-contrast design.",
+      "file": "이명_blk_17.png",
+      "bytes": 1799272
+    },
+    {
+      "block": "blk_18",
+      "prompt": "A four-line stack of blank glowing summary bars on dark background, then a three-second macro close-up of a slim sterile acupotomy needle-knife instrument resting on clean cloth, then an anonymous doctor figure facing camera with a calm cautionary gesture, no text.",
+      "file": "이명_blk_18.png",
+      "bytes": 2032921
+    },
+    {
+      "block": "blk_19",
+      "prompt": "Medium shot of an anonymous doctor silhouette facing the camera in a clean studio, with a floating subscribe bell icon and a speech-bubble comment icon beside them, ending on a full-screen soft gray disclaimer panel with no readable lettering, minimal professional finish.",
+      "file": "이명_blk_19.png",
+      "bytes": 1798198
+    }
+  ]
+}
