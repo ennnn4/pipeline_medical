@@ -12,6 +12,20 @@ STMTS = [
     # superseded 분리(승인 상태가 아닌 수명주기) — inv14
     "ALTER TABLE version_approval_states ADD COLUMN IF NOT EXISTS superseded_by_version_id uuid;",
     "ALTER TABLE version_approval_states ADD COLUMN IF NOT EXISTS superseded_at timestamptz;",
+    # 철회 주체·시각·사유(GPT) — 상태 행에 명시(원 승인자 approver_membership_id는 유지)
+    "ALTER TABLE version_approval_states ADD COLUMN IF NOT EXISTS revoked_by_membership_id uuid;",
+    "ALTER TABLE version_approval_states ADD COLUMN IF NOT EXISTS revoked_at timestamptz;",
+    "ALTER TABLE version_approval_states ADD COLUMN IF NOT EXISTS revoke_reason text;",
+    "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_approval_states_revoked_by') THEN "
+    "ALTER TABLE version_approval_states ADD CONSTRAINT fk_approval_states_revoked_by "
+    "FOREIGN KEY (hospital_id, revoked_by_membership_id) REFERENCES hospital_memberships(hospital_id, id) NOT VALID; END IF; END $$;",
+    "ALTER TABLE version_approval_states VALIDATE CONSTRAINT fk_approval_states_revoked_by;",
+    # revoked_fields CHECK 갱신: 철회 주체·시각·사유 필수
+    "ALTER TABLE version_approval_states DROP CONSTRAINT IF EXISTS ck_version_approval_states_revoked_fields;",
+    "ALTER TABLE version_approval_states ADD CONSTRAINT ck_version_approval_states_revoked_fields CHECK ("
+    "status <> 'revoked' OR (approver_membership_id IS NOT NULL AND decided_at IS NOT NULL "
+    "AND revoked_by_membership_id IS NOT NULL AND revoked_at IS NOT NULL "
+    "AND revoke_reason IS NOT NULL AND btrim(revoke_reason) <> ''))",
     # status CHECK 확장(revoked 추가) — 기존 값 부분집합이라 즉시 valid
     "ALTER TABLE version_approval_states DROP CONSTRAINT IF EXISTS ck_version_approval_states_status;",
     "ALTER TABLE version_approval_states ADD CONSTRAINT ck_version_approval_states_status "

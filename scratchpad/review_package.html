@@ -1,4 +1,4 @@
-<title>본큐어 파이프라인 — Step 3 완료 + Step 4 사전정리</title>
+<title>본큐어 파이프라인 — Step 4 승인 함수</title>
 <style>
   :root{
     --bg:#f6f7f9; --card:#fff; --ink:#0b1524; --muted:#5b6b7f; --line:#e6e9ef;
@@ -32,11 +32,11 @@
   h2 .n{flex:none;min-width:26px;height:26px;padding:0 7px;border-radius:8px;background:var(--brand-soft);color:var(--brand);font-size:12px;font-weight:800;display:grid;place-items:center}
   .row{display:flex;gap:10px;padding:9px 0;border-top:1px solid var(--line)}
   .row:first-of-type{border-top:0}
-  .row .tag{flex:none;font-size:11px;font-weight:700;color:var(--ok);align-self:flex-start;margin-top:3px;min-width:46px}
+  .row .tag{flex:none;font-size:11px;font-weight:700;color:var(--ok);align-self:flex-start;margin-top:3px;min-width:58px}
   .row .tag.todo{color:var(--warn)}
   .row p{margin:0;font-size:14.5px}
   .row small{color:var(--muted);display:block;font-size:12.5px;margin-top:2px}
-  pre{background:var(--code);color:var(--code-ink);border-radius:12px;padding:13px;overflow-x:auto;font-family:var(--mono);font-size:12px;line-height:1.55;margin:10px 0 0}
+  pre{background:var(--code);color:var(--code-ink);border-radius:12px;padding:13px;overflow-x:auto;font-family:var(--mono);font-size:11.5px;line-height:1.55;margin:10px 0 0}
   .steps{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
   .st{font-size:12px;padding:4px 9px;border-radius:8px;border:1px solid var(--line);color:var(--muted)}
   .st.done{background:var(--ok-soft);color:var(--ok);border-color:transparent;font-weight:600}
@@ -53,92 +53,80 @@
 <div class="wrap">
   <header class="hd">
     <div class="eyebrow">본큐어 파이프라인 · service 추출</div>
-    <h1>Step 3 완료 + Step 4 사전정리</h1>
-    <div class="sub">evidence service를 반영·배포했고, Step 4 착수 전 지시한 2건 중 SQLSTATE 정리를 마쳤습니다. waived 모델·Step 4 계획을 확인받고 진행하려 합니다.</div>
+    <h1>Step 4 승인 함수 (핵심)</h1>
+    <div class="sub">가장 보안-민감한 승인 게이트를 전략대로 닫았습니다. private core + 4개 wrapper로, 라우트가 아니라 DB definer 함수가 모든 규칙을 강제합니다.</div>
     <div class="status">
-      <span class="chip ok">✓ 테스트 100 통과</span>
-      <span class="chip ok">✓ 라이브 반영·배포</span>
+      <span class="chip ok">✓ 테스트 110 통과</span>
+      <span class="chip ok">✓ 라이브 함수 5개</span>
     </div>
     <div class="steps">
-      <span class="st done">0 계약</span><span class="st done">1 query</span><span class="st done">2 edit</span>
-      <span class="st done">2.5 승인기반</span><span class="st done">2.5.1 superseded</span><span class="st done">3 evidence</span>
-      <span class="st next">4 approval</span><span class="st">5 image</span><span class="st">6–9 /studio 은퇴</span>
+      <span class="st done">0–3 계약·edit·evidence</span><span class="st done">2.5 승인기반</span>
+      <span class="st done">SQLSTATE</span><span class="st done">waived</span><span class="st next">4 approval core</span>
+      <span class="st">4 export gate</span><span class="st">5 image</span><span class="st">6–9 /studio 은퇴</span>
     </div>
   </header>
 
   <div class="card">
-    <h2><span class="n">3</span>evidence service (assess_claim)</h2>
-    <div class="row"><span class="tag">명시</span><p>version_id·script_id를 명시적으로 받음(암묵적 current 조회 금지).</p></div>
-    <div class="row"><span class="tag">current</span><p>mutation 시 <code>scripts FOR UPDATE</code> + <code>current_version==target</code> 재검사 → 편집으로 current가 바뀐 뒤 과거 화면 저장은 <code>VersionConflict</code>.</p></div>
-    <div class="row"><span class="tag">동결</span><p>approved/revoked version 근거 변경 금지(<code>InvalidStateTransition</code>). claim이 그 version 소속인지 검증(<code>NotFound</code>).</p></div>
-    <div class="row"><span class="tag">잠금</span><p>approval과 동일 순서(scripts→approval state→claim). 권한 approver/admin. 단일 claim 처리(부분성공 없음).</p></div>
+    <h2><span class="n">core</span>fn_approve_core (private)</h2>
+    <div class="row"><span class="tag">잠금</span><p>scripts FOR UPDATE → version_approval_states FOR UPDATE (편집·검수·승인 직렬화) + advisory lock(freeze 트리거와 공유).</p></div>
+    <div class="row"><span class="tag">inv2</span><p><code>current_version_id == target</code> 아니면 <code>P2015</code>(VersionConflict). 상태 none/pending 아니면 <code>P2013</code>.</p></div>
+    <div class="row"><span class="tag">inv11</span><p>작성자==승인자면 차단(42501). 자기승인은 별도 경로만.</p></div>
+    <div class="row"><span class="tag">gate</span><p>claim별 최신 effective <code>human_decision</code>: accepted+verified / waived / not_applicable (레거시 automated verified 허용). 하나라도 미충족이면 <code>23514</code>.</p></div>
+    <div class="row"><span class="tag">app_rw</span><p>core는 app_rw 직접 실행 불가. wrapper만 EXECUTE.</p></div>
   </div>
 
   <div class="card">
-    <h2><span class="n">▤</span>DB 백스톱 + /studio 교체</h2>
-    <div class="row"><span class="tag">trigger</span><p><code>fn_freeze_assessment_if_decided</code> — approved/revoked version의 <code>claim_assessments</code> INSERT를 <code>2BP01</code>로 차단(service 우회 방지). rls_sql의 lock 트리거는 유지.</p></div>
-    <div class="row"><span class="tag">route</span><p>/studio <code>ui_review</code>를 evidence service 호출로 교체(폼에 version_id/script_id hidden). 라우트=파싱+예외매핑만.</p></div>
+    <h2><span class="n">4</span>wrapper 4개</h2>
+    <div class="row"><span class="tag">approve</span><p><code>fn_approve_version</code>(mode=normal, 기존 signature 유지). 정상 승인.</p></div>
+    <div class="row"><span class="tag">self</span><p><code>fn_self_approve_version</code>(creator==actor + <code>allow_self_approval</code> + admin + 사유, audit 'approval.self_approve').</p></div>
+    <div class="row"><span class="tag">reject</span><p><code>fn_reject_version</code>(current·none/pending·사유→rejected).</p></div>
+    <div class="row"><span class="tag">revoke</span><p><code>fn_revoke_version</code>(approved→revoked·admin·사유·<b>비-current 과거승인도 허용</b>).</p></div>
   </div>
 
   <div class="card">
-    <h2><span class="n">①</span>Step 4 사전정리 — SQLSTATE (완료)</h2>
-    <div class="row"><span class="tag">done</span><p>지적대로 <code>2BP01</code>(PG 내장 <i>dependent_objects_still_exist</i>) 재사용을 제거하고 도메인 코드로 분리 — <code>P2013</code>=decided_version_frozen(승인/철회 version 내용·근거 동결), <code>P2014</code>=supersede 충돌. rls_sql content freeze + assessment freeze/superseded 함수 전부 교체, 매핑·테스트 갱신, 라이브 함수 재적용.</p></div>
+    <h2><span class="n">▲</span>Step 4 마무리 (남음)</h2>
+    <div class="row"><span class="tag todo">export</span><p>export gate(current&approved·짧은 TX) / publish(외부게시=publication_jobs+idempotency).</p></div>
+    <div class="row"><span class="tag todo">UI</span><p>/studio 버전페이지 reject/revoke 버튼(라우트는 이미 있음).</p></div>
+    <div class="row"><span class="tag todo">audit</span><p>gate snapshot 상세(현재 assessment_hash만) · review_seq 결정적 순번(현재 created_at DESC,id DESC).</p></div>
   </div>
 
-  <div class="card">
-    <h2><span class="n">②</span>Step 4 사전정리 — waived 모델 (계획, 착수 전)</h2>
-    <div class="row"><span class="tag todo">축분리</span><p><code>verification_status</code>(pending/verified/failed)와 <code>human_decision</code>(accepted/rejected/waived/not_applicable)을 분리. claim_assessments에 human_decision 컬럼+CHECK 추가 방향.</p></div>
-    <div class="row"><span class="tag todo">최신</span><p>승인 gate는 claim별 <b>최신 유효 human assessment</b>만 사용(created_at DESC,id DESC 또는 review_seq로 결정적). waived는 사유·capability·audit 필수.</p></div>
-  </div>
-
-  <div class="card">
-    <h2><span class="n">▲</span>Step 4 approval service — 계획</h2>
-    <div class="row"><span class="tag todo">core</span><p>정상 <code>fn_approve_version</code> CREATE OR REPLACE 강화(scripts FOR UPDATE·current==target·귀속·상태전이·최신 evidence prereq·작성자≠승인자·audit).</p></div>
-    <div class="row"><span class="tag todo">self</span><p>자기승인은 <b>별도</b> <code>fn_self_approve_version</code>(creator==actor + allow_self_approval + admin self_override + 사유).</p></div>
-    <div class="row"><span class="tag todo">상태</span><p><code>fn_reject_version</code>/<code>fn_revoke_version</code>(전이표; revoke는 비-current도 허용) + publish/export gate(current&approved만).</p></div>
-  </div>
-
-  <div class="note">테스트 <b>100개 통과</b>. 배포 성공(676c114 live). Step 0–3 + 2.5/2.5.1 전부 라이브. <br><small>참고: provenance CHECK는 배포 스큐 안전을 위해 "generation_job_id는 ai만"으로 임시 완화. 재강화 순서(대시보드 requester 포착→AI version job+created_by 기록→구버전 종료 확인→백필→NOT VALID 강한 CHECK→VALIDATE)는 확정 예정.</small></div>
+  <div class="note">테스트 <b>110개 통과</b>(신규 승인 8: 타승인자 승인·작성자 자기승인 차단·자기승인 flag·비-current·reject 후 재승인 불가·revoke admin/approved·사유 필수). 기존 승인 테스트도 자기승인 규칙 반영해 갱신. 라이브 함수 5개 적용(fn_approve_version=core 위임 확인).</div>
 
   <div class="copybar"><button class="copy" onclick="copyGpt()">📋 GPT용 전체 복사</button></div>
-  <div class="foot">본큐어 파이프라인 · Step 3 · 2026-08-02</div>
-  <textarea id="gpt" readonly>[본큐어 파이프라인 — Step 3 evidence service 확인 + Step 4 approval 착수 승인 요청]
+  <div class="foot">본큐어 파이프라인 · Step 4 승인 함수 · 2026-08-02</div>
+  <textarea id="gpt" readonly>[본큐어 파이프라인 — Step 4 승인 함수(핵심) 검토 요청]
 
-배경: Step 2.5.1(superseded 원자기록) 후 Step 3(evidence service) 진행. 100 tests green, 라이브 반영, 배포 성공(676c114 live).
+배경: Step 4 전략대로 승인 게이트를 구현. 110 tests green, 라이브 함수 5개 적용.
 
-Step 3 evidence service (services/evidence.py assess_claim) — 규칙 전부 반영:
-- 명시적 version_id·script_id 수신(암묵적 current 조회 금지).
-- mutation 시 scripts FOR UPDATE + current_version==target 재검사(지연 저장 차단→VersionConflict).
-- approved/revoked version 근거 변경 금지(InvalidStateTransition) — 새 버전 필요.
-- claim이 그 version 소속인지 검증(→NotFound). 부분성공 없음(단일 claim).
-- approval과 동일 잠금 순서(scripts→approval state→claim). 권한 approver/admin. 사람 판정(human_review) append.
-- DB 백스톱(inv13): fn_freeze_assessment_if_decided 트리거 — approved/revoked version의 claim_assessments INSERT를 2BP01 차단(service 우회 방지). rls_sql lock 트리거 유지.
-- /studio ui_review를 evidence service로 교체(폼에 version_id/script_id hidden). test_approval의 옛 "승인후 assessment→stale"을 새 "동결 2BP01"로 갱신.
-- waived 결정은 verification_status에 값 없어(pending/verified/failed) 후속(CHECK 확장 필요).
+store/approval_fns.py — private core + 4 wrapper(SECURITY DEFINER, app_owner 소유):
 
-참고(배포 안전): provenance CHECK를 "generation_job_id IS NULL OR source='ai'"로 완화. 이유: 빠른 연속 푸시로 중간 배포가 취소되며 예전 코드가 잠깐 돌 가능성 → 예전 ingest_content(job 미기록)의 ai 버전 생성이 CHECK 위반으로 깨지는 것 방지. 새 코드 배포 확정됐으니, 대시보드 생성경로가 requester membership을 create_job에 넘기도록 고친 뒤 ai→generation_job_id NOT NULL로 재강화 예정.
+fn_approve_core(private, app_rw EXECUTE 없음, SET search_path=pg_catalog,public):
+1. actor= app.membership_id GUC 재검증(+hospital 일치).
+2. advisory lock(hashtextextended(version)) — freeze 트리거와 동일 lock 공유.
+3. active approver/admin role(archived 제외). v_is_admin 별도 판정.
+4. script_versions에서 script_id·created_by(작성자) 조회.
+5. scripts FOR UPDATE → current_version_id != target이면 P2015(VersionConflict).
+6. version_approval_states FOR UPDATE → status not in (none,pending)이면 P2013(InvalidStateTransition).
+7. mode=normal: 작성자==승인자면 42501(Forbidden). mode=self_override: creator==actor AND hospitals.allow_self_approval AND admin AND 사유(trim) 아니면 42501/23514, audit action='approval.self_approve'.
+8. evidence gate: 각 claim의 최신 effective assessment가 (human_decision='accepted' AND verification_status='verified') OR human_decision='waived' OR human_decision='not_applicable' OR (human_decision IS NULL AND verification_status='verified' AND support_level NOT IN (unverified,unsupported)) 중 하나여야. 아니면 23514.
+9. version_approval_states=approved + approver + hashes + policy + decided_at.
+10. audit_events(actor, action, after_hash=assessment_hash, request_id).
 
-다음 Step 4 approval service 착수 예정(보안 핵심 fn_approve_version 수정이라 착수 전 확인):
-- inv2: 승인 대상 = 승인 시점 current_version (fn_approve_version에 scripts 행 FOR UPDATE + current_version_id==target 비교 추가).
-- inv11/12: 작성자(script_versions.created_by_membership_id)≠승인자. 자기승인 override = hospitals.allow_self_approval + admin(self_override) + 사유 + audit action 'approval.self_approve' + 당시 정책값 snapshot.
-- reject/revoke: 전이표(none/pending→approve/reject, approved→revoke, approved→reject·rejected→revoke 금지) 강제하는 함수 + audit.
-- publish/export gate: current이며 approved인 version만.
+wrapper:
+- fn_approve_version(p_hospital,p_version,p_policy,p_content_hash,p_assessment_hash) → core mode=normal. 기존 signature 유지 → repositories.approve_version 그대로.
+- fn_self_approve_version(..., p_reason) → core mode=self_override.
+- fn_reject_version(p_hospital,p_version,p_reason): actor GUC+hospital, 사유필수, approver/admin, script FOR UPDATE, current==target(P2015), status none/pending(P2013)→rejected+approver+decided_at, audit 'approval.reject'.
+- fn_revoke_version(p_hospital,p_version,p_reason): 사유필수, admin, status FOR UPDATE, status='approved'만(P2013)→revoked(원승인자·decided_at 유지, revoked_fields CHECK 충족), audit 'approval.revoke'. current 확인 없음(비-current 과거승인도 revoke 허용).
 
-Step 4 사전정리 ①(완료): 동결 SQLSTATE를 도메인 코드로 교체. 2BP01(PG 내장 dependent_objects_still_exist) 재사용 제거 → P2013(decided_version_frozen: 승인/철회 version의 내용·근거 동결), P2014(version supersede 충돌). rls_sql fn_reject_if_version_approved + approval_foundation의 assessment freeze/superseded 함수 전부 교체, services/exceptions 매핑(P2013→InvalidStateTransition, P2014→VersionConflict), web/api _map_pg(409), test_lockdown·test_approval 갱신. 100 tests green, 라이브 함수 재적용 확인.
+권한: core는 REVOKE PUBLIC + app_owner 소유 + app_rw EXECUTE 없음. wrapper는 app_rw EXECUTE. GRANT SELECT hospitals TO app_owner(core가 allow_self_approval 읽음).
 
-Step 4 사전정리 ②(계획, 착수 전): waived 모델 = verification_status(pending/verified/failed)와 human_decision(accepted/rejected/waived/not_applicable) 축 분리. claim_assessments에 human_decision 컬럼 + CHECK 추가. 승인 gate는 claim별 '최신 유효 human assessment'만 사용(created_at DESC, id DESC 또는 review_seq로 결정적 선택). waived는 사유·waiver capability·audit 필수. 승인 규칙: verified+accepted→가능, waived(권한·사유)→가능, pending/rejected/assessment없음→불가.
+services/approvals.py: ctx로 tenant_conn 열고 repositories 경유 함수 호출 + SQLSTATE→타입예외(P2015→VersionConflict, P2013→InvalidStateTransition, 42501→Forbidden, 23514→ApprovalPrerequisiteFailed). approve/self_approve=권한 사전확인(approver/admin, self=admin), reject/revoke도.
 
-Step 4 approval service 계획(GPT 전략대로):
-- 정상 fn_approve_version은 CREATE OR REPLACE 강화: actor 재검증(GUC), scripts FOR UPDATE, current_version_id==target, 귀속(script_id·hospital), 상태 none/pending, 최신 evidence prereq, 작성자≠승인자, 승인 상태변경+audit(같은 TX, audit 실패시 rollback).
-- 자기승인은 별도 fn_self_approve_version(creator==actor + hospitals.allow_self_approval + admin(self_override) + trimmed 사유 + audit 'approval.self_approve' + 당시 정책값 snapshot). private core는 app_rw 직접 실행 불가.
-- fn_reject_version(current·none/pending·사유), fn_revoke_version(approved·사유·revoke capability·비-current도 허용). approved→reject·rejected→revoke 금지.
-- publish/export gate: prepare_export가 짧은 TX에서 scripts 잠금+current==requested+approved 확인 후 immutable payload 반환(긴 파일생성 중 lock 미보유).
-- 모든 definer 함수 SECURITY DEFINER + SET search_path + REVOKE PUBLIC + GRANT app_rw.
-- 동시성 테스트 9종(evidence vs approve, edit vs approve, approve vs self-approve, approve 2회, approve후 revoke, stale reject, current 변경후 export, old approved revoke, audit 실패시 rollback).
+/studio approve 라우트 service 교체 + reject/revoke/self-approve 라우트 추가(라우트=파싱+ctx resolve+service+예외매핑). 기존 승인 테스트 갱신(작성자==승인자 케이스를 다른 approver로, current_version_id 설정).
 
-provenance 강한 CHECK 재강화 순서(확정): 대시보드가 requester membership을 create_job에 전달 → AI version이 generation_job_id+created_by 기록 → 구버전 인스턴스·실행중 job 종료 확인 → 위반 row 조회·백필 → 강한 CHECK NOT VALID 추가 → 신규 NULL 거부 테스트 → VALIDATE → 임시 완화 constraint 제거.
+아직 안 한 것(Step 4 마무리): export/publish gate(prepare_export 짧은TX + publication_jobs), /studio 버전페이지 reject/revoke 버튼 UI, gate snapshot 상세 audit(현재 assessment_hash만), review_seq 결정적 순번(현재 created_at DESC,id DESC).
 
-질문: (a) SQLSTATE 도메인 코드(P2013/P2014) 분리가 적절한지. (b) waived 모델을 human_decision 축 분리 + 최신 human assessment 결정적 선택으로 가는 방향이 맞는지, claim_effective_assessment view/승인 gate에서 주의할 점. (c) Step 4 함수 구성(정상 강화 + 자기승인 별도 + reject/revoke + publish gate)과 위 순서로 착수해도 되는지.</textarea>
+질문: (a) fn_approve_core의 검증 순서·잠금(scripts FOR UPDATE + advisory lock 병행)·gate 로직(레거시 automated verified 허용 포함)이 안전한지. (b) 정상 승인과 자기승인을 mode 파라미터로 같은 core를 태우는 방식이 맞는지(자기승인만 별도 함수 분리했는데 core 공유). (c) revoke를 비-current 과거승인에도 허용하면서 원승인자·decided_at을 유지하고 revoke actor는 audit에만 남기는 방식이 맞는지. (d) 다음을 export gate로 이어가도 되는지, publication_jobs를 지금 만들지 나중에 실제 외부게시 붙일 때 만들지.</textarea>
 </div>
 <script>
   function copyGpt(){var t=document.getElementById('gpt'),b=document.querySelector('.copy');

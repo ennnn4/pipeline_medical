@@ -20,17 +20,25 @@ def _member(owner, h, role=None):
 
 
 def _approvable(owner, h, author_mid=None, verified=True):
-    """current version + (선택)작성자 + gate 통과용 automated verified claim."""
+    """current version(editor면 작성자 지정) + gate 통과용 사람 accepted 판정(비-migration도 승인 가능)."""
     with owner.begin() as cn:
         sc, v = new_version(cn, h, source="editor" if author_mid else "migration")
         if author_mid:
             cn.execute(text("update script_versions set created_by_membership_id=:m where id=:v"), {"m": author_mid, "v": v})
         cn.execute(text("update scripts set current_version_id=:v where id=:s"), {"v": v, "s": sc})
         b = new_block(cn, h, v); s = new_sentence(cn, h, v, b); c = new_claim(cn, h, v, s)
-        cn.execute(text("insert into claim_assessments(id,hospital_id,claim_id,assessment_kind,idempotency_key,"
-                        "support_level,verification_status,medical_risk) values(:i,:h,:c,'automated','a1',:sl,:vf,'low')"),
-                   {"i": uuid.uuid4(), "h": h, "c": c, "sl": "direct" if verified else "unverified",
-                    "vf": "verified" if verified else "pending"})
+        rev, revu = uuid.uuid4(), uuid.uuid4()   # 판정 남길 리뷰어(human_review는 actor 필수)
+        cn.execute(text("insert into users(id,email) values(:u,:e)"), {"u": revu, "e": revu.hex + "@t.c"})
+        cn.execute(text("insert into hospital_memberships(id,hospital_id,user_id) values(:m,:h,:u)"), {"m": rev, "h": h, "u": revu})
+        if verified:
+            cn.execute(text("insert into claim_assessments(id,hospital_id,claim_id,assessment_kind,idempotency_key,"
+                            "support_level,verification_status,medical_risk,human_decision,decision_reason,created_by_membership_id) "
+                            "values(:i,:h,:c,'human_review','hr',:sl,'verified','low','accepted',:dr,:by)"),
+                       {"i": uuid.uuid4(), "h": h, "c": c, "sl": "direct", "dr": "확정", "by": rev})
+        else:
+            cn.execute(text("insert into claim_assessments(id,hospital_id,claim_id,assessment_kind,idempotency_key,"
+                            "support_level,verification_status,medical_risk) values(:i,:h,:c,'automated','a1','unverified','pending','low')"),
+                       {"i": uuid.uuid4(), "h": h, "c": c})
     return sc, v, c
 
 
@@ -120,3 +128,35 @@ def test_reject_requires_reason(rw, owner, tenant):
     _, v, _ = _approvable(owner, h)
     with pytest.raises(InvalidStateTransition):
         ap.reject(rw, _ctx(h, appr_m, appr_u, {"approver"}), v, reason="   ")
+
+
+def test_new_editor_version_requires_human_signoff(rw, owner, tenant):
+    """비-migration(editor) version은 automated verified만으론 승인 불가 — 사람 판정 필수(legacy 제한)."""
+    from services.exceptions import ApprovalPrerequisiteFailed
+    h = tenant["hospital_id"]
+    author, _ = _member(owner, h)
+    appr_m, appr_u = _member(owner, h, "approver")
+    with owner.begin() as cn:
+        sc, v = new_version(cn, h, source="editor")
+        cn.execute(text("update script_versions set created_by_membership_id=:m where id=:v"), {"m": author, "v": v})
+        cn.execute(text("update scripts set current_version_id=:v where id=:s"), {"v": v, "s": sc})
+        b = new_block(cn, h, v); s = new_sentence(cn, h, v, b); c = new_claim(cn, h, v, s)
+        cn.execute(text("insert into claim_assessments(id,hospital_id,claim_id,assessment_kind,idempotency_key,"
+                        "support_level,verification_status,medical_risk) values(:i,:h,:c,'automated','a1','direct','verified','low')"),
+                   {"i": uuid.uuid4(), "h": h, "c": c})
+    with pytest.raises(ApprovalPrerequisiteFailed):
+        ap.approve(rw, _ctx(h, appr_m, appr_u, {"approver"}), v)
+
+
+def test_revoke_records_actor_and_reason(rw, owner, tenant):
+    h = tenant["hospital_id"]
+    appr_m, appr_u = _member(owner, h, "approver")
+    admin_m, admin_u = _member(owner, h, "admin")
+    _, v, _ = _approvable(owner, h)
+    ap.approve(rw, _ctx(h, appr_m, appr_u, {"approver"}), v)
+    ap.revoke(rw, _ctx(h, admin_m, admin_u, {"admin"}), v, reason="환자정보 노출 발견")
+    with owner.connect() as cn:
+        r = cn.execute(text("select status, approver_membership_id, revoked_by_membership_id, revoke_reason "
+                            "from version_approval_states where version_id=:v"), {"v": v}).first()
+    assert r.status == "revoked" and str(r.approver_membership_id) == str(appr_m)   # 원 승인자 유지
+    assert str(r.revoked_by_membership_id) == str(admin_m) and r.revoke_reason == "환자정보 노출 발견"

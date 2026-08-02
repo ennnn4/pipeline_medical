@@ -341,6 +341,10 @@ version_approval_states = Table(
     # superseded는 승인 상태가 아니라 '더 이상 current 아님' 수명주기(inv14, GPT) — 승인 이력은 status로 보존.
     Column("superseded_by_version_id", UUID(as_uuid=True)),
     Column("superseded_at", TIMESTAMP(timezone=True)),
+    # 철회(revoke): 원 승인자(approver_membership_id)는 유지하고 철회 주체·시각·사유를 상태 행에 명시(GPT).
+    Column("revoked_by_membership_id", UUID(as_uuid=True)),
+    Column("revoked_at", TIMESTAMP(timezone=True)),
+    Column("revoke_reason", Text),
     ts("updated_at"),
     ForeignKeyConstraint(["hospital_id", "version_id"], ["script_versions.hospital_id", "script_versions.id"],
                          name="fk_approval_states_version"),
@@ -350,12 +354,18 @@ version_approval_states = Table(
     ForeignKeyConstraint(["hospital_id", "superseded_by_version_id"],
                          ["script_versions.hospital_id", "script_versions.id"],
                          name="fk_approval_states_superseded_by"),
+    ForeignKeyConstraint(["hospital_id", "revoked_by_membership_id"],
+                         ["hospital_memberships.hospital_id", "hospital_memberships.id"],
+                         name="fk_approval_states_revoked_by"),
     UniqueConstraint("hospital_id", "version_id", name="uq_approval_states_version"),  # 버전당 1행
     tenant_id_uq("version_approval_states"),
     CheckConstraint("status IN ('none','approved','rejected','revoked')", name="status"),
-    # revoked(승인 철회) → 결정자·시각 필수(rejected와 동일)
-    CheckConstraint("status <> 'revoked' OR (approver_membership_id IS NOT NULL AND decided_at IS NOT NULL)",
-                    name="revoked_fields"),
+    # revoked(승인 철회): 원 승인자·시각 유지 + 철회 주체·시각·사유 필수(GPT — audit 외 상태행에도 명시)
+    CheckConstraint(
+        "status <> 'revoked' OR (approver_membership_id IS NOT NULL AND decided_at IS NOT NULL "
+        "AND revoked_by_membership_id IS NOT NULL AND revoked_at IS NOT NULL "
+        "AND revoke_reason IS NOT NULL AND btrim(revoke_reason) <> '')",
+        name="revoked_fields"),
     # approved → 승인 메타 전부 NOT NULL
     CheckConstraint(
         "status <> 'approved' OR ("
