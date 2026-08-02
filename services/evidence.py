@@ -13,22 +13,30 @@ from store.repositories import tenant_conn
 from services import permissions
 from services.exceptions import NotFound, VersionConflict, InvalidStateTransition, Forbidden
 
-# 결정 → (support_level, verification_status, medical_risk, 기본 사유)
+# 사람 결정 → (support_level, verification_status, medical_risk, human_decision, 기본 사유)
+# verification_status(검증결과)와 human_decision(사람 처리)은 별개 축(GPT).
 _DECISION = {
-    "confirm": ("direct", "verified", "low", "원장 확정"),
-    "reject":  ("unsupported", "failed", "high", "원장 반려"),
+    "confirm":        ("direct", "verified", "low", "accepted", "원장 확정"),
+    "reject":         ("unsupported", "failed", "high", "rejected", "원장 반려"),
+    "waive":          ("unverified", "failed", "medium", "waived", None),          # 근거 예외(사유 필수)
+    "not_applicable": ("unverified", "pending", "low", "not_applicable", None),    # 검증 대상 아님(사유 필수)
 }
+_ELEVATED = {"waive", "not_applicable"}   # admin(waiver/not_applicable capability)만
 
 
 def assess_claim(engine, ctx, script_id, version_id, claim_id, decision, reason=None):
-    """claim에 사람 판정(human_review) append. approver/admin만. 반환: {claim_id, version_id, decision}."""
-    permissions.require(ctx, permissions.REVIEW_ROLES)
+    """claim에 사람 판정(human_review) append. confirm/reject=approver/admin, waive/not_applicable=admin.
+    반환: {claim_id, version_id, decision}."""
     if decision not in _DECISION:
         raise InvalidStateTransition(f"허용되지 않은 결정: {decision}")
+    permissions.require(ctx, {"admin"} if decision in _ELEVATED else permissions.REVIEW_ROLES)
+    sup, vf, risk, human_decision, default_reason = _DECISION[decision]
+    reason = (reason or default_reason or "").strip()
+    if decision in _ELEVATED and not reason:
+        raise InvalidStateTransition(f"{decision}에는 사유가 필요합니다")
     sid = script_id if isinstance(script_id, uuid.UUID) else uuid.UUID(str(script_id))
     vid = version_id if isinstance(version_id, uuid.UUID) else uuid.UUID(str(version_id))
     cid = claim_id if isinstance(claim_id, uuid.UUID) else uuid.UUID(str(claim_id))
-    sup, vf, risk, default_reason = _DECISION[decision]
     with tenant_conn(engine, ctx.hospital_id, membership_id=ctx.membership_id,
                      request_id=ctx.request_id) as conn:
         # 1) scripts 행 잠금(승인과 동일 순서) + current version 확인
@@ -51,9 +59,11 @@ def assess_claim(engine, ctx, script_id, version_id, claim_id, decision, reason=
         # 4) 사람 판정 append(불변) — effective view가 최신 human을 automated보다 우선
         conn.execute(text(
             "insert into claim_assessments(id,hospital_id,claim_id,assessment_kind,idempotency_key,"
-            "support_level,verification_status,medical_risk,rationale,created_by_membership_id) "
-            "values(:i,:h,:c,'human_review',:ik,:sup,:vf,:risk,:ra,"
+            "support_level,verification_status,medical_risk,rationale,human_decision,decision_reason,"
+            "created_by_membership_id) "
+            "values(:i,:h,:c,'human_review',:ik,:sup,:vf,:risk,:ra,:hd,:dr,"
             "NULLIF(current_setting('app.membership_id', true), '')::uuid)"),
             {"i": uuid.uuid4(), "h": ctx.hospital_id, "c": cid, "ik": uuid.uuid4().hex,
-             "sup": sup, "vf": vf, "risk": risk, "ra": (reason or default_reason)[:2000]})
-    return {"claim_id": str(cid), "version_id": str(vid), "decision": decision}
+             "sup": sup, "vf": vf, "risk": risk, "ra": reason[:2000],
+             "hd": human_decision, "dr": reason[:2000]})
+    return {"claim_id": str(cid), "version_id": str(vid), "decision": decision, "human_decision": human_decision}

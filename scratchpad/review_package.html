@@ -1,4 +1,4 @@
-<title>본큐어 파이프라인 — Step 3 evidence service</title>
+<title>본큐어 파이프라인 — Step 3 완료 + Step 4 사전정리</title>
 <style>
   :root{
     --bg:#f6f7f9; --card:#fff; --ink:#0b1524; --muted:#5b6b7f; --line:#e6e9ef;
@@ -53,8 +53,8 @@
 <div class="wrap">
   <header class="hd">
     <div class="eyebrow">본큐어 파이프라인 · service 추출</div>
-    <h1>Step 3 evidence service</h1>
-    <div class="sub">근거 검수 로직을 공통 service로 추출하고 /studio를 즉시 교체했습니다. 규칙(명시 version_id·current 재검사·승인 동결·잠금순서·부분성공 금지)을 그대로 반영했습니다.</div>
+    <h1>Step 3 완료 + Step 4 사전정리</h1>
+    <div class="sub">evidence service를 반영·배포했고, Step 4 착수 전 지시한 2건 중 SQLSTATE 정리를 마쳤습니다. waived 모델·Step 4 계획을 확인받고 진행하려 합니다.</div>
     <div class="status">
       <span class="chip ok">✓ 테스트 100 통과</span>
       <span class="chip ok">✓ 라이브 반영·배포</span>
@@ -81,13 +81,24 @@
   </div>
 
   <div class="card">
-    <h2><span class="n">▲</span>Step 4 approval service — 착수 전 확인</h2>
-    <div class="row"><span class="tag todo">inv2</span><p>current version만 승인(<code>fn_approve_version</code>에 <code>scripts.current_version_id</code> 비교 + FOR UPDATE 추가).</p></div>
-    <div class="row"><span class="tag todo">11·12</span><p>작성자≠승인자 + 자기승인 override(<code>hospitals.allow_self_approval</code> + admin + 사유 + 별도 audit).</p></div>
-    <div class="row"><span class="tag todo">상태</span><p>reject/revoke 함수(전이표 강제) + publish/export gate(current&approved만).</p></div>
+    <h2><span class="n">①</span>Step 4 사전정리 — SQLSTATE (완료)</h2>
+    <div class="row"><span class="tag">done</span><p>지적대로 <code>2BP01</code>(PG 내장 <i>dependent_objects_still_exist</i>) 재사용을 제거하고 도메인 코드로 분리 — <code>P2013</code>=decided_version_frozen(승인/철회 version 내용·근거 동결), <code>P2014</code>=supersede 충돌. rls_sql content freeze + assessment freeze/superseded 함수 전부 교체, 매핑·테스트 갱신, 라이브 함수 재적용.</p></div>
   </div>
 
-  <div class="note">테스트 <b>100개 통과</b>(신규 evidence 5). 승인 후 assessment의 옛 "stale 감지" 테스트를 새 "동결 2BP01"로 갱신. 라이브 트리거 적용, 배포 성공(676c114 live). <br><small>참고: provenance CHECK는 배포 버전 스큐 안전을 위해 "generation_job_id는 ai만"으로 완화(ai→job NOT NULL 강화는 대시보드가 requester membership 포착 후 후속).</small></div>
+  <div class="card">
+    <h2><span class="n">②</span>Step 4 사전정리 — waived 모델 (계획, 착수 전)</h2>
+    <div class="row"><span class="tag todo">축분리</span><p><code>verification_status</code>(pending/verified/failed)와 <code>human_decision</code>(accepted/rejected/waived/not_applicable)을 분리. claim_assessments에 human_decision 컬럼+CHECK 추가 방향.</p></div>
+    <div class="row"><span class="tag todo">최신</span><p>승인 gate는 claim별 <b>최신 유효 human assessment</b>만 사용(created_at DESC,id DESC 또는 review_seq로 결정적). waived는 사유·capability·audit 필수.</p></div>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">▲</span>Step 4 approval service — 계획</h2>
+    <div class="row"><span class="tag todo">core</span><p>정상 <code>fn_approve_version</code> CREATE OR REPLACE 강화(scripts FOR UPDATE·current==target·귀속·상태전이·최신 evidence prereq·작성자≠승인자·audit).</p></div>
+    <div class="row"><span class="tag todo">self</span><p>자기승인은 <b>별도</b> <code>fn_self_approve_version</code>(creator==actor + allow_self_approval + admin self_override + 사유).</p></div>
+    <div class="row"><span class="tag todo">상태</span><p><code>fn_reject_version</code>/<code>fn_revoke_version</code>(전이표; revoke는 비-current도 허용) + publish/export gate(current&approved만).</p></div>
+  </div>
+
+  <div class="note">테스트 <b>100개 통과</b>. 배포 성공(676c114 live). Step 0–3 + 2.5/2.5.1 전부 라이브. <br><small>참고: provenance CHECK는 배포 스큐 안전을 위해 "generation_job_id는 ai만"으로 임시 완화. 재강화 순서(대시보드 requester 포착→AI version job+created_by 기록→구버전 종료 확인→백필→NOT VALID 강한 CHECK→VALIDATE)는 확정 예정.</small></div>
 
   <div class="copybar"><button class="copy" onclick="copyGpt()">📋 GPT용 전체 복사</button></div>
   <div class="foot">본큐어 파이프라인 · Step 3 · 2026-08-02</div>
@@ -113,7 +124,21 @@ Step 3 evidence service (services/evidence.py assess_claim) — 규칙 전부 �
 - reject/revoke: 전이표(none/pending→approve/reject, approved→revoke, approved→reject·rejected→revoke 금지) 강제하는 함수 + audit.
 - publish/export gate: current이며 approved인 version만.
 
-질문: (a) Step 3 evidence service(명시 version_id·current 재검사·동결·DB 백스톱)가 규칙을 충족하는지. (b) provenance CHECK를 배포 스큐 안전형으로 완화하고 ai→job NOT NULL은 대시보드 requester 포착 후로 미룬 판단이 맞는지. (c) Step 4에서 fn_approve_version을 어떻게 안전하게 확장할지 — 기존 함수 CREATE OR REPLACE로 current/자기승인 검증을 추가하는 방식 vs 별도 함수로 분리, 그리고 reject/revoke/publish gate 구현 시 주의점.</textarea>
+Step 4 사전정리 ①(완료): 동결 SQLSTATE를 도메인 코드로 교체. 2BP01(PG 내장 dependent_objects_still_exist) 재사용 제거 → P2013(decided_version_frozen: 승인/철회 version의 내용·근거 동결), P2014(version supersede 충돌). rls_sql fn_reject_if_version_approved + approval_foundation의 assessment freeze/superseded 함수 전부 교체, services/exceptions 매핑(P2013→InvalidStateTransition, P2014→VersionConflict), web/api _map_pg(409), test_lockdown·test_approval 갱신. 100 tests green, 라이브 함수 재적용 확인.
+
+Step 4 사전정리 ②(계획, 착수 전): waived 모델 = verification_status(pending/verified/failed)와 human_decision(accepted/rejected/waived/not_applicable) 축 분리. claim_assessments에 human_decision 컬럼 + CHECK 추가. 승인 gate는 claim별 '최신 유효 human assessment'만 사용(created_at DESC, id DESC 또는 review_seq로 결정적 선택). waived는 사유·waiver capability·audit 필수. 승인 규칙: verified+accepted→가능, waived(권한·사유)→가능, pending/rejected/assessment없음→불가.
+
+Step 4 approval service 계획(GPT 전략대로):
+- 정상 fn_approve_version은 CREATE OR REPLACE 강화: actor 재검증(GUC), scripts FOR UPDATE, current_version_id==target, 귀속(script_id·hospital), 상태 none/pending, 최신 evidence prereq, 작성자≠승인자, 승인 상태변경+audit(같은 TX, audit 실패시 rollback).
+- 자기승인은 별도 fn_self_approve_version(creator==actor + hospitals.allow_self_approval + admin(self_override) + trimmed 사유 + audit 'approval.self_approve' + 당시 정책값 snapshot). private core는 app_rw 직접 실행 불가.
+- fn_reject_version(current·none/pending·사유), fn_revoke_version(approved·사유·revoke capability·비-current도 허용). approved→reject·rejected→revoke 금지.
+- publish/export gate: prepare_export가 짧은 TX에서 scripts 잠금+current==requested+approved 확인 후 immutable payload 반환(긴 파일생성 중 lock 미보유).
+- 모든 definer 함수 SECURITY DEFINER + SET search_path + REVOKE PUBLIC + GRANT app_rw.
+- 동시성 테스트 9종(evidence vs approve, edit vs approve, approve vs self-approve, approve 2회, approve후 revoke, stale reject, current 변경후 export, old approved revoke, audit 실패시 rollback).
+
+provenance 강한 CHECK 재강화 순서(확정): 대시보드가 requester membership을 create_job에 전달 → AI version이 generation_job_id+created_by 기록 → 구버전 인스턴스·실행중 job 종료 확인 → 위반 row 조회·백필 → 강한 CHECK NOT VALID 추가 → 신규 NULL 거부 테스트 → VALIDATE → 임시 완화 constraint 제거.
+
+질문: (a) SQLSTATE 도메인 코드(P2013/P2014) 분리가 적절한지. (b) waived 모델을 human_decision 축 분리 + 최신 human assessment 결정적 선택으로 가는 방향이 맞는지, claim_effective_assessment view/승인 gate에서 주의할 점. (c) Step 4 함수 구성(정상 강화 + 자기승인 별도 + reject/revoke + publish gate)과 위 순서로 착수해도 되는지.</textarea>
 </div>
 <script>
   function copyGpt(){var t=document.getElementById('gpt'),b=document.querySelector('.copy');

@@ -78,3 +78,30 @@ def test_assess_rejects_foreign_claim(rw, owner, tenant):
     ctx = _ctx(tenant, {"approver"})
     with pytest.raises(NotFound):                          # 이 버전 소속 아닌 claim
         ev.assess_claim(rw, ctx, sc, v, uuid.uuid4(), "confirm")
+
+
+def test_waive_requires_admin_and_reason(rw, owner, tenant):
+    h = tenant["hospital_id"]; sc, v, cid = _seed_claim(owner, h)
+    # approver는 waive 불가(admin capability)
+    with pytest.raises(Forbidden):
+        ev.assess_claim(rw, _ctx(tenant, {"approver"}), sc, v, cid, "waive", reason="예외 사유")
+    # admin이라도 사유 없으면 불가
+    with pytest.raises(InvalidStateTransition):
+        ev.assess_claim(rw, _ctx(tenant, {"admin"}), sc, v, cid, "waive", reason="   ")
+    # admin + 사유 → 성공, human_decision=waived
+    r = ev.assess_claim(rw, _ctx(tenant, {"admin"}), sc, v, cid, "waive", reason="근거요건 예외 승인")
+    assert r["human_decision"] == "waived"
+    with owner.connect() as cn:
+        hd = cn.execute(text("select human_decision, decision_reason from claim_assessments "
+                             "where claim_id=:c order by created_at desc limit 1"), {"c": cid}).first()
+    assert hd.human_decision == "waived" and hd.decision_reason == "근거요건 예외 승인"
+
+
+def test_confirm_sets_accepted_decision(rw, owner, tenant):
+    h = tenant["hospital_id"]; sc, v, cid = _seed_claim(owner, h)
+    r = ev.assess_claim(rw, _ctx(tenant, {"approver"}), sc, v, cid, "confirm")
+    assert r["human_decision"] == "accepted"
+    with owner.connect() as cn:
+        hd = cn.execute(text("select human_decision, verification_status from claim_assessments "
+                             "where claim_id=:c order by created_at desc limit 1"), {"c": cid}).first()
+    assert hd.human_decision == "accepted" and hd.verification_status == "verified"

@@ -232,9 +232,12 @@ claim_assessments = Table(
     Column("checker_version", Text),
     Column("model", Text), Column("prompt_hash", Text), Column("source_set_hash", Text),
     Column("support_level", Text, nullable=False),       # direct|partial|inferred|unsupported|unverified
-    Column("verification_status", Text, nullable=False), # pending|verified|failed
+    Column("verification_status", Text, nullable=False), # pending|verified|failed(시스템·근거 검증 결과)
     Column("medical_risk", Text, nullable=False),        # low|medium|high
     Column("rationale", Text),
+    # 사람 최종 결정(검증 결과와 별개 축, GPT): accepted|rejected|waived|not_applicable. automated는 NULL.
+    Column("human_decision", Text),
+    Column("decision_reason", Text),
     Column("created_by_membership_id", UUID(as_uuid=True)),
     ts("created_at"),
     ForeignKeyConstraint(["hospital_id", "claim_id"], ["claims.hospital_id", "claims.id"],
@@ -253,6 +256,15 @@ claim_assessments = Table(
     CheckConstraint("medical_risk IN ('low','medium','high')", name="medical_risk"),
     # human/override는 사람 actor 필수
     CheckConstraint("assessment_kind NOT IN ('human_review','override') OR created_by_membership_id IS NOT NULL", name="human_actor_required"),
+    # human_decision 값·조합(GPT): accepted→verified 필수, rejected/waived/not_applicable→사유 필수
+    CheckConstraint("human_decision IS NULL OR human_decision IN ('accepted','rejected','waived','not_applicable')",
+                    name="human_decision"),
+    CheckConstraint(
+        "human_decision IS NULL "
+        "OR (human_decision='accepted' AND verification_status='verified') "
+        "OR (human_decision IN ('rejected','waived','not_applicable') "
+        "    AND decision_reason IS NOT NULL AND btrim(decision_reason) <> '')",
+        name="human_decision_combo"),
     Index("ix_assessments_latest", "hospital_id", "claim_id", text("created_at DESC"), text("id DESC")),
 )
 

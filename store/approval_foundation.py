@@ -38,6 +38,18 @@ STMTS = [
     "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='ck_versions_provenance') THEN "
     "ALTER TABLE script_versions ADD CONSTRAINT ck_versions_provenance CHECK ("
     "generation_job_id IS NULL OR source='ai') NOT VALID; END IF; END $$;",
+    # 사람 결정 축(waived 모델, GPT) — verification_status(검증결과)와 분리. automated는 NULL.
+    "ALTER TABLE claim_assessments ADD COLUMN IF NOT EXISTS human_decision text;",
+    "ALTER TABLE claim_assessments ADD COLUMN IF NOT EXISTS decision_reason text;",
+    "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='ck_assessment_human_decision') THEN "
+    "ALTER TABLE claim_assessments ADD CONSTRAINT ck_assessment_human_decision CHECK ("
+    "human_decision IS NULL OR human_decision IN ('accepted','rejected','waived','not_applicable')) NOT VALID; END IF; END $$;",
+    "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='ck_assessment_decision_combo') THEN "
+    "ALTER TABLE claim_assessments ADD CONSTRAINT ck_assessment_decision_combo CHECK ("
+    "human_decision IS NULL "
+    "OR (human_decision='accepted' AND verification_status='verified') "
+    "OR (human_decision IN ('rejected','waived','not_applicable') AND decision_reason IS NOT NULL AND btrim(decision_reason) <> '')"
+    ") NOT VALID; END IF; END $$;",
 ]
 
 # superseded 기록은 edit/version 트랜잭션 책임(GPT Step2.5.1). version_approval_states는 app_rw UPDATE
