@@ -180,7 +180,12 @@ def ingest_content(engine, hospital_id, job_id, script_list, membership_id=None)
     반환: {"version_id","blocks","claims","content_hash","reused"}."""
     if not isinstance(script_list, list):
         raise ValueError("script_list must be a list")
-    valid = [b for b in script_list if isinstance(b, dict) and (b.get("say") or "").strip()]
+    if not script_list:
+        raise ValueError("script_list가 비어 있음")
+    for idx, block in enumerate(script_list):     # 비정상 원소(None 등)는 조용히 버리지 않고 명시 거부
+        if not isinstance(block, dict):
+            raise ValueError(f"script_list[{idx}]는 객체여야 함")
+    valid = [b for b in script_list if str(b.get("say") or "").strip()]
     if not valid:
         raise ValueError("생성된 유효 대본 블록이 없음")
     ch = _content_hash(script_list)
@@ -214,15 +219,20 @@ def ingest_content(engine, hospital_id, job_id, script_list, membership_id=None)
                    {"i": uuid.uuid4(), "h": hospital_id, "v": v})
         nb = ncl = 0
         for i, b in enumerate(script_list):
-            say = (b.get("say") or "").strip()
+            say = str(b.get("say") or "").strip()
             if not say:
                 continue
+            scene = str(b.get("scene") or "")[:2000]
+            block_label = str(b.get("block") or "")
+            tags = b.get("tags") or []
+            if not isinstance(tags, list):
+                raise ValueError(f"script_list[{i}].tags는 배열이어야 함")
             bid = uuid.uuid4()
             cn.execute(text("insert into script_blocks(id,hospital_id,version_id,stable_block_key,order_index,"
                             "block_type,scene,text,metadata) values(:b,:h,:v,:k,:o,:bt,:sc,:tx,cast(:md as jsonb))"),
                        {"b": bid, "h": hospital_id, "v": v, "k": f"blk_{i+1}", "o": i,
-                        "bt": block_type_of(b.get("block") or ""), "sc": (b.get("scene") or "")[:2000], "tx": say,
-                        "md": json.dumps({"block_label": b.get("block") or "", "tags": b.get("tags") or []}, ensure_ascii=False)})
+                        "bt": block_type_of(block_label), "sc": scene, "tx": say,
+                        "md": json.dumps({"block_label": block_label, "tags": tags}, ensure_ascii=False)})
             nb += 1
             ci = 0
             for s0, s1, st in segment(say):

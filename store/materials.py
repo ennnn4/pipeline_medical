@@ -83,12 +83,14 @@ def list_materials(engine, hospital_id):
             "where hospital_id=:h order by uploaded_at"), {"h": hospital_id})]
 
 def get_material(engine, hospital_id, filename):
+    filename = _normalize_filename(filename)
     with tenant_conn(engine, hospital_id) as cn:
         r = cn.execute(text("select mime, data from materials where hospital_id=:h and filename=:f"),
                        {"h": hospital_id, "f": filename}).first()
     return (r.mime, bytes(r.data)) if r else (None, None)
 
 def delete_material(engine, hospital_id, filename):
+    filename = _normalize_filename(filename)
     with tenant_conn(engine, hospital_id) as cn:
         cn.execute(text("delete from materials where hospital_id=:h and filename=:f"),
                    {"h": hospital_id, "f": filename})

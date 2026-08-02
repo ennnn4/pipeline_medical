@@ -120,6 +120,15 @@ def test_ingest_uses_job_topic(rw, tenant, gen):
         assert cn.execute(text("select topic from scripts where id=:s"), {"s": sid}).scalar() == "자율신경"
 
 
+def test_ingest_rejects_non_dict_block(rw, tenant, gen):
+    h = tenant["hospital_id"]
+    j = I.create_job(rw, h, "이명", str(uuid.uuid4()))["job_id"]
+    I.mark_job(rw, h, j, "generating", allowed_from={"pending"})
+    I.mark_job(rw, h, j, "generated", allowed_from={"generating"})
+    with pytest.raises(ValueError):     # 첫 원소는 정상이라 valid 통과했지만 None이 섞임 → 명시 거부
+        I.ingest_content(rw, h, j, [{"say": "정상 문장입니다."}, None])
+
+
 def test_material_too_large_raises(owner, rw, tenant):
     from store.materials import ensure_materials_schema, save_material, MAX_BYTES, MaterialTooLarge
     ensure_materials_schema(owner)
