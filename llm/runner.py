@@ -48,6 +48,13 @@ def generate(system, user, parse_json=False, max_tokens=32000, effort="high"):
     )
     with client.messages.stream(**kwargs) as stream:
         msg = stream.get_final_message()
+    try:
+        from llm.cost import record
+        u = msg.usage
+        record("claude", MODEL, in_tok=getattr(u, "input_tokens", 0), out_tok=getattr(u, "output_tokens", 0),
+               note=(system or "")[:40])
+    except Exception:
+        pass
     text = "".join(b.text for b in msg.content if b.type == "text")
     return _extract_json(text) if parse_json else text
 

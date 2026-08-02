@@ -32,16 +32,29 @@ def _client():
     from openai import OpenAI
     return OpenAI()  # OPENAI_API_KEY
 
+def _rec_img(r, model):
+    try:
+        from llm.cost import record
+        u = getattr(r, "usage", None)
+        if u and getattr(u, "output_tokens", None):
+            record("image", model, in_tok=getattr(u, "input_tokens", 0), img_tok=u.output_tokens)
+        else:
+            record("image", model, flat_usd=0.08, note="usage 없음(추정)")  # dall-e 등
+    except Exception:
+        pass
+
 def gen_image_bytes(prompt):
     """프롬프트 → PNG 바이트(재생성용). gpt-image-1 실패 시 dall-e-3 폴백."""
     client = _client()
     full = prompt.strip().rstrip(".") + ". " + STYLE
     try:
         r = client.images.generate(model="gpt-image-1", prompt=full, size="1536x1024", quality="medium", n=1)
+        _rec_img(r, "gpt-image-1")
         return base64.b64decode(r.data[0].b64_json)
     except Exception:
         import urllib.request
         r = client.images.generate(model="dall-e-3", prompt=full[:3900], size="1792x1024", quality="standard", n=1)
+        _rec_img(r, "dall-e-3")
         d0 = r.data[0]
         return base64.b64decode(d0.b64_json) if getattr(d0, "b64_json", None) else urllib.request.urlopen(d0.url).read()
 
@@ -49,11 +62,13 @@ def gen_image(client, prompt, path):
     full = prompt.strip().rstrip(".") + ". " + STYLE
     try:
         r = client.images.generate(model="gpt-image-1", prompt=full, size="1536x1024", quality="medium", n=1)
+        _rec_img(r, "gpt-image-1")
         data = base64.b64decode(r.data[0].b64_json)
     except Exception as e:
         # 폴백: dall-e-3 (org 미검증 등으로 gpt-image-1 불가 시)
         import urllib.request
         r = client.images.generate(model="dall-e-3", prompt=full[:3900], size="1792x1024", quality="standard", n=1)
+        _rec_img(r, "dall-e-3")
         d0 = r.data[0]
         data = base64.b64decode(d0.b64_json) if getattr(d0, "b64_json", None) else urllib.request.urlopen(d0.url).read()
     with open(path, "wb") as f:
