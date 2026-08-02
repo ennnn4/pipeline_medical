@@ -61,10 +61,13 @@ _ADOPT = [
     "ALTER TABLE generation_jobs ADD COLUMN IF NOT EXISTS started_at timestamptz;",
     "ALTER TABLE generation_jobs ADD COLUMN IF NOT EXISTS heartbeat_at timestamptz;",
     "ALTER TABLE generation_jobs ADD COLUMN IF NOT EXISTS finished_at timestamptz;",
-    # 자료 스냅샷 봉인 메타(P2-1b) — 어떤 자료 세트로 생성했는지 봉인 시점·개수·매니페스트 해시
+    # 자료 스냅샷 봉인 메타(P2-1b) — 어떤 자료 세트로 생성했는지 봉인 시점·개수·매니페스트 해시(sha256 canonical)
     "ALTER TABLE generation_jobs ADD COLUMN IF NOT EXISTS material_snapshot_at timestamptz;",
     "ALTER TABLE generation_jobs ADD COLUMN IF NOT EXISTS material_snapshot_count int;",
     "ALTER TABLE generation_jobs ADD COLUMN IF NOT EXISTS material_snapshot_hash text;",
+    # 실행권 소유자 토큰(P2-1 마감) — CAS로 획득한 워커만 이후 상태전이(stale 워커의 늦은 완료 차단)
+    "ALTER TABLE generation_jobs ADD COLUMN IF NOT EXISTS worker_token text;",
+    "ALTER TABLE generation_jobs ADD COLUMN IF NOT EXISTS claimed_at timestamptz;",
     # 구 스키마에 idempotency_key(NOT NULL)가 있을 때만 완화 — 신규 DB엔 없으니 조건부(오류 없음)
     "DO $$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns "
     "WHERE table_schema='public' AND table_name='generation_jobs' AND column_name='idempotency_key') "
@@ -98,6 +101,15 @@ def _gen_policies():
         # request key NOT NULL — 혹시 남은 NULL(구식 adoption)은 랜덤 UUID로 채운 뒤 강제.
         "UPDATE generation_jobs SET request_idempotency_key = gen_random_uuid()::text WHERE request_idempotency_key IS NULL;",
         "ALTER TABLE generation_jobs ALTER COLUMN request_idempotency_key SET NOT NULL;",
+        # 병원당 동시 '실행 중' job 1개(P2-1 마감·GPT §d). 병원 간 병렬은 허용. pending/완료/실패는 제외.
+        # 인덱스 생성 전, 기존 중복 active(크래시 잔여)는 병원별 최신 1개만 남기고 stale 정리.
+        "UPDATE generation_jobs SET status='stale', updated_at=now() "
+        "WHERE status IN ('generating','generated','ingesting') AND id NOT IN ("
+        "  SELECT DISTINCT ON (hospital_id) id FROM generation_jobs "
+        "  WHERE status IN ('generating','generated','ingesting') ORDER BY hospital_id, updated_at DESC);",
+        "DROP INDEX IF EXISTS uq_genjobs_one_active;",
+        "CREATE UNIQUE INDEX uq_genjobs_one_active ON generation_jobs(hospital_id) "
+        "WHERE status IN ('generating','generated','ingesting');",
     ]
 
 def ensure_gen_schema(owner_engine):
@@ -155,7 +167,7 @@ def create_job(engine, hospital_id, topic, request_key, target_script_id=None,
 
 def mark_job(engine, hospital_id, job_id, status, allowed_from=None, phase=None, error_code=None,
              error_message=None, version_id=None, content_hash=None, script_id=None, membership_id=None,
-             finished=False, started=False):
+             finished=False, started=False, worker_token=None):
     """job 상태 전이(별도 트랜잭션). allowed_from(집합)이 주어지면 그 상태에서만 전이(compare-and-set)
     → 정상 완료(completed) job을 늦은 예외가 failed로 덮는 것 방지. 전이 안 되면 False."""
     sets = ["status=:st", "updated_at=now()", "heartbeat_at=now()"]
@@ -171,9 +183,35 @@ def mark_job(engine, hospital_id, job_id, status, allowed_from=None, phase=None,
     where = "id=:j and hospital_id=:h"
     if allowed_from:
         where += " and status = any(:af)"; p["af"] = list(allowed_from)
+    if worker_token is not None:      # 실행권 소유자만 상태전이(stale 워커의 늦은 완료 차단)
+        where += " and worker_token = :wt"; p["wt"] = worker_token
     with tenant_conn(engine, hospital_id, membership_id=membership_id) as cn:
         row = cn.execute(text(f"update generation_jobs set {', '.join(sets)} where {where} returning id"), p).first()
         return row is not None
+
+def claim_job(engine, hospital_id, job_id, worker_token, membership_id=None):
+    """실행권 원자적 획득(P2-1 마감): pending & 스냅샷 봉인완료(material_snapshot_at) →
+    generating + worker_token 기록. 병원당 active job 유니크 위반이면 hospital_busy.
+    반환 (acquired: bool, reason: str|None). reason ∈ hospital_busy/not_found/not_sealed/not_pending."""
+    from sqlalchemy.exc import IntegrityError
+    try:
+        with tenant_conn(engine, hospital_id, membership_id=membership_id) as cn:
+            row = cn.execute(text(
+                "update generation_jobs set status='generating', phase='run.py', worker_token=:w, "
+                "claimed_at=now(), started_at=coalesce(started_at, now()), heartbeat_at=now(), updated_at=now() "
+                "where id=:j and hospital_id=:h and status='pending' and material_snapshot_at is not null "
+                "returning id"), {"w": worker_token, "j": job_id, "h": hospital_id}).first()
+            if row:
+                return (True, None)
+            st = cn.execute(text("select status, material_snapshot_at from generation_jobs "
+                                 "where id=:j and hospital_id=:h"), {"j": job_id, "h": hospital_id}).first()
+            if st is None:
+                return (False, "not_found")
+            if st.material_snapshot_at is None:
+                return (False, "not_sealed")
+            return (False, "not_pending")
+    except IntegrityError:
+        return (False, "hospital_busy")   # 병원당 active job 부분유니크 위반(다른 job 실행 중)
 
 def reap_stale(engine, hospital_id, older_than_sec=1800):
     """heartbeat가 오래 멈춘 generating/ingesting job → stale."""

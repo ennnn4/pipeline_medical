@@ -529,7 +529,7 @@ def _run_pipeline(h, topic, evidence=True, request_key=None):
                 log="[생성 차단] 이 병원이 PostgreSQL에 등록되지 않았습니다. 자료·작업 보존을 위해 관리자에게 병원 재등록을 요청하세요.")
         return
     request_key = request_key or _uuid.uuid4().hex
-    job_id = None
+    job_id = None; worker_token = _uuid.uuid4().hex
     if hid:
         try:
             from store.materials import snapshot_job_materials, materialize_job_snapshot
@@ -539,14 +539,15 @@ def _run_pipeline(h, topic, evidence=True, request_key=None):
             job_id = cj["job_id"]
             if cj["reused"] and cj["status"] in ("pending", "generating", "ingesting"):
                 job_set(h, status="done", ok=False, log="[중복 요청] 이미 진행 중인 생성이 있습니다."); return
-            # 2) pending 상태에서 자료 스냅샷 봉인(재현·책임소재) — 이후 seal 트리거가 변경 차단
+            # 2) pending에서 자료 스냅샷 봉인(FOR UPDATE 잠금 + material_snapshot_at) — 이후 seal이 변경 차단
             snapshot_job_materials(make_engine(), hid, job_id)
-            # 3) 실행권 원자적 획득(pending→generating). 못 얻으면 다른 워커가 이미 실행 중 → 중복 실행 차단
-            acquired = _ing.mark_job(make_engine(), hid, job_id, "generating",
-                                     allowed_from={"pending"}, phase="run.py", started=True)
+            # 3) 실행권 원자적 획득(pending&봉인완료→generating, worker_token). 병원당 active 1개 강제.
+            acquired, reason = _ing.claim_job(make_engine(), hid, job_id, worker_token)
             if not acquired:
-                job_set(h, status="done", ok=False, log="[중복 요청] 이미 진행 중인 생성이 있습니다."); return
-            # 4) 스냅샷된 '정확한 원본'을 raw/로 복원(checksum 검증). stale 파일 제거 후 기록.
+                msg = ("[생성 중] 이 병원에서 다른 대본을 생성 중입니다. 완료 후 다시 실행해 주세요."
+                       if reason == "hospital_busy" else "[중복 요청] 이미 진행 중인 생성이 있습니다.")
+                job_set(h, status="done", ok=False, log=msg); return
+            # 4) 스냅샷된 '정확한 원본'을 raw/로 복원(checksum 검증). stale 제거 후 기록.
             _clear_raw_dir(data_dir(h, "raw"))
             materialize_job_snapshot(make_engine(), hid, job_id, data_dir(h, "raw"))
         except Exception as e:
@@ -571,13 +572,13 @@ def _run_pipeline(h, topic, evidence=True, request_key=None):
         log += f"\n[오류] {e}"
         if hid and job_id:
             try: _ing.mark_job(make_engine(), hid, job_id, "failed", allowed_from={"pending","generating","generated","ingesting"},
-                               error_code="run_error", error_message=str(e), finished=True)
+                               worker_token=worker_token, error_code="run_error", error_message=str(e), finished=True)
             except Exception: pass
     if ok and hid and job_id:
         try:
-            _ing.mark_job(make_engine(), hid, job_id, "generated", allowed_from={"generating"}, phase="parsed")
+            _ing.mark_job(make_engine(), hid, job_id, "generated", allowed_from={"generating"}, worker_token=worker_token, phase="parsed")
             pkg = _json.load(open(os.path.join(data_dir(h, "out"), f"{topic}_package.json"), encoding="utf-8"))
-            _ing.mark_job(make_engine(), hid, job_id, "ingesting", allowed_from={"generated"}, phase="ingest")
+            _ing.mark_job(make_engine(), hid, job_id, "ingesting", allowed_from={"generated"}, worker_token=worker_token, phase="ingest")
             res = _ing.ingest_content(make_engine(), hid, job_id, pkg.get("script") or [])  # topic·script_id 모두 job에서
             log += f"\n[스튜디오] 편집·근거·이미지 준비 완료(블록 {res['blocks']}·주장 {res['claims']})."
             job_set(h, log=log)

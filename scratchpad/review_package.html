@@ -1,4 +1,4 @@
-<title>본큐어 파이프라인 — P2 1단계 보고서</title>
+<title>본큐어 파이프라인 — P2-1 무결성 관문 완료</title>
 <style>
   :root{
     --bg:#f6f7f9; --card:#fff; --ink:#0b1524; --muted:#5b6b7f; --line:#e6e9ef;
@@ -21,7 +21,7 @@
   .wrap{max-width:760px;margin:0 auto;padding:20px 16px 72px}
   header.hd{padding:8px 2px 18px}
   .eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--brand);font-weight:700}
-  h1{font-size:26px;line-height:1.25;margin:.35em 0 .15em;text-wrap:balance}
+  h1{font-size:25px;line-height:1.25;margin:.35em 0 .15em;text-wrap:balance}
   .sub{color:var(--muted);font-size:15px}
   .status{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 4px}
   .chip{font-size:12.5px;font-weight:600;padding:5px 11px;border-radius:999px;border:1px solid var(--line)}
@@ -29,10 +29,10 @@
   .chip.brand{background:var(--brand-soft);color:var(--brand);border-color:transparent}
   .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 16px;margin:14px 0;box-shadow:0 1px 2px rgba(10,20,40,.04)}
   h2{font-size:18px;margin:2px 0 10px;display:flex;align-items:center;gap:9px}
-  h2 .n{flex:none;min-width:26px;height:26px;padding:0 6px;border-radius:8px;background:var(--brand-soft);color:var(--brand);font-size:12px;font-weight:800;display:grid;place-items:center}
+  h2 .n{flex:none;min-width:26px;height:26px;padding:0 7px;border-radius:8px;background:var(--brand-soft);color:var(--brand);font-size:12px;font-weight:800;display:grid;place-items:center}
   .row{display:flex;gap:10px;padding:9px 0;border-top:1px solid var(--line)}
   .row:first-of-type{border-top:0}
-  .row .tag{flex:none;font-size:11px;font-weight:700;color:var(--ok);align-self:flex-start;margin-top:3px;min-width:30px}
+  .row .tag{flex:none;font-size:11px;font-weight:700;color:var(--ok);align-self:flex-start;margin-top:3px;min-width:26px}
   .row p{margin:0;font-size:14.5px}
   .row small{color:var(--muted);display:block;font-size:12.5px;margin-top:2px}
   pre{background:var(--code);color:var(--code-ink);border-radius:12px;padding:13px;overflow-x:auto;font-family:var(--mono);font-size:12px;line-height:1.55;margin:10px 0 0}
@@ -47,66 +47,67 @@
 
 <div class="wrap">
   <header class="hd">
-    <div class="eyebrow">본큐어 파이프라인 · P1 승인 → P2</div>
-    <h1>P2 1단계 완료</h1>
-    <div class="sub">GPT가 P1을 <b>승인</b>하고 지정한 순서(“/studio 제거 말고 자료 immutable 버전·fallback 차단 먼저”)대로 진행했습니다. 함께 짚은 배포코드 보안 3건도 먼저 처리했습니다.</div>
+    <div class="eyebrow">본큐어 파이프라인 · P2-1 승인 후속</div>
+    <h1>자료 무결성 관문 완료</h1>
+    <div class="sub">P2-1을 “데이터 무결성 관점에서 완전히 닫기” 위해 지정한 3건(복합 FK·스냅샷 봉인·job 원자적 실행권)을 모두 반영했습니다. service 계층 추출 전 관문입니다.</div>
     <div class="status">
-      <span class="chip ok">✓ 테스트 80 통과</span>
+      <span class="chip ok">✓ 테스트 83 통과</span>
+      <span class="chip ok">✓ Alembic 0001→0011</span>
       <span class="chip ok">✓ 라이브 반영</span>
-      <span class="chip brand">Alembic 0007–0009</span>
     </div>
   </header>
 
   <div class="card">
-    <h2><span class="n">보안</span>배포코드 3건(GPT 지적)</h2>
-    <div class="row"><span class="tag">5.1</span><p><b>provisioning slug 충돌.</b> 관계없는 사용자가 기존 slug를 넘기면 <b>Conflict로 차단</b> — 기존 병원 UUID·멤버십을 넘겨주거나 자동 admin으로 추가하지 않습니다. 같은 사용자의 재시도만 멱등 반환. slug 형식·길이(64) 검증. 대시보드 /new는 기존 config 덮어쓰기 금지.</p></div>
-    <div class="row"><span class="tag">7</span><p><b>CSRF 강화.</b> 두 앱 모두 <code>hmac.compare_digest</code> 상수시간 비교 + <code>X-CSRF-Token</code> 헤더(JSON/fetch) 지원. 토큰은 <code>secrets.token_urlsafe</code>.</p></div>
-    <div class="row"><span class="tag">C.3</span><p><b>비-PG fallback 신규쓰기 차단.</b> DATABASE_URL 배포에서 PG에 없는 병원은 업로드·생성을 막고(자동 재provision 시도 후 안내), 임시디스크 전용 쓰기를 허용하지 않습니다. 단일 원본 원칙 유지.</p></div>
+    <h2><span class="n">1</span>복합 테넌트 FK</h2>
+    <div class="row"><span class="tag">§4</span><p><code>generation_job_materials.material_version_id</code>를 백필·정리 후 <b>NOT NULL</b>. 병원을 포함한 <b>복합 FK</b>로 결착해 병원 간 잘못된 snapshot 연결과 참조 중인 버전 삭제를 DB에서 차단.</p>
+      <pre>(hospital_id, job_id)            → generation_jobs(hospital_id, id)  RESTRICT
+(hospital_id, material_version_id) → material_versions(hospital_id, id) RESTRICT
+UNIQUE(job_id, material_version_id)</pre>
+      <small>cross-tenant 삽입 시도가 실제로 거부됨(테스트로 검증).</small></div>
   </div>
 
   <div class="card">
-    <h2><span class="n">P2-1</span>자료 immutable 버전 — 진짜 재현</h2>
-    <div class="row"><span class="tag">DONE</span><p>파일을 교체해도 원본 bytes를 <b>UPDATE로 덮지 않고 새 버전</b>으로 남깁니다. 생성 job은 그 시점의 정확한 <code>material_version_id</code>를 가리켜, <b>이후 자료가 바뀌어도 당시 원본을 그대로 복원</b>합니다(P2에서 지적한 “manifest만으로는 재현 불가” 해소).</p>
-      <pre>materials            논리 자료항목 + current_version_id 포인터
-material_versions    불변 이력(bytes·checksum). 변경·삭제 트리거 차단
-generation_job_materials → material_version_id (그때 그 원본)
-
-materialize_job_snapshot(job) → 당시 사용한 정확한 파일 복원</pre>
-      <small>실증(sim): v2 스냅샷 후 v3로 교체해도 job 복원은 v2 bytes를 정확히 반환. 논리 자료를 삭제해도 버전 이력은 보존(FK ON DELETE SET NULL).</small></div>
+    <h2><span class="n">2</span>스냅샷 봉인(sealing)</h2>
+    <div class="row"><span class="tag">§5</span><p>job이 <code>pending</code>을 벗어나면 snapshot의 INSERT/UPDATE/DELETE를 <b>트리거로 차단</b> — 완료된 job의 입력 자료 구성을 나중에 바꿀 수 없습니다. job에 봉인 시점·개수·매니페스트 해시를 기록.</p>
+      <pre>pending → snapshot 봉인 → generating 전환(이후 sealed)
+generation_jobs.material_snapshot_{at, count, hash}</pre></div>
   </div>
 
   <div class="card">
-    <h2><span class="n">P2-6</span>DB 제약 강화</h2>
-    <div class="row"><span class="tag">DONE</span><p><code>generation_jobs.status</code> 화이트리스트 <b>CHECK</b>(NOT VALID→VALIDATE), <code>request_idempotency_key</code> NOT NULL. 앱 검증 외 DB 최종 방어선.</p></div>
+    <h2><span class="n">3</span>job 실행권 원자적 획득</h2>
+    <div class="row"><span class="tag">§14</span><p>실행 시작을 <b>compare-and-set</b>으로: <code>UPDATE … SET status='generating' WHERE status='pending' RETURNING</code>. 행을 받은 워커만 LLM을 호출해 <b>중복 실행을 차단</b>합니다.</p>
+      <small>두 워커 동시 시도 → 하나만 True, 나머지는 실행하지 않음(테스트로 검증).</small></div>
   </div>
 
-  <div class="note"><b>이번 단계에서 일부러 안 한 것(GPT 지시대로):</b> /studio 물리 제거·앱 병합(P2-3/4)은 다음 단계로 남겼습니다. 스튜디오 로직을 공통 service 계층으로 추출한 뒤 대시보드가 edit→evidence→approval→images→versions 순으로 직접 렌더하고, 그 다음 /studio를 은퇴시킵니다.</div>
+  <div class="card">
+    <h2><span class="n">+</span>복원 하드닝 · provisioning 경쟁</h2>
+    <div class="row"><span class="tag">§7</span><p><b>복원 검증.</b> <code>materialize_job_snapshot</code>은 current가 아닌 <b>snapshot의 material_version_id 경로만</b> 사용하고, 복원 bytes의 size·sha256을 재검증(불일치 시 생성 중단). 임시파일 기록 후 atomic rename, raw/ stale 정리.</p></div>
+    <div class="row"><span class="tag">§9</span><p><b>provisioning 경쟁조건.</b> 동시 slug INSERT 충돌 시 <code>unique_violation</code>을 잡아 멤버면 기존 반환, 아니면 Conflict로 재판정(일반 예외를 삼켜 기존 병원 반환하지 않음).</p></div>
+  </div>
 
-  <div class="note">테스트 <b>80개 통과</b>(신규 test_p2 8건: 버전 보존·정확 재현·불변 트리거·삭제 후 보존·충돌 차단·slug 검증·status CHECK). 신규 스키마 전부 비파괴 additive. 라이브 DB 반영(백필 0-null 확인) + <code>master</code> 푸시 완료.</div>
+  <div class="note">테스트 <b>83개 통과</b>(신규: 봉인 후 변경 차단·원자적 획득 단독 성공·cross-tenant FK 거부). 실제 <code>alembic upgrade head</code>가 <b>0001→0011</b> 신규 DB에서 성공. 신규 스키마 전부 비파괴 additive. 라이브 DB 반영(복합 FK 5개·seal 트리거·material_version_id NULL 0 확인) + <code>master</code> 푸시.</div>
+
+  <div class="note"><b>다음 단계(지시대로):</b> 이 관문을 닫았으니 공통 service 계층 추출 → 대시보드가 edit→evidence→approval→images→versions를 직접 렌더 → /studio 리다이렉트 → 별도 studio app 제거. 단 <b>approval 이전 전 승인 무결성 확정</b>(승인된 version 직접수정 금지=새 immutable version 생성, 작성자≠승인자·자기승인 예외).</div>
 
   <div class="copybar"><button class="copy" onclick="copyGpt()">📋 GPT용 전체 복사</button></div>
-  <div class="foot">본큐어 파이프라인 · P2 1단계 · 2026-08-02</div>
-  <textarea id="gpt" readonly>[본큐어 파이프라인 — P2 1단계 완료, 재검토 요청]
+  <div class="foot">본큐어 파이프라인 · P2-1 무결성 관문 · 2026-08-02</div>
+  <textarea id="gpt" readonly>[본큐어 파이프라인 — P2-1 무결성 관문 완료, service 추출 착수 승인 요청]
 
-배경: P1 승인 후 지시한 순서대로 진행. "/studio 제거는 나중에, 자료 immutable 버전과 fallback 차단부터"를 따랐고, 함께 지적한 배포코드 보안 3건도 먼저 처리. 80 tests green, 라이브 반영+푸시 완료.
+배경: P2-1 승인 시 "service 추출 전에 먼저 닫으라"고 지정한 3건을 모두 반영. 83 tests green, alembic 0001→0011 fresh 통과, 라이브 반영+푸시 완료.
 
-보안(지적 3건):
-- provisioning slug 충돌(5.1): 관계없는 사용자가 기존 slug 요청 시 ProvisionConflict로 차단(기존 병원 UUID/멤버십 노출·자동 admin 추가 금지), 같은 사용자 재시도만 멱등 반환. slug 형식·길이(64) 검증. /new는 기존 config 덮어쓰기 금지. (SECURITY DEFINER 함수, search_path 고정, 객체 schema-qualified 유지, Alembic 0007)
-- CSRF(7): 두 앱 모두 hmac.compare_digest 상수시간 비교 + X-CSRF-Token 헤더(JSON/fetch) 지원. 토큰=secrets.token_urlsafe. 로그인 시 session.clear()로 재발급.
-- 비-PG fallback 신규쓰기 차단(C.3): DATABASE_URL 배포면 PG를 단일원본으로 간주, PG 미등록 병원은 업로드·생성 차단(자동 재provision 시도 후 안내), 임시디스크 전용 쓰기 불허. 순수 로컬(무 DATABASE_URL)만 파일모드 유지.
+1) 복합 테넌트 FK(§4): generation_job_materials.material_version_id 백필·정리 후 NOT NULL. (hospital_id,job_id)→generation_jobs(hospital_id,id) RESTRICT, (hospital_id,material_version_id)→material_versions(hospital_id,id) RESTRICT, UNIQUE(job_id,material_version_id). UNIQUE(hospital_id,id) 타깃 추가. cross-tenant 삽입 거부를 테스트로 검증.
 
-P2-1 자료 immutable 버전(재현):
-- material_versions(불변) + materials.current_version_id 포인터. save는 교체 시 UPDATE로 덮지 않고 새 버전 추가(원본 bytes 보존).
-- 불변 트리거: 내용컬럼 변경·DELETE 차단. 단 부모 삭제 시 FK ON DELETE SET NULL(material_id→NULL)은 허용해 버전 이력 보존.
-- 기존 materials 백필(멱등). generation_job_materials가 material_version_id 참조.
-- materialize_job_snapshot(job) = 그때 사용한 정확한 원본 복원. 실증(sim): v2 스냅샷 후 v3 교체해도 v2 bytes 정확 복원. (Alembic 0008)
+2) 스냅샷 봉인(§5): job이 pending 벗어나면 gjm INSERT/UPDATE/DELETE를 트리거로 차단. generation_jobs.material_snapshot_{at,count,hash}(md5 매니페스트) 기록. _run_pipeline 순서: create_job(pending)→snapshot 봉인→generating 전환.
 
-P2-6 DB 제약:
-- generation_jobs status CHECK 화이트리스트(pending/generating/generated/ingesting/completed/failed/cancelled/stale, NOT VALID→VALIDATE), request_idempotency_key NOT NULL(NULL은 UUID 백필 후). (Alembic 0009)
+3) job 실행권 원자적 획득(§14): mark_job이 UPDATE…WHERE status='pending' RETURNING로 CAS. 행 받은 워커만 LLM 실행. 두 워커 동시 시도 시 하나만 성공을 테스트로 검증.
 
-이번 단계에서 일부러 안 한 것(지시대로): /studio 물리 제거·앱 병합(P2-3/4). 스튜디오 로직 공통 service 추출→대시보드 직접 렌더(edit→evidence→approval→images→versions)→/studio 은퇴 순으로 다음 단계 예정.
+추가 하드닝:
+- 복원(§7): materialize_job_snapshot이 current 아닌 material_version_id 경로만 사용, 복원 bytes size·sha256 재검증(불일치→SnapshotIntegrityError로 생성 중단), 임시파일 atomic rename, raw/ stale 정리.
+- provisioning 경쟁(§9): 동시 slug INSERT 충돌 시 unique_violation 재판정(멤버면 반환, 아니면 Conflict). 일반 예외로 기존 병원 반환 안 함.
 
-질문: (a) P2-1 재현 모델(material_versions + job이 material_version_id 결착 + materialize_job_snapshot)이 "과거 원본 완전 재현" 요건을 충족하는지. (b) generation_job_materials.material_version_id를 실제 FK로 걸어야 하는지(현재는 컬럼만, 버전은 불변이라 dangling 없음). (c) 다음 단계로 service 계층 추출→/studio 은퇴로 가도 되는지, 아니면 그 전에 승인 흐름(작성자≠승인자·승인후 변경시 자동해제)·실행 job PG 원자적 획득을 먼저 볼지.</textarea>
+아직 안 한 것(권고 인지, 다음에): job 병렬 여부 정책(부분 유니크 인덱스 vs job별 디렉터리), heartbeat/stale 재시도, materials soft delete(현재 ON DELETE SET NULL), 개인정보 삭제의무 vs immutable 충돌(R2 전 결정), bytea 용량 모니터링→R2/S3.
+
+질문: (a) 이 관문(복합FK+봉인+원자획득+복원검증)이 "P2-1 데이터 무결성 완전히 닫음" 기준을 충족하는지. (b) 이제 service 계층 추출→대시보드 직접 렌더→/studio 은퇴로 진행해도 되는지. (c) service 착수 순서에서 edit 이전을 먼저 할지, 아니면 승인 무결성 정책 확정을 더 앞에 둘지. (d) job 병렬 실행을 허용할 계획인지(부분 유니크로 병원당 1 job 강제할지) 결정 필요 — 방향 지정 바람.</textarea>
 </div>
 <script>
   function copyGpt(){var t=document.getElementById('gpt'),b=document.querySelector('.copy');

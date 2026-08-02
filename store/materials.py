@@ -7,6 +7,7 @@
 비파괴 additive. app_rw + tenant_conn(RLS).
 """
 import io, os, hashlib, uuid, mimetypes
+import json as _json
 from sqlalchemy import text
 from store.repositories import tenant_conn
 
@@ -183,12 +184,13 @@ _GJM_INTEGRITY = [
 # 스냅샷 봉인: job이 pending 벗어나면 gjm 변경(INSERT/UPDATE/DELETE) 금지 → 과거 입력 구성 위변조 차단.
 _SEAL = """
 CREATE OR REPLACE FUNCTION public.fn_seal_job_materials() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE v_status text; v_jid uuid;
+DECLARE v_status text; v_sealed timestamptz; v_jid uuid;
 BEGIN
   v_jid := CASE WHEN TG_OP = 'DELETE' THEN OLD.job_id ELSE NEW.job_id END;
-  SELECT status INTO v_status FROM generation_jobs WHERE id = v_jid;
-  IF v_status IS NOT NULL AND v_status <> 'pending' THEN
-    RAISE EXCEPTION 'job 스냅샷은 pending 이후 변경 불가(sealed, status=%)', v_status USING ERRCODE = '0A000';
+  SELECT status, material_snapshot_at INTO v_status, v_sealed FROM generation_jobs WHERE id = v_jid;
+  -- 봉인 완료(material_snapshot_at) 또는 pending 이탈 후에는 스냅샷 변경 금지(원자성 경쟁 차단).
+  IF v_sealed IS NOT NULL OR (v_status IS NOT NULL AND v_status <> 'pending') THEN
+    RAISE EXCEPTION 'job 스냅샷은 봉인 후 변경 불가(sealed_at=%, status=%)', v_sealed, v_status USING ERRCODE = '0A000';
   END IF;
   IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
 END $$;
@@ -216,29 +218,45 @@ def ensure_materials_schema(owner_engine):
             cn.execute(text(s))
         cn.execute(text(_SEAL))                      # 마지막: 스냅샷 봉인 트리거
 
+def _manifest_hash(rows):
+    """봉인 매니페스트 canonical SHA-256 — ordinal·버전·크기·체크섬 고정 규칙(정렬·UTF-8·무공백)."""
+    manifest = [{"ordinal": i,
+                 "material_version_id": str(r.material_version_id),
+                 "byte_size": r.size_bytes,
+                 "content_sha256": r.checksum} for i, r in enumerate(rows)]
+    canon = _json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canon.encode("utf-8")).hexdigest()
+
 def snapshot_job_materials(engine, hospital_id, job_id):
-    """생성 시점의 자료를 job에 스냅샷 결착 — 현재 버전(current_version_id)을 정확히 기록.
-    한 트랜잭션에서 INSERT..SELECT(부분 혼합 방지) + job에 스냅샷 메타(count·hash·at) 봉인.
-    반환: 스냅샷한 자료 수. 이후 파일이 바뀌어도 이 job은 당시 material_version을 가리킨다.
-    주의: job이 pending일 때만 호출(seal 트리거가 이후 변경 차단)."""
+    """생성 시점의 자료를 job에 스냅샷 봉인 — 현재 버전(current_version_id)을 정확히 기록.
+    한 트랜잭션에서: job 행 FOR UPDATE 잠금 → INSERT..SELECT(부분혼합 방지) → count·SHA256 manifest·
+    material_snapshot_at 기록(봉인). 잠금+봉인시각으로 봉인 원자성 보장(경쟁 GJM 변경 차단).
+    이미 봉인된 job이면 None 반환(재호출 무해). 반환: 스냅샷한 자료 수."""
     with tenant_conn(engine, hospital_id) as cn:
+        locked = cn.execute(text(
+            "select material_snapshot_at, status from generation_jobs "
+            "where id=:j and hospital_id=:h for update"),
+            {"j": job_id, "h": hospital_id}).first()
+        if locked is None:
+            raise ValueError("스냅샷 대상 job 없음")
+        if locked.material_snapshot_at is not None:
+            return None                    # 이미 봉인됨
+        if locked.status != "pending":
+            raise ValueError(f"스냅샷은 pending에서만 봉인 가능(현재 {locked.status})")
         r = cn.execute(text(
             "insert into generation_job_materials"
             "(id,hospital_id,job_id,material_id,material_version_id,filename,checksum,size_bytes) "
             "select gen_random_uuid(), :h, :j, id, current_version_id, filename, checksum, size_bytes "
             "from materials where hospital_id=:h and current_version_id is not null"),
             {"h": hospital_id, "j": job_id})
-        # 스냅샷 매니페스트 해시(파일명+체크섬 정렬 결합) → 이후 변경 없음을 검증 가능
+        rows = cn.execute(text(
+            "select material_version_id, size_bytes, checksum from generation_job_materials "
+            "where job_id=:j order by filename, material_version_id::text"),
+            {"j": job_id}).all()
         cn.execute(text(
-            "update generation_jobs set "
-            "material_snapshot_count = (select count(*) from generation_job_materials where job_id=:j), "
-            "material_snapshot_hash = (select md5(coalesce(string_agg("
-            "  filename||':'||coalesce(checksum,'')||':'||material_version_id::text, '|' "
-            "  order by filename, material_version_id::text),'')) "
-            "  from generation_job_materials where job_id=:j), "
-            "material_snapshot_at = now() "
-            "where id=:j and hospital_id=:h"),
-            {"h": hospital_id, "j": job_id})
+            "update generation_jobs set material_snapshot_count=:c, material_snapshot_hash=:hh, "
+            "material_snapshot_at=now() where id=:j and hospital_id=:h"),
+            {"c": len(rows), "hh": _manifest_hash(rows), "j": job_id, "h": hospital_id})
         return r.rowcount
 
 def save_material(engine, hospital_id, filename, raw, mime=None, created_by=None):
