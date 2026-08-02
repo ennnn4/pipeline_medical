@@ -85,6 +85,9 @@ def test_advisory_lock_blocks_content_during_approval(owner, rw, tenant):
 def test_rls_apply_idempotent(owner):
     """rls_sql.apply()를 두 번 실행해도 실패하지 않음(정책/함수/트리거 재적용)."""
     R.apply(owner)                                         # base_url이 이미 1회, 여기서 2회째
+    # R.apply는 fn_approve_version을 rls_sql 기본형으로 되돌리므로, 이후 테스트를 위해 Step4 함수 복원
+    from store.approval_fns import ensure_approval_fns
+    ensure_approval_fns(owner)
 
 # ── lease (owner/마이그레이션 role) ──
 def _pending(owner, h):

@@ -22,7 +22,7 @@ CREATE OR REPLACE FUNCTION public.fn_approve_core(
   p_mode text, p_reason text)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE v_approver uuid; v_hospital uuid; v_script uuid; v_creator uuid; v_source text; v_current uuid;
-        v_status text; v_is_admin boolean; v_allow_self boolean; v_action text; v_legacy boolean; v_snap jsonb;
+        v_status text; v_is_admin boolean; v_allow_self boolean; v_action text; v_legacy boolean; v_snap jsonb; v_event uuid;
 BEGIN
   v_approver := NULLIF(current_setting('app.membership_id', true), '')::uuid;
   v_hospital := NULLIF(current_setting('app.hospital_id', true), '')::uuid;
@@ -99,9 +99,12 @@ BEGIN
   FROM public.claims c LEFT JOIN public.claim_effective_assessment e
     ON e.hospital_id=c.hospital_id AND e.claim_id=c.id
   WHERE c.hospital_id=p_hospital AND c.version_id=p_version;
+  v_event := gen_random_uuid();   -- 함수에서 생성(RETURNING 불필요 → audit SELECT 권한 요구 회피)
   INSERT INTO public.audit_events(id,hospital_id,actor_membership_id,action,entity_type,entity_id,after_hash,metadata,request_id)
-    VALUES(gen_random_uuid(), p_hospital, v_approver, v_action, 'version', p_version, p_assessment_hash, v_snap,
+    VALUES(v_event, p_hospital, v_approver, v_action, 'version', p_version, p_assessment_hash, v_snap,
            NULLIF(current_setting('app.request_id', true), ''));
+  UPDATE public.version_approval_states SET approval_event_id=v_event
+    WHERE hospital_id=p_hospital AND version_id=p_version;   -- 승인 사건 결착(추적성)
 END $$;
 """.replace("__ROLE_APPROVER__", _ROLE_ACTIVE.format(m="v_approver", roles="'approver','admin'")) \
    .replace("__ROLE_ADMIN__", _ROLE_ACTIVE.format(m="v_approver", roles="'admin'"))

@@ -345,6 +345,8 @@ version_approval_states = Table(
     Column("revoked_by_membership_id", UUID(as_uuid=True)),
     Column("revoked_at", TIMESTAMP(timezone=True)),
     Column("revoke_reason", Text),
+    # 승인 사건 결착(GPT export 추적성) — 승인 시 audit_events.id를 결착(추측 검색 금지)
+    Column("approval_event_id", UUID(as_uuid=True)),
     ts("updated_at"),
     ForeignKeyConstraint(["hospital_id", "version_id"], ["script_versions.hospital_id", "script_versions.id"],
                          name="fk_approval_states_version"),

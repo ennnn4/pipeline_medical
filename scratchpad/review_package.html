@@ -1,129 +1,90 @@
-<title>본큐어 파이프라인 — service 추출 완료(0–6)</title>
+<title>본큐어 파이프라인 — GPT P0 정리 + P1 착수</title>
 <style>
-  :root{
-    --bg:#f6f7f9; --card:#fff; --ink:#0b1524; --muted:#5b6b7f; --line:#e6e9ef;
-    --brand:#1b64f2; --brand-soft:#e8f0fe; --ok:#0f9d58; --ok-soft:#e6f4ea;
-    --warn:#b8860b; --warn-soft:#fbf3dd; --code:#0d1b2a; --code-ink:#d7e3f4;
-    --mono:'SFMono-Regular',ui-monospace,'Cascadia Code',Consolas,monospace;
-    --sans:-apple-system,BlinkMacSystemFont,'Segoe UI','Malgun Gothic',sans-serif;
-  }
-  @media (prefers-color-scheme:dark){
-    :root{--bg:#0b0f16;--card:#131a24;--ink:#eaf0f7;--muted:#9aabc0;--line:#243040;
-      --brand:#5b8dff;--brand-soft:#16233a;--ok:#3ecf8e;--ok-soft:#12251c;
-      --warn:#e0b34d;--warn-soft:#2a2413;--code:#0a0f16;--code-ink:#cfe0f5;}
-  }
-  :root[data-theme=dark]{--bg:#0b0f16;--card:#131a24;--ink:#eaf0f7;--muted:#9aabc0;--line:#243040;
-    --brand:#5b8dff;--brand-soft:#16233a;--ok:#3ecf8e;--ok-soft:#12251c;--warn:#e0b34d;--warn-soft:#2a2413;--code:#0a0f16;--code-ink:#cfe0f5;}
-  :root[data-theme=light]{--bg:#f6f7f9;--card:#fff;--ink:#0b1524;--muted:#5b6b7f;--line:#e6e9ef;
-    --brand:#1b64f2;--brand-soft:#e8f0fe;--ok:#0f9d58;--ok-soft:#e6f4ea;--warn:#b8860b;--warn-soft:#fbf3dd;--code:#0d1b2a;--code-ink:#d7e3f4;}
+  :root{--bg:#f6f7f9;--card:#fff;--ink:#0b1524;--muted:#5b6b7f;--line:#e6e9ef;--brand:#1b64f2;--brand-soft:#e8f0fe;
+    --ok:#0f9d58;--ok-soft:#e6f4ea;--warn:#b8860b;--warn-soft:#fbf3dd;
+    --mono:'SFMono-Regular',ui-monospace,Consolas,monospace;--sans:-apple-system,BlinkMacSystemFont,'Segoe UI','Malgun Gothic',sans-serif}
+  @media (prefers-color-scheme:dark){:root{--bg:#0b0f16;--card:#131a24;--ink:#eaf0f7;--muted:#9aabc0;--line:#243040;
+    --brand:#5b8dff;--brand-soft:#16233a;--ok:#3ecf8e;--ok-soft:#12251c;--warn:#e0b34d;--warn-soft:#2a2413}}
+  :root[data-theme=dark]{--bg:#0b0f16;--card:#131a24;--ink:#eaf0f7;--muted:#9aabc0;--line:#243040;--brand:#5b8dff;
+    --brand-soft:#16233a;--ok:#3ecf8e;--ok-soft:#12251c;--warn:#e0b34d;--warn-soft:#2a2413}
+  :root[data-theme=light]{--bg:#f6f7f9;--card:#fff;--ink:#0b1524;--muted:#5b6b7f;--line:#e6e9ef;--brand:#1b64f2;
+    --brand-soft:#e8f0fe;--ok:#0f9d58;--ok-soft:#e6f4ea;--warn:#b8860b;--warn-soft:#fbf3dd}
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.6;-webkit-text-size-adjust:100%}
-  .wrap{max-width:760px;margin:0 auto;padding:20px 16px 72px}
-  header.hd{padding:8px 2px 18px}
+  .wrap{max-width:760px;margin:0 auto;padding:20px 16px 40px}
   .eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--brand);font-weight:700}
-  h1{font-size:25px;line-height:1.25;margin:.35em 0 .15em;text-wrap:balance}
+  h1{font-size:24px;line-height:1.25;margin:.35em 0 .15em;text-wrap:balance}
   .sub{color:var(--muted);font-size:15px}
   .status{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 4px}
   .chip{font-size:12.5px;font-weight:600;padding:5px 11px;border-radius:999px;border:1px solid var(--line)}
   .chip.ok{background:var(--ok-soft);color:var(--ok);border-color:transparent}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 16px;margin:14px 0;box-shadow:0 1px 2px rgba(10,20,40,.04)}
-  h2{font-size:17px;margin:2px 0 10px;display:flex;align-items:center;gap:9px}
-  h2 .n{flex:none;min-width:26px;height:26px;padding:0 7px;border-radius:8px;background:var(--brand-soft);color:var(--brand);font-size:12px;font-weight:800;display:grid;place-items:center}
-  .row{display:flex;gap:10px;padding:9px 0;border-top:1px solid var(--line)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin:14px 0;box-shadow:0 1px 2px rgba(10,20,40,.04)}
+  h2{font-size:16px;margin:2px 0 10px;display:flex;align-items:center;gap:9px}
+  h2 .n{flex:none;min-width:24px;height:24px;padding:0 6px;border-radius:7px;background:var(--brand-soft);color:var(--brand);font-size:11.5px;font-weight:800;display:grid;place-items:center}
+  .row{display:flex;gap:10px;padding:8px 0;border-top:1px solid var(--line)}
   .row:first-of-type{border-top:0}
-  .row .tag{flex:none;font-size:11px;font-weight:700;color:var(--ok);align-self:flex-start;margin-top:3px;min-width:64px}
+  .row .tag{flex:none;font-size:11px;font-weight:700;color:var(--ok);margin-top:2px;min-width:34px}
   .row .tag.todo{color:var(--warn)}
-  .row p{margin:0;font-size:14.5px}
-  .steps{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
-  .st{font-size:12px;padding:4px 9px;border-radius:8px;border:1px solid var(--line);color:var(--muted)}
-  .st.done{background:var(--ok-soft);color:var(--ok);border-color:transparent;font-weight:600}
-  .st.next{background:var(--brand-soft);color:var(--brand);border-color:transparent;font-weight:700}
+  .row p{margin:0;font-size:14px}
+  code{font-family:var(--mono);font-size:12px}
   .note{background:var(--warn-soft);border-radius:12px;padding:12px 14px;margin:14px 0;font-size:13.5px}
-  .note b{color:var(--warn)}
-  code{font-family:var(--mono);font-size:12.5px}
-  .copybar{position:sticky;bottom:0;margin:22px -16px -72px;padding:14px 16px calc(14px + env(safe-area-inset-bottom));background:linear-gradient(to top,var(--bg) 70%,transparent);display:flex;gap:10px}
+  .gpthint{font-size:12.5px;color:var(--muted);margin:16px 2px 6px}
+  textarea#gpt{width:100%;height:210px;box-sizing:border-box;border:1px solid var(--line);border-radius:12px;
+    background:var(--card);color:var(--ink);font-family:var(--mono);font-size:12px;line-height:1.5;padding:12px;user-select:text;-webkit-user-select:text;resize:vertical}
   button.copy{width:100%;margin-top:12px;border:0;border-radius:12px;background:var(--brand);color:#fff;font-weight:700;font-size:15px;padding:14px;cursor:pointer;font-family:var(--sans)}
   button.copy:active{transform:translateY(1px)}
-  .foot{color:var(--muted);font-size:12.5px;text-align:center;margin-top:18px}
-  .gpthint{font-size:12.5px;color:var(--muted);margin:10px 2px 6px}
-  textarea#gpt{width:100%;height:200px;box-sizing:border-box;border:1px solid var(--line);border-radius:12px;
-    background:var(--card);color:var(--ink);font-family:var(--mono);font-size:12px;line-height:1.5;padding:12px;
-    -webkit-user-select:text;user-select:text;resize:vertical}
-  .copied{color:var(--ok);font-weight:700}
+  .copied{background:var(--ok)!important}
+  .foot{color:var(--muted);font-size:12.5px;text-align:center;margin-top:16px}
 </style>
 
 <div class="wrap">
-  <header class="hd">
-    <div class="eyebrow">본큐어 파이프라인 · service 추출</div>
-    <h1>service 추출 기능 완료 (0–6)</h1>
-    <div class="sub">모든 업무 규칙이 공통 service로 이동했고, 두 UI가 같은 service를 씁니다. 남은 것은 /studio 물리 은퇴(7–9)뿐입니다.</div>
-    <div class="status">
-      <span class="chip ok">✓ 테스트 119 통과</span>
-      <span class="chip ok">✓ 전부 라이브</span>
-    </div>
-    <div class="steps">
-      <span class="st done">0 계약</span><span class="st done">1 query</span><span class="st done">2 edit</span>
-      <span class="st done">3 evidence</span><span class="st done">4 approval</span><span class="st done">4 export gate</span>
-      <span class="st done">5 image</span><span class="st done">6 검증</span>
-      <span class="st next">7 대시보드 직접렌더</span><span class="st">8 parity</span><span class="st">9 /studio 은퇴</span>
-    </div>
-  </header>
+  <div class="eyebrow">본큐어 파이프라인 · GPT 우선순위 실행</div>
+  <h1>GPT P0 정리 + P1 착수</h1>
+  <div class="sub">Step 0–6 승인 후, /studio 물리 은퇴보다 먼저 닫으라고 한 무결성 항목(P0)을 모두 처리하고 P1로 넘어갔습니다.</div>
+  <div class="status"><span class="chip ok">✓ 테스트 121 통과</span><span class="chip ok">✓ 전부 라이브</span></div>
 
   <div class="card">
-    <h2><span class="n">✓</span>추출된 service 8개</h2>
-    <div class="row"><span class="tag">계약</span><p><code>exceptions</code>(타입예외+SQLSTATE) · <code>context</code>(ActorContext 서버결정) · <code>permissions</code>(역할).</p></div>
-    <div class="row"><span class="tag">쓰기</span><p><code>scripts</code>(edit) · <code>evidence</code>(assess) · <code>approvals</code>(approve/self/reject/revoke) · <code>images</code>(regen) · <code>exports</code>(gate).</p></div>
-    <div class="row"><span class="tag">라우트</span><p>/studio·/api 모든 상태변경 라우트 = 파싱 + ctx resolve + service + 예외매핑만. 직접 SQL·역할판정·상태전이·승인조건 0. <code>_require_role</code> 제거.</p></div>
+    <h2><span class="n">P0</span>무결성 3건 — 완료</h2>
+    <div class="row"><span class="tag">①</span><p><b>provenance 재강화.</b> 대시보드 생성이 요청자 membership을 <code>create_job</code>에 전달 → ai version <code>created_by</code> 기록. CHECK 구조 강화(ai=반드시 job, editor/migration=job 없음). <small style="color:var(--muted)">created_by를 DB CHECK로도 강제할지는 확인 요청.</small></p></div>
+    <div class="row"><span class="tag">②</span><p><b>사람 판정 전용 함수.</b> <code>fn_add_human_assessment</code>(definer)만 INSERT — capability(waive/na=admin) DB 재검증. <code>REVOKE INSERT ON claim_assessments FROM app_rw</code>로 우회 차단.</p></div>
+    <div class="row"><span class="tag">③</span><p><b>materials 삭제.</b> hard delete는 라우트 미노출 + material_versions는 freeze·스냅샷 RESTRICT라 재현 이미 안전 → soft-delete UI는 P1로.</p></div>
   </div>
 
   <div class="card">
-    <h2><span class="n">4</span>export gate + 5 image</h2>
-    <div class="row"><span class="tag">export</span><p><code>prepare_export</code>: 짧은 TX(scripts FOR UPDATE + current==requested + approved) → immutable payload. 비-current·미승인·철회는 각각 차단. /studio에 승인/반려/철회/export 버튼(상태별).</p></div>
-    <div class="row"><span class="tag">image</span><p><code>regenerate_scene</code>: 권한+피드백 프롬프트+영속 갱신, OpenAI는 TX 밖. 정책: 이미지는 (hospital,block_key) 버전독립 → 대본 승인과 별개 축.</p></div>
+    <h2><span class="n">P1</span>착수</h2>
+    <div class="row"><span class="tag">④</span><p><b>gate snapshot.</b> 승인 시 <code>audit_events.metadata</code>에 판정 분포(accepted/waived/not_applicable/legacy_auto)+정책+해시 기록.</p></div>
+    <div class="row"><span class="tag">⑤</span><p><b>stale 회수 안전.</b> <code>reap_stale</code>이 worker_token 무효화(늦은 워커 차단)+generated 포함. (자동 heartbeat+job별 디렉터리는 run.py 리팩터로 후속.)</p></div>
   </div>
 
   <div class="card">
-    <h2><span class="n">▲</span>남은 Step 7–9 (/studio 물리 은퇴)</h2>
-    <div class="row"><span class="tag todo">7 렌더</span><p>대시보드가 <code>/scripts/&lt;id&gt;/{edit,evidence,approval,images,versions}</code>를 직접 렌더(현재는 /studio로 리다이렉트).</p></div>
-    <div class="row"><span class="tag todo">8 parity</span><p>기능별 parity + 전체 E2E(권한·상태전이·audit·오류 rollback 동일).</p></div>
-    <div class="row"><span class="tag todo">9 은퇴</span><p>/studio 302 리다이렉트 → 관찰 → DispatcherMiddleware·별도 studio app 제거.</p></div>
+    <h2><span class="n">▲</span>남은 것</h2>
+    <div class="row"><span class="tag todo">P1</span><p>heartbeat 중 run + job별 디렉터리 격리(run.py) · review_seq(비blocker).</p></div>
+    <div class="row"><span class="tag todo">P2</span><p>bytea 용량 경보 → R2/S3. Step 7–9 /studio 물리 은퇴(query service→직접렌더→parity→은퇴).</p></div>
   </div>
 
-  <div class="note">테스트 <b>119개 통과</b>. Step 0–6 전부 라이브. <b>현재 /studio는 이미 대시보드 디자인 + 단일 로그인 + 공통 service</b>라 사용자 경험은 통합됨 — 은퇴는 아키텍처 정리(두 Flask 앱 → 하나).</div>
+  <div class="note">테스트 <b>121개 통과</b>, GPT P0 전부 라이브. UX는 이미 통합(/studio=대시보드 디자인+단일 로그인+공통 service).</div>
 
   <div class="gpthint">아래 상자를 눌러 전체 선택 후 복사하거나, 버튼을 누르세요.</div>
-  <textarea id="gpt" readonly onclick="this.focus();this.select();">[본큐어 파이프라인 — service 추출 기능 완료(0–6) 검토 + Step7–9 방향]
+  <textarea id="gpt" readonly onclick="this.focus();this.select();">[본큐어 파이프라인 — GPT P0 정리 + P1 착수, 다음 우선순위 확인]
 
-배경: service 추출을 기능적으로 완료. 119 tests green, 전부 라이브.
+배경: Step 0–6 승인 후 지정한 무결성 P0를 모두 처리. 121 tests green, 전부 라이브.
 
-추출된 service(services/*.py):
-- exceptions(타입예외 9종+SQLSTATE→예외: P2013/P2014/P2015/42501/23514/P0002), context(ActorContext.resolve—hospital·membership·roles 서버 결정), permissions(역할 게이트).
-- scripts.edit_blocks(권한+변경필터+apply_block_edit 단일TX+미지 블록 NotFound).
-- evidence.assess_claim(명시 version_id·current 재검사·approved/revoked 동결·claim 소속·잠금순서·human_decision accepted/rejected/waived/not_applicable·waive/na는 admin+사유).
-- approvals: approve(정상)·self_approve·reject·revoke. DB definer 함수(fn_approve_core private + wrapper)가 작성자≠승인자·current·상태전이·evidence gate 강제. GPT 검토 반영(잠금순서 scripts→approval state→advisory, legacy=migration 한정, revoke 상태행 기록, pg_temp, REVOKE CREATE ON public).
-- exports.prepare_export(export gate: 짧은TX scripts FOR UPDATE+current==requested+approved→immutable payload{version_id,content_hash,assessment_hash,approved_at,blocks}; 비-current→VersionConflict·미승인→ApprovalPrerequisiteFailed·철회→InvalidStateTransition; 파일생성은 lock 밖). publication_jobs는 실제 외부게시 붙일 때.
-- images.regenerate_scene(권한+피드백 프롬프트+scene_images 영속, OpenAI는 TX밖+생성기 주입). 정책: 이미지는 (hospital,block_key) 버전독립→대본 승인과 별개축.
+P0 완료:
+① provenance 재강화: 대시보드 생성이 세션 user→membership을 create_job에 전달(run_ep 요청 컨텍스트에서 해석 후 스레드로) → ingest_content가 ai version created_by=요청자 기록. provenance CHECK 구조 강화(NOT VALID): source='ai'→generation_job_id 필수, editor/migration→job 없음. created_by NOT NULL을 DB CHECK로도 강제하려 했으나 test/시스템 생성 경로가 membership 없이 version을 만드는 경우가 많아 광범위하게 깨져서, created_by는 코드가 기록(대시보드 요청자·편집 GUC)하고 DB CHECK는 job 구조만 강제로 두었음.
+② 사람판정 전용 함수: fn_add_human_assessment(SECURITY DEFINER, app_owner). capability를 DB가 재검증(waive/not_applicable=admin, accepted/rejected=approver/admin), reason 필수(rejected/waived/not_applicable), claim 소속·승인/철회 version 동결(P2013) 재확인. REVOKE INSERT ON claim_assessments FROM app_rw → 사람판정은 이 함수로만. evidence service가 함수 경유. (전용 함수가 실제 membership_roles를 검증하므로 테스트도 DB에 역할 부여하게 수정.)
+③ materials 삭제: delete_material은 어떤 라우트에도 미연결(테스트만). material_versions는 freeze 트리거로 삭제 불가 + generation_job_materials가 material_version_id를 RESTRICT로 참조 → 재현성 이미 보호됨. soft-delete UI는 미노출이라 P1로 하향.
 
-Step6 검증: /studio 모든 상태변경 라우트가 service 경유(직접 SQL·역할판정·상태전이·승인조건 0), _require_role 제거(권한 services/permissions 일원화). 남은 tenant() 직접사용은 읽기 라우트(버전페이지 렌더·이미지서빙·diff·get_version)뿐.
+P1 착수:
+④ gate snapshot: audit_events.metadata jsonb 추가. fn_approve_core가 승인 시 gate_policy·mode·legacy_allowed·claim_count·accepted·waived·not_applicable·legacy_auto·content_hash·assessment_hash 기록.
+⑤ stale 안전(부분): reap_stale이 worker_token=null 무효화(늦은 워커의 늦은 상태전이/적재 차단)+회수 대상에 'generated' 추가. 자동 heartbeat 중 run + job별 디렉터리 격리는 run.py 리팩터로 후속(GPT가 auto-lease 전 job-dir 선행 요구한 것 반영 예정).
 
-UI: /studio 버전페이지에 승인/반려(사유)/철회(사유)/export 버튼 상태별 노출.
+남은 것: P1(heartbeat 중 run+job디렉터리, review_seq) · P2(bytea 경보→R2/S3, Step7-9 /studio 물리 은퇴).
 
-남은 Step7-9(/studio 물리 은퇴): 7=대시보드가 /scripts/<id>/{edit,evidence,approval,images,versions} 직접 렌더(현재는 /studio 리다이렉트), 8=기능별 parity+E2E, 9=/studio 302→관찰→DispatcherMiddleware+별도 studio app 제거. 현재 /studio는 이미 대시보드 디자인+단일로그인+공통service라 UX는 통합됨(은퇴는 두 Flask앱→하나 정리).
-
-질문: (a) service 추출(0–6) 상태를 완료로 승인하는지 — 특히 export gate·image 정책(이미지=대본과 별개 승인축)·Step6 검증(라우트 무-업무로직). (b) Step7(대시보드 직접 렌더)를 지금 진행할지, 아니면 UX가 이미 통합됐으니 /studio를 리다이렉트 계층으로 두고 물리 은퇴는 후순위로 미룰지 — 우선순위 판단 필요(대안: 남은 운영 권고사항 heartbeat/stale lease·materials soft delete·bytea→R2/S3·provenance 강한 CHECK 재강화·gate snapshot·review_seq·waived 전용 INSERT 함수 중 무엇을 먼저). (c) Step7을 한다면 읽기 query service부터 추출해 두 UI가 렌더 데이터를 공유하게 하는 순서가 맞는지.</textarea>
-  <button class="copy" onclick="copyGpt(this)">📋 GPT용 전체 복사</button>
-  <div class="foot">본큐어 파이프라인 · service 추출 0–6 완료 · 2026-08-02</div>
+질문(결정 필요):
+(a) provenance created_by를 DB CHECK로도 NOT NULL 강제할지 — 그러려면 모든 version 생성 경로(테스트·시스템/배치 포함)가 requester membership을 항상 넘겨야 함. 시스템/스케줄 생성이 요청자 없이 가능한 정책이면 DB는 job 구조만 강제(현재)로 두는 게 맞는지.
+(b) 이미지: 현재 scene_images는 (hospital,block_key) 버전독립. GPT 권고대로 source_version_id/source_prompt_hash를 남기고 대본 장면 변경 시 기존 이미지를 stale 표시, 최종 publication gate에서만 대본+이미지 두 축 합산 — 이 순서로 지금 진행할지, 아니면 후순위인지.
+(c) export payload에 approval_event_id(=승인 audit event id)와 export_prepared_at을 추가(추적성). 지금 반영할지.
+(d) 다음 우선순위: heartbeat/stale lease 완결(+job별 디렉터리)을 먼저 할지, 아니면 이미지 축·export 추적성 같은 작은 항목을 먼저 닫고 그다음 heartbeat, 그다음 /studio 은퇴로 갈지 — 순서 지정 바람.</textarea>
+  <button class="copy" onclick="var t=document.getElementById('gpt');t.focus();t.select();try{t.setSelectionRange(0,t.value.length);}catch(e){}var b=this;var ok=function(){b.textContent='✓ 복사됨';b.classList.add('copied');setTimeout(function(){b.textContent='📋 GPT용 전체 복사';b.classList.remove('copied');},2000);};var no=function(){b.textContent='상자를 길게 눌러 복사하세요';setTimeout(function(){b.textContent='📋 GPT용 전체 복사';},2600);};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t.value).then(ok,function(){try{document.execCommand('copy')?ok():no();}catch(e){no();}});}else{try{document.execCommand('copy')?ok():no();}catch(e){no();}}">📋 GPT용 전체 복사</button>
+  <div class="foot">본큐어 파이프라인 · GPT P0 정리 + P1 · 2026-08-02</div>
 </div>
-<script>
-  function copyGpt(btn){
-    var t=document.getElementById('gpt');
-    t.focus(); t.select(); try{t.setSelectionRange(0,t.value.length);}catch(e){}
-    var done=function(){var o=btn.textContent;btn.textContent='✓ 복사됨';btn.classList.add('copied');
-      setTimeout(function(){btn.textContent=o;btn.classList.remove('copied');},2000);};
-    var fail=function(){btn.textContent='아래 상자를 길게 눌러 복사하세요';
-      setTimeout(function(){btn.textContent='📋 GPT용 전체 복사';},2600);};
-    if(navigator.clipboard&&navigator.clipboard.writeText){
-      navigator.clipboard.writeText(t.value).then(done,function(){try{document.execCommand('copy')?done():fail();}catch(e){fail();}});
-    }else{ try{document.execCommand('copy')?done():fail();}catch(e){fail();} }
-  }
-</script>

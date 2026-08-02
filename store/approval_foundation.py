@@ -18,6 +18,8 @@ STMTS = [
     "ALTER TABLE version_approval_states ADD COLUMN IF NOT EXISTS revoked_by_membership_id uuid;",
     "ALTER TABLE version_approval_states ADD COLUMN IF NOT EXISTS revoked_at timestamptz;",
     "ALTER TABLE version_approval_states ADD COLUMN IF NOT EXISTS revoke_reason text;",
+    # 승인 사건 결착(GPT export 추적성)
+    "ALTER TABLE version_approval_states ADD COLUMN IF NOT EXISTS approval_event_id uuid;",
     "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_approval_states_revoked_by') THEN "
     "ALTER TABLE version_approval_states ADD CONSTRAINT fk_approval_states_revoked_by "
     "FOREIGN KEY (hospital_id, revoked_by_membership_id) REFERENCES hospital_memberships(hospital_id, id) NOT VALID; END IF; END $$;",

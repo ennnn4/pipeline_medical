@@ -27,7 +27,8 @@ def prepare_export(engine, ctx, script_id, version_id):
         if str(sc.current_version_id) != str(vid):
             raise VersionConflict("현재 버전이 아닙니다 — 최신 승인 버전만 내보낼 수 있습니다")
         st = conn.execute(text(
-            "select status, version_content_hash, assessment_set_hash, approver_membership_id, decided_at "
+            "select status, version_content_hash, assessment_set_hash, approver_membership_id, decided_at, "
+            "approval_event_id, transaction_timestamp() as prepared_at "
             "from version_approval_states where hospital_id=:h and version_id=:v"),
             {"h": ctx.hospital_id, "v": vid}).first()
         if st is None:
@@ -44,4 +45,6 @@ def prepare_export(engine, ctx, script_id, version_id):
             "content_hash": st.version_content_hash, "assessment_hash": st.assessment_set_hash,
             "approver_membership_id": str(st.approver_membership_id) if st.approver_membership_id else None,
             "approved_at": st.decided_at.isoformat() if st.decided_at else None,
+            "approval_event_id": str(st.approval_event_id) if st.approval_event_id else None,
+            "export_prepared_at": st.prepared_at.isoformat() if st.prepared_at else None,
             "blocks": blocks}

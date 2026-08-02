@@ -130,6 +130,19 @@ if not NO_SEED:
 R.apply(eng)
 print("[rls] 역할·정책·FORCE RLS·함수·lockdown 적용")
 
+# ── 3.5) 추가 스키마·함수(P2-1~Step4) — 반드시 R.apply 이후(승인 함수는 rls_sql 기본형을 override) ──
+from store.ingest import ensure_gen_schema
+from store.materials import ensure_materials_schema
+from store.provision import ensure_provision
+from store.approval_foundation import ensure_approval_foundation
+from store.approval_fns import ensure_approval_fns
+ensure_gen_schema(eng)              # generation_jobs(+status CHECK·active 유니크·worker_token)
+ensure_materials_schema(eng)        # materials·material_versions·gjm 복합FK·seal
+ensure_provision(eng)              # fn_provision_hospital(충돌정책)
+ensure_approval_foundation(eng)    # 작성자·superseded·자기승인·waived·gate snapshot·revoke·approval_event
+ensure_approval_fns(eng)           # 승인 core+wrappers(fn_approve_version을 core 위임형으로 교체)
+print("[schema] 생성job·자료버전·승인함수·provisioning 적용(reseed 안전)")
+
 # ── 4) app_rw 실제 비밀번호 설정 ──────────────────────────
 _pw_lit = APP_RW_PASSWORD.replace("'", "''")   # ALTER ROLE는 유틸리티문(파라미터 바인딩 불가) → 안전 이스케이프 후 인라인
 with eng.begin() as cn:

@@ -17,7 +17,8 @@ def test_app_rw_cannot_insert_into_approved_version(owner, rw, tenant):
     """#4 불변 우회: 승인된 버전에 블록 추가 시도 → 동결 트리거 차단."""
     h, m = tenant["hospital_id"], tenant["membership_id"]
     with owner.begin() as cn:
-        _, v = new_version(cn, h); b = new_block(cn, h, v); s = new_sentence(cn, h, v, b); c = new_claim(cn, h, v, s)
+        sc, v = new_version(cn, h); b = new_block(cn, h, v); s = new_sentence(cn, h, v, b); c = new_claim(cn, h, v, s)
+        cn.execute(text("update scripts set current_version_id=:v where id=:s"), {"v": v, "s": sc})  # 승인 대상=current
         cn.execute(text("insert into claim_assessments(id,hospital_id,claim_id,assessment_kind,idempotency_key,"
                         "support_level,verification_status,medical_risk) values(:i,:h,:c,'automated','a','direct','verified','low')"),
                    {"i": uuid.uuid4(), "h": h, "c": c})

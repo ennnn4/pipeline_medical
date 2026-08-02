@@ -47,6 +47,12 @@ def test_export_ok_when_current_approved(rw, owner, tenant):
     ap.approve(rw, _ctx(h, m, u, {"approver"}), v)
     payload = ex.prepare_export(rw, _ctx(h, m, u, {"approver"}), sc, v)
     assert payload["version_id"] == str(v) and payload["content_hash"] and payload["blocks"]
+    # 추적성: 승인 사건 id 결착 + export 준비 시각(추측 검색 아님)
+    assert payload["approval_event_id"] and payload["export_prepared_at"]
+    with owner.connect() as cn:
+        ev_id = cn.execute(text("select approval_event_id from version_approval_states where version_id=:v"), {"v": v}).scalar()
+        act = cn.execute(text("select action from audit_events where id=:e"), {"e": ev_id}).scalar()
+    assert str(ev_id) == payload["approval_event_id"] and act == "approval.approve"
 
 
 def test_export_blocked_when_not_current(rw, owner, tenant):
