@@ -45,13 +45,16 @@ STMTS = [
     "FOREIGN KEY (hospital_id, generation_job_id) REFERENCES generation_jobs(hospital_id, id) NOT VALID; END IF; END $$;",
     "DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_versions_generation_job' AND NOT convalidated) THEN "
     "ALTER TABLE script_versions VALIDATE CONSTRAINT fk_versions_generation_job; END IF; END $$;",
-    # generation_job_id는 ai 버전만 가질 수 있다(GPT 구조 일관성, 버전 스큐 안전).
-    # 코드 버전과 무관하게 성립(과거 ai=NULL도, 신규 ai=job도 통과). editor/migration은 job 링크 없음.
-    # 작성자(created_by_membership_id) 채우기·ai→job NOT NULL 강화는 대시보드가 requester membership을
-    # 포착하고 새 코드 배포가 확정된 뒤 후속으로.
-    "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='ck_versions_provenance') THEN "
+    # source↔generation_job_id 강한 양방향 조합(GPT 재강화, 구조적). NOT VALID(신규 INSERT만 강제).
+    #  ai        = 반드시 job 링크(생성 출처)      editor/migration = job 없음
+    # created_by(요청자/편집자) 채우기는 코드 책임: 대시보드 생성은 requester membership을 create_job에
+    # 전달(→ai created_by), 편집은 GUC로 기록. created_by NOT NULL을 DB CHECK로도 강제할지는 GPT 확인
+    # (시스템/배치 생성이 요청자 없이 가능한지 정책 결정 후) — 현재는 구조(job)만 DB 강제.
+    "ALTER TABLE script_versions DROP CONSTRAINT IF EXISTS ck_versions_provenance;",
     "ALTER TABLE script_versions ADD CONSTRAINT ck_versions_provenance CHECK ("
-    "generation_job_id IS NULL OR source='ai') NOT VALID; END IF; END $$;",
+    "(source='editor' AND generation_job_id IS NULL) OR "
+    "(source='ai' AND generation_job_id IS NOT NULL) OR "
+    "(source='migration' AND generation_job_id IS NULL)) NOT VALID;",
     # 사람 결정 축(waived 모델, GPT) — verification_status(검증결과)와 분리. automated는 NULL.
     "ALTER TABLE claim_assessments ADD COLUMN IF NOT EXISTS human_decision text;",
     "ALTER TABLE claim_assessments ADD COLUMN IF NOT EXISTS decision_reason text;",

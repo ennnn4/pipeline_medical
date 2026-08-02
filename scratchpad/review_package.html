@@ -1,4 +1,4 @@
-<title>본큐어 파이프라인 — Step 4 승인 함수</title>
+<title>본큐어 파이프라인 — service 추출 완료(0–6)</title>
 <style>
   :root{
     --bg:#f6f7f9; --card:#fff; --ink:#0b1524; --muted:#5b6b7f; --line:#e6e9ef;
@@ -26,111 +26,104 @@
   .status{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 4px}
   .chip{font-size:12.5px;font-weight:600;padding:5px 11px;border-radius:999px;border:1px solid var(--line)}
   .chip.ok{background:var(--ok-soft);color:var(--ok);border-color:transparent}
-  .chip.brand{background:var(--brand-soft);color:var(--brand);border-color:transparent}
   .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 16px;margin:14px 0;box-shadow:0 1px 2px rgba(10,20,40,.04)}
   h2{font-size:17px;margin:2px 0 10px;display:flex;align-items:center;gap:9px}
   h2 .n{flex:none;min-width:26px;height:26px;padding:0 7px;border-radius:8px;background:var(--brand-soft);color:var(--brand);font-size:12px;font-weight:800;display:grid;place-items:center}
   .row{display:flex;gap:10px;padding:9px 0;border-top:1px solid var(--line)}
   .row:first-of-type{border-top:0}
-  .row .tag{flex:none;font-size:11px;font-weight:700;color:var(--ok);align-self:flex-start;margin-top:3px;min-width:58px}
+  .row .tag{flex:none;font-size:11px;font-weight:700;color:var(--ok);align-self:flex-start;margin-top:3px;min-width:64px}
   .row .tag.todo{color:var(--warn)}
   .row p{margin:0;font-size:14.5px}
-  .row small{color:var(--muted);display:block;font-size:12.5px;margin-top:2px}
-  pre{background:var(--code);color:var(--code-ink);border-radius:12px;padding:13px;overflow-x:auto;font-family:var(--mono);font-size:11.5px;line-height:1.55;margin:10px 0 0}
   .steps{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
   .st{font-size:12px;padding:4px 9px;border-radius:8px;border:1px solid var(--line);color:var(--muted)}
   .st.done{background:var(--ok-soft);color:var(--ok);border-color:transparent;font-weight:600}
   .st.next{background:var(--brand-soft);color:var(--brand);border-color:transparent;font-weight:700}
   .note{background:var(--warn-soft);border-radius:12px;padding:12px 14px;margin:14px 0;font-size:13.5px}
   .note b{color:var(--warn)}
+  code{font-family:var(--mono);font-size:12.5px}
   .copybar{position:sticky;bottom:0;margin:22px -16px -72px;padding:14px 16px calc(14px + env(safe-area-inset-bottom));background:linear-gradient(to top,var(--bg) 70%,transparent);display:flex;gap:10px}
-  button.copy{flex:1;border:0;border-radius:12px;background:var(--brand);color:#fff;font-weight:700;font-size:15px;padding:14px;cursor:pointer;font-family:var(--sans)}
+  button.copy{width:100%;margin-top:12px;border:0;border-radius:12px;background:var(--brand);color:#fff;font-weight:700;font-size:15px;padding:14px;cursor:pointer;font-family:var(--sans)}
   button.copy:active{transform:translateY(1px)}
   .foot{color:var(--muted);font-size:12.5px;text-align:center;margin-top:18px}
-  textarea#gpt{position:absolute;left:-9999px;top:-9999px}
+  .gpthint{font-size:12.5px;color:var(--muted);margin:10px 2px 6px}
+  textarea#gpt{width:100%;height:200px;box-sizing:border-box;border:1px solid var(--line);border-radius:12px;
+    background:var(--card);color:var(--ink);font-family:var(--mono);font-size:12px;line-height:1.5;padding:12px;
+    -webkit-user-select:text;user-select:text;resize:vertical}
+  .copied{color:var(--ok);font-weight:700}
 </style>
 
 <div class="wrap">
   <header class="hd">
     <div class="eyebrow">본큐어 파이프라인 · service 추출</div>
-    <h1>Step 4 승인 함수 (핵심)</h1>
-    <div class="sub">가장 보안-민감한 승인 게이트를 전략대로 닫았습니다. private core + 4개 wrapper로, 라우트가 아니라 DB definer 함수가 모든 규칙을 강제합니다.</div>
+    <h1>service 추출 기능 완료 (0–6)</h1>
+    <div class="sub">모든 업무 규칙이 공통 service로 이동했고, 두 UI가 같은 service를 씁니다. 남은 것은 /studio 물리 은퇴(7–9)뿐입니다.</div>
     <div class="status">
-      <span class="chip ok">✓ 테스트 110 통과</span>
-      <span class="chip ok">✓ 라이브 함수 5개</span>
+      <span class="chip ok">✓ 테스트 119 통과</span>
+      <span class="chip ok">✓ 전부 라이브</span>
     </div>
     <div class="steps">
-      <span class="st done">0–3 계약·edit·evidence</span><span class="st done">2.5 승인기반</span>
-      <span class="st done">SQLSTATE</span><span class="st done">waived</span><span class="st next">4 approval core</span>
-      <span class="st">4 export gate</span><span class="st">5 image</span><span class="st">6–9 /studio 은퇴</span>
+      <span class="st done">0 계약</span><span class="st done">1 query</span><span class="st done">2 edit</span>
+      <span class="st done">3 evidence</span><span class="st done">4 approval</span><span class="st done">4 export gate</span>
+      <span class="st done">5 image</span><span class="st done">6 검증</span>
+      <span class="st next">7 대시보드 직접렌더</span><span class="st">8 parity</span><span class="st">9 /studio 은퇴</span>
     </div>
   </header>
 
   <div class="card">
-    <h2><span class="n">core</span>fn_approve_core (private)</h2>
-    <div class="row"><span class="tag">잠금</span><p>scripts FOR UPDATE → version_approval_states FOR UPDATE (편집·검수·승인 직렬화) + advisory lock(freeze 트리거와 공유).</p></div>
-    <div class="row"><span class="tag">inv2</span><p><code>current_version_id == target</code> 아니면 <code>P2015</code>(VersionConflict). 상태 none/pending 아니면 <code>P2013</code>.</p></div>
-    <div class="row"><span class="tag">inv11</span><p>작성자==승인자면 차단(42501). 자기승인은 별도 경로만.</p></div>
-    <div class="row"><span class="tag">gate</span><p>claim별 최신 effective <code>human_decision</code>: accepted+verified / waived / not_applicable (레거시 automated verified 허용). 하나라도 미충족이면 <code>23514</code>.</p></div>
-    <div class="row"><span class="tag">app_rw</span><p>core는 app_rw 직접 실행 불가. wrapper만 EXECUTE.</p></div>
+    <h2><span class="n">✓</span>추출된 service 8개</h2>
+    <div class="row"><span class="tag">계약</span><p><code>exceptions</code>(타입예외+SQLSTATE) · <code>context</code>(ActorContext 서버결정) · <code>permissions</code>(역할).</p></div>
+    <div class="row"><span class="tag">쓰기</span><p><code>scripts</code>(edit) · <code>evidence</code>(assess) · <code>approvals</code>(approve/self/reject/revoke) · <code>images</code>(regen) · <code>exports</code>(gate).</p></div>
+    <div class="row"><span class="tag">라우트</span><p>/studio·/api 모든 상태변경 라우트 = 파싱 + ctx resolve + service + 예외매핑만. 직접 SQL·역할판정·상태전이·승인조건 0. <code>_require_role</code> 제거.</p></div>
   </div>
 
   <div class="card">
-    <h2><span class="n">4</span>wrapper 4개</h2>
-    <div class="row"><span class="tag">approve</span><p><code>fn_approve_version</code>(mode=normal, 기존 signature 유지). 정상 승인.</p></div>
-    <div class="row"><span class="tag">self</span><p><code>fn_self_approve_version</code>(creator==actor + <code>allow_self_approval</code> + admin + 사유, audit 'approval.self_approve').</p></div>
-    <div class="row"><span class="tag">reject</span><p><code>fn_reject_version</code>(current·none/pending·사유→rejected).</p></div>
-    <div class="row"><span class="tag">revoke</span><p><code>fn_revoke_version</code>(approved→revoked·admin·사유·<b>비-current 과거승인도 허용</b>).</p></div>
+    <h2><span class="n">4</span>export gate + 5 image</h2>
+    <div class="row"><span class="tag">export</span><p><code>prepare_export</code>: 짧은 TX(scripts FOR UPDATE + current==requested + approved) → immutable payload. 비-current·미승인·철회는 각각 차단. /studio에 승인/반려/철회/export 버튼(상태별).</p></div>
+    <div class="row"><span class="tag">image</span><p><code>regenerate_scene</code>: 권한+피드백 프롬프트+영속 갱신, OpenAI는 TX 밖. 정책: 이미지는 (hospital,block_key) 버전독립 → 대본 승인과 별개 축.</p></div>
   </div>
 
   <div class="card">
-    <h2><span class="n">▲</span>Step 4 마무리 (남음)</h2>
-    <div class="row"><span class="tag todo">export</span><p>export gate(current&approved·짧은 TX) / publish(외부게시=publication_jobs+idempotency).</p></div>
-    <div class="row"><span class="tag todo">UI</span><p>/studio 버전페이지 reject/revoke 버튼(라우트는 이미 있음).</p></div>
-    <div class="row"><span class="tag todo">audit</span><p>gate snapshot 상세(현재 assessment_hash만) · review_seq 결정적 순번(현재 created_at DESC,id DESC).</p></div>
+    <h2><span class="n">▲</span>남은 Step 7–9 (/studio 물리 은퇴)</h2>
+    <div class="row"><span class="tag todo">7 렌더</span><p>대시보드가 <code>/scripts/&lt;id&gt;/{edit,evidence,approval,images,versions}</code>를 직접 렌더(현재는 /studio로 리다이렉트).</p></div>
+    <div class="row"><span class="tag todo">8 parity</span><p>기능별 parity + 전체 E2E(권한·상태전이·audit·오류 rollback 동일).</p></div>
+    <div class="row"><span class="tag todo">9 은퇴</span><p>/studio 302 리다이렉트 → 관찰 → DispatcherMiddleware·별도 studio app 제거.</p></div>
   </div>
 
-  <div class="note">테스트 <b>110개 통과</b>(신규 승인 8: 타승인자 승인·작성자 자기승인 차단·자기승인 flag·비-current·reject 후 재승인 불가·revoke admin/approved·사유 필수). 기존 승인 테스트도 자기승인 규칙 반영해 갱신. 라이브 함수 5개 적용(fn_approve_version=core 위임 확인).</div>
+  <div class="note">테스트 <b>119개 통과</b>. Step 0–6 전부 라이브. <b>현재 /studio는 이미 대시보드 디자인 + 단일 로그인 + 공통 service</b>라 사용자 경험은 통합됨 — 은퇴는 아키텍처 정리(두 Flask 앱 → 하나).</div>
 
-  <div class="copybar"><button class="copy" onclick="copyGpt()">📋 GPT용 전체 복사</button></div>
-  <div class="foot">본큐어 파이프라인 · Step 4 승인 함수 · 2026-08-02</div>
-  <textarea id="gpt" readonly>[본큐어 파이프라인 — Step 4 승인 함수(핵심) 검토 요청]
+  <div class="gpthint">아래 상자를 눌러 전체 선택 후 복사하거나, 버튼을 누르세요.</div>
+  <textarea id="gpt" readonly onclick="this.focus();this.select();">[본큐어 파이프라인 — service 추출 기능 완료(0–6) 검토 + Step7–9 방향]
 
-배경: Step 4 전략대로 승인 게이트를 구현. 110 tests green, 라이브 함수 5개 적용.
+배경: service 추출을 기능적으로 완료. 119 tests green, 전부 라이브.
 
-store/approval_fns.py — private core + 4 wrapper(SECURITY DEFINER, app_owner 소유):
+추출된 service(services/*.py):
+- exceptions(타입예외 9종+SQLSTATE→예외: P2013/P2014/P2015/42501/23514/P0002), context(ActorContext.resolve—hospital·membership·roles 서버 결정), permissions(역할 게이트).
+- scripts.edit_blocks(권한+변경필터+apply_block_edit 단일TX+미지 블록 NotFound).
+- evidence.assess_claim(명시 version_id·current 재검사·approved/revoked 동결·claim 소속·잠금순서·human_decision accepted/rejected/waived/not_applicable·waive/na는 admin+사유).
+- approvals: approve(정상)·self_approve·reject·revoke. DB definer 함수(fn_approve_core private + wrapper)가 작성자≠승인자·current·상태전이·evidence gate 강제. GPT 검토 반영(잠금순서 scripts→approval state→advisory, legacy=migration 한정, revoke 상태행 기록, pg_temp, REVOKE CREATE ON public).
+- exports.prepare_export(export gate: 짧은TX scripts FOR UPDATE+current==requested+approved→immutable payload{version_id,content_hash,assessment_hash,approved_at,blocks}; 비-current→VersionConflict·미승인→ApprovalPrerequisiteFailed·철회→InvalidStateTransition; 파일생성은 lock 밖). publication_jobs는 실제 외부게시 붙일 때.
+- images.regenerate_scene(권한+피드백 프롬프트+scene_images 영속, OpenAI는 TX밖+생성기 주입). 정책: 이미지는 (hospital,block_key) 버전독립→대본 승인과 별개축.
 
-fn_approve_core(private, app_rw EXECUTE 없음, SET search_path=pg_catalog,public):
-1. actor= app.membership_id GUC 재검증(+hospital 일치).
-2. advisory lock(hashtextextended(version)) — freeze 트리거와 동일 lock 공유.
-3. active approver/admin role(archived 제외). v_is_admin 별도 판정.
-4. script_versions에서 script_id·created_by(작성자) 조회.
-5. scripts FOR UPDATE → current_version_id != target이면 P2015(VersionConflict).
-6. version_approval_states FOR UPDATE → status not in (none,pending)이면 P2013(InvalidStateTransition).
-7. mode=normal: 작성자==승인자면 42501(Forbidden). mode=self_override: creator==actor AND hospitals.allow_self_approval AND admin AND 사유(trim) 아니면 42501/23514, audit action='approval.self_approve'.
-8. evidence gate: 각 claim의 최신 effective assessment가 (human_decision='accepted' AND verification_status='verified') OR human_decision='waived' OR human_decision='not_applicable' OR (human_decision IS NULL AND verification_status='verified' AND support_level NOT IN (unverified,unsupported)) 중 하나여야. 아니면 23514.
-9. version_approval_states=approved + approver + hashes + policy + decided_at.
-10. audit_events(actor, action, after_hash=assessment_hash, request_id).
+Step6 검증: /studio 모든 상태변경 라우트가 service 경유(직접 SQL·역할판정·상태전이·승인조건 0), _require_role 제거(권한 services/permissions 일원화). 남은 tenant() 직접사용은 읽기 라우트(버전페이지 렌더·이미지서빙·diff·get_version)뿐.
 
-wrapper:
-- fn_approve_version(p_hospital,p_version,p_policy,p_content_hash,p_assessment_hash) → core mode=normal. 기존 signature 유지 → repositories.approve_version 그대로.
-- fn_self_approve_version(..., p_reason) → core mode=self_override.
-- fn_reject_version(p_hospital,p_version,p_reason): actor GUC+hospital, 사유필수, approver/admin, script FOR UPDATE, current==target(P2015), status none/pending(P2013)→rejected+approver+decided_at, audit 'approval.reject'.
-- fn_revoke_version(p_hospital,p_version,p_reason): 사유필수, admin, status FOR UPDATE, status='approved'만(P2013)→revoked(원승인자·decided_at 유지, revoked_fields CHECK 충족), audit 'approval.revoke'. current 확인 없음(비-current 과거승인도 revoke 허용).
+UI: /studio 버전페이지에 승인/반려(사유)/철회(사유)/export 버튼 상태별 노출.
 
-권한: core는 REVOKE PUBLIC + app_owner 소유 + app_rw EXECUTE 없음. wrapper는 app_rw EXECUTE. GRANT SELECT hospitals TO app_owner(core가 allow_self_approval 읽음).
+남은 Step7-9(/studio 물리 은퇴): 7=대시보드가 /scripts/<id>/{edit,evidence,approval,images,versions} 직접 렌더(현재는 /studio 리다이렉트), 8=기능별 parity+E2E, 9=/studio 302→관찰→DispatcherMiddleware+별도 studio app 제거. 현재 /studio는 이미 대시보드 디자인+단일로그인+공통service라 UX는 통합됨(은퇴는 두 Flask앱→하나 정리).
 
-services/approvals.py: ctx로 tenant_conn 열고 repositories 경유 함수 호출 + SQLSTATE→타입예외(P2015→VersionConflict, P2013→InvalidStateTransition, 42501→Forbidden, 23514→ApprovalPrerequisiteFailed). approve/self_approve=권한 사전확인(approver/admin, self=admin), reject/revoke도.
-
-/studio approve 라우트 service 교체 + reject/revoke/self-approve 라우트 추가(라우트=파싱+ctx resolve+service+예외매핑). 기존 승인 테스트 갱신(작성자==승인자 케이스를 다른 approver로, current_version_id 설정).
-
-아직 안 한 것(Step 4 마무리): export/publish gate(prepare_export 짧은TX + publication_jobs), /studio 버전페이지 reject/revoke 버튼 UI, gate snapshot 상세 audit(현재 assessment_hash만), review_seq 결정적 순번(현재 created_at DESC,id DESC).
-
-질문: (a) fn_approve_core의 검증 순서·잠금(scripts FOR UPDATE + advisory lock 병행)·gate 로직(레거시 automated verified 허용 포함)이 안전한지. (b) 정상 승인과 자기승인을 mode 파라미터로 같은 core를 태우는 방식이 맞는지(자기승인만 별도 함수 분리했는데 core 공유). (c) revoke를 비-current 과거승인에도 허용하면서 원승인자·decided_at을 유지하고 revoke actor는 audit에만 남기는 방식이 맞는지. (d) 다음을 export gate로 이어가도 되는지, publication_jobs를 지금 만들지 나중에 실제 외부게시 붙일 때 만들지.</textarea>
+질문: (a) service 추출(0–6) 상태를 완료로 승인하는지 — 특히 export gate·image 정책(이미지=대본과 별개 승인축)·Step6 검증(라우트 무-업무로직). (b) Step7(대시보드 직접 렌더)를 지금 진행할지, 아니면 UX가 이미 통합됐으니 /studio를 리다이렉트 계층으로 두고 물리 은퇴는 후순위로 미룰지 — 우선순위 판단 필요(대안: 남은 운영 권고사항 heartbeat/stale lease·materials soft delete·bytea→R2/S3·provenance 강한 CHECK 재강화·gate snapshot·review_seq·waived 전용 INSERT 함수 중 무엇을 먼저). (c) Step7을 한다면 읽기 query service부터 추출해 두 UI가 렌더 데이터를 공유하게 하는 순서가 맞는지.</textarea>
+  <button class="copy" onclick="copyGpt(this)">📋 GPT용 전체 복사</button>
+  <div class="foot">본큐어 파이프라인 · service 추출 0–6 완료 · 2026-08-02</div>
 </div>
 <script>
-  function copyGpt(){var t=document.getElementById('gpt'),b=document.querySelector('.copy');
-    try{navigator.clipboard.writeText(t.value).then(function(){done(b)},function(){legacy(t,b)})}catch(e){legacy(t,b)}}
-  function legacy(t,b){t.style.left='0';t.style.top='0';t.select();try{document.execCommand('copy')}catch(e){}t.style.left='-9999px';done(b)}
-  function done(b){var o=b.textContent;b.textContent='✓ 복사됨 — GPT에 붙여넣기';setTimeout(function(){b.textContent=o},2200)}
+  function copyGpt(btn){
+    var t=document.getElementById('gpt');
+    t.focus(); t.select(); try{t.setSelectionRange(0,t.value.length);}catch(e){}
+    var done=function(){var o=btn.textContent;btn.textContent='✓ 복사됨';btn.classList.add('copied');
+      setTimeout(function(){btn.textContent=o;btn.classList.remove('copied');},2000);};
+    var fail=function(){btn.textContent='아래 상자를 길게 눌러 복사하세요';
+      setTimeout(function(){btn.textContent='📋 GPT용 전체 복사';},2600);};
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+      navigator.clipboard.writeText(t.value).then(done,function(){try{document.execCommand('copy')?done():fail();}catch(e){fail();}});
+    }else{ try{document.execCommand('copy')?done():fail();}catch(e){fail();} }
+  }
 </script>

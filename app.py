@@ -275,6 +275,22 @@ def _clear_raw_dir(raw_dir):
             try: os.remove(p)
             except OSError: pass
 
+def _pg_membership_id(hid):
+    """세션 사용자의 이 병원 membership(생성 요청자 결착용). 요청 컨텍스트에서만 유효."""
+    try:
+        from store.db import make_engine
+        from sqlalchemy import text
+        from store.repositories import tenant_conn
+        uid = session.get("user_id")
+        if not hid or not uid:
+            return None
+        with tenant_conn(make_engine(), hid) as cn:
+            return cn.execute(text("select id from hospital_memberships "
+                                   "where hospital_id=:h and user_id=:u and archived_at is null"),
+                              {"h": hid, "u": uid}).scalar()
+    except Exception:
+        return None
+
 def _pg_required():
     """이 배포가 PostgreSQL을 단일 원본으로 쓰는가(DATABASE_URL 설정). 순수 로컬 개발이면 False."""
     return bool(os.environ.get("DATABASE_URL"))
@@ -515,9 +531,10 @@ def scripts_edit(h, version_id, section="edit"):
               "approval": "#approval", "versions": "#versions"}.get(section, "")
     return redirect(f"/studio/ui/h/{h}/versions/{version_id}{anchor}")
 
-def _run_pipeline(h, topic, evidence=True, request_key=None):
+def _run_pipeline(h, topic, evidence=True, request_key=None, membership_id=None):
     """GPT P0 반영: run.py '전에' PG generation_job(pending) 생성 → generating → generated →
-    ingesting → completed. 각 상태는 별도 트랜잭션이라 실패해도 job에 흔적이 남음."""
+    ingesting → completed. 각 상태는 별도 트랜잭션이라 실패해도 job에 흔적이 남음.
+    membership_id=생성 요청자(작성자) — ai version의 created_by로 결착(provenance)."""
     import uuid as _uuid, json as _json
     from store.db import make_engine
     from store import ingest as _ing
@@ -535,7 +552,8 @@ def _run_pipeline(h, topic, evidence=True, request_key=None):
             from store.materials import snapshot_job_materials, materialize_job_snapshot
             # 1) job 생성(pending)
             cj = _ing.create_job(make_engine(), hid, topic, request_key,
-                                 target_script_id=_pg_script_id_for_topic(hid, topic))
+                                 target_script_id=_pg_script_id_for_topic(hid, topic),
+                                 membership_id=membership_id)
             job_id = cj["job_id"]
             if cj["reused"] and cj["status"] in ("pending", "generating", "ingesting"):
                 job_set(h, status="done", ok=False, log="[중복 요청] 이미 진행 중인 생성이 있습니다."); return
@@ -607,8 +625,9 @@ def run_ep(h):
             reap_stale(make_engine(), hid)
         except Exception:
             pass
+    req_mid = _pg_membership_id(hid)   # 생성 요청자(작성자) — 스레드 전 요청 컨텍스트에서 해석
     if not job_get(h).get("running"):
-        threading.Thread(target=_run_pipeline, args=(h, topic, evidence, reqkey), daemon=True).start()
+        threading.Thread(target=_run_pipeline, args=(h, topic, evidence, reqkey, req_mid), daemon=True).start()
     return redirect(f"/h/{h}")
 
 @app.route("/h/<h>/status")
