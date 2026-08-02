@@ -53,6 +53,10 @@ def _u(path):
     return (request.script_root or "") + path
 
 
+def _csrf_field():
+    return f'<input type=hidden name=_csrf value="{session.get("_csrf", "")}">'
+
+
 _SUPPORT_KO = {"direct": "직접근거", "partial": "부분근거", "inferred": "추론", "unsupported": "근거없음", "unverified": "미검증"}
 _KIND_KO = {"automated": "자동검증", "human_review": "원장검수", "override": "원장확정", "migration": "이관"}
 
@@ -62,9 +66,9 @@ def _review_buttons(slug, claim_id, is_current):
         return ""
     act = _u(f"/ui/h/{slug}/claims/{claim_id}/review")
     return (f'<div style="margin-top:6px;display:flex;gap:6px">'
-            f'<form method=post action="{act}" style="margin:0"><input type=hidden name=decision value=confirm>'
+            f'<form method=post action="{act}" style="margin:0">{_csrf_field()}<input type=hidden name=decision value=confirm>'
             f'<button class=btn style="padding:4px 12px;font-size:13px;background:#12b886">확정</button></form>'
-            f'<form method=post action="{act}" style="margin:0"><input type=hidden name=decision value=reject>'
+            f'<form method=post action="{act}" style="margin:0">{_csrf_field()}<input type=hidden name=decision value=reject>'
             f'<button class=btn style="padding:4px 12px;font-size:13px;background:#f04452">반려</button></form></div>')
 
 def _evidence_panel(slug, claims, is_current):
@@ -123,7 +127,7 @@ def _images_panel(slug, version_id, blocks, img_keys, is_current):
         if key not in img_keys:
             continue
         regen = (f'<form method=post action="{_u(f"/ui/h/{slug}/versions/{version_id}/blocks/{key}/regen-image")}" '
-                 f'style="display:flex;gap:6px;margin-top:6px">'
+                 f'style="display:flex;gap:6px;margin-top:6px">{_csrf_field()}'
                  f'<input name=feedback placeholder="어떻게 바꿀까? (비우면 새 버전으로 재생성)" '
                  f'style="flex:1;font-size:12px;padding:7px;margin:0"><button class="btn g" '
                  f'style="padding:7px 12px;font-size:12px" onclick="this.innerHTML=\'생성중…\'">🎨 다시</button></form>') if is_current else ""
@@ -154,6 +158,12 @@ def create_app(engine=None):
     @app.before_request
     def _rid():
         g.request_id = uuid.uuid4().hex
+        if "_csrf" not in session:
+            session["_csrf"] = uuid.uuid4().hex + uuid.uuid4().hex   # 대시보드와 공유 세션이면 이미 있음
+        # 상태변경 CSRF 검증: /ui/ 폼만(브라우저). /api/(JSON)·로그인 POST는 면제(API는 추후 토큰인증).
+        if request.method == "POST" and not request.path.startswith("/api/") and request.path != "/login":
+            if request.form.get("_csrf") != session.get("_csrf"):
+                abort(400)
 
     @contextmanager
     def tenant(slug):
@@ -322,11 +332,11 @@ def create_app(engine=None):
         badge = '<span class="badge stale">미승인/stale</span>' if stale else '<span class="badge ok">승인됨</span>'
         rows = "".join(f'<div class=blk><div class=key>{escape(b["stable_block_key"])} · {escape(b["block_type"])}</div>'
                        f'<textarea name="edit__{escape(b["stable_block_key"])}">{escape(b["text"])}</textarea></div>' for b in blocks)
-        editform = (f'<form method=post action="{_u(f"/ui/h/{slug}/scripts/{sc.script_id}/edit")}">'
+        editform = (f'<form method=post action="{_u(f"/ui/h/{slug}/scripts/{sc.script_id}/edit")}">{_csrf_field()}'
                     f'<input type=hidden name=expected value="{version_id}">{rows}'
                     f'<button class=btn type=submit>💾 편집 저장(새 버전 생성)</button></form>') if is_current else \
                    f'<p><small>이 버전은 현재 버전이 아니라 편집할 수 없습니다(불변).</small></p>{rows}'
-        approve = (f'<form method=post action="{_u(f"/ui/h/{slug}/versions/{version_id}/approve")}" style="margin-top:12px">'
+        approve = (f'<form method=post action="{_u(f"/ui/h/{slug}/versions/{version_id}/approve")}" style="margin-top:12px">{_csrf_field()}'
                    f'<button class=btn type=submit>✅ 승인</button></form>') if (is_current and stale) else ""
         diff = f'<a class="btn g" href="{_u(f"/api/h/{slug}/versions/{version_id}/diff")}?from={sc.parent_version_id}">diff(JSON)</a>' if sc.parent_version_id else ""
         evidence = _evidence_panel(slug, claims, is_current)

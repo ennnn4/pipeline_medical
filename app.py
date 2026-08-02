@@ -85,10 +85,16 @@ def load_users():
 def save_users(u):
     import yaml; yaml.safe_dump(u, open(_users_path(),"w",encoding="utf-8"), allow_unicode=True)
 
+app.jinja_env.globals["csrf"] = lambda: session.get("_csrf", "")
+
 @app.before_request
 def _guard():
-    if request.endpoint in ("login","static"): return   # 공개 회원가입 없음
+    if "_csrf" not in session:
+        session["_csrf"] = secrets.token_urlsafe(24)   # 세션당 CSRF 토큰
+    if request.endpoint in ("login","static"): return   # 공개 회원가입 없음(로그인 POST는 세션전이라 면제)
     if not session.get("user"): return redirect("/login")
+    if request.method == "POST" and request.form.get("_csrf") != session.get("_csrf"):
+        abort(400)     # 상태변경 요청 CSRF 검증
 
 def _yaml():
     import yaml; return yaml
@@ -190,7 +196,7 @@ def home():
     <div class=hlist>{cards}</div>
     <div class=card id=new>
       <h2>+ 새 병원 만들기</h2>
-      <form method=post action="/new">
+      <form method=post action="/new"><input type=hidden name=_csrf value="{session.get('_csrf','')}">
         <label>병원명</label><input type=text name=name placeholder="예: 서울정형외과" required>
         <label>원장 이름 (기본 화자)</label><input type=text name=host placeholder="예: 김철수">
         <label>채널 슬로건 (대시보드 부제)</label><input type=text name=tagline placeholder="예: 무릎이 편해야 인생이 걷습니다">
@@ -240,6 +246,7 @@ def hospital(h):
     cfg = _yaml().safe_load(open(cfg_path(h), encoding="utf-8")) or {}
     name = cfg.get("hospital",{}).get("name", h)
     diseases = cfg.get("diseases") or []
+    _csrf = session.get("_csrf", "")
     raw = _material_names(h)     # 영속(PG) 우선, 없으면 disk
     outs = sorted(glob.glob(os.path.join(data_dir(h,"out"),"*.html")))
     filelist = "".join(f"<li>{f}</li>" for f in raw) or "<li class=muted>아직 업로드된 자료가 없어요.</li>"
@@ -283,7 +290,7 @@ def hospital(h):
       <div class=note>이런 자료를 넣어주세요 — <b>✓</b>=받음 · <b>없음</b>=필수인데 안 들어옴 · 회색=선택</div>
       <div class=chk style="margin:11px 0 6px">{chk}</div>
       {misswarn}
-      <form id=upf method=post action="/h/{h}/upload" enctype=multipart/form-data>
+      <form id=upf method=post action="/h/{h}/upload" enctype=multipart/form-data><input type=hidden name=_csrf value="{_csrf}">
         <div class=drop id=drop>파일을 여기로 끌어다 놓거나 클릭 (pdf·docx·txt·zip)
           <input id=fin type=file name=files multiple style="display:none">
         </div>
@@ -298,7 +305,7 @@ def hospital(h):
       <div class=note>주력 질환: {", ".join(diseases) or "설정에 없음"} — 아래 버튼 누르면 주제 자동 입력</div>
       <div class=chk style="margin:10px 0">{dz_opts}</div>
       <form id=runf method=post action="/h/{h}/run" onsubmit="var r=document.getElementById('reqkey');r.value=(window.crypto&&crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random());document.getElementById('runbtn').disabled=true;">
-        <input type=hidden name=reqkey id=reqkey>
+        <input type=hidden name=reqkey id=reqkey><input type=hidden name=_csrf value="{_csrf}">
         <label>주제</label><input type=text id=topic name=topic placeholder="예: 오십견" required>
         <label class=opt style="display:flex;gap:9px;align-items:flex-start;margin-top:14px;padding:12px 14px;background:var(--surface);border:1px solid var(--border);border-radius:10px;cursor:pointer;font-weight:600">
           <input type=checkbox name=evidence value=1 checked style="margin-top:3px;width:17px;height:17px;accent-color:var(--accent)">
