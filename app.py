@@ -19,28 +19,48 @@ except Exception:
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024   # 업로드 최대 500MB
 
-# ── 작업 상태: 메모리 대신 sqlite에 저장(재시작해도 유지) ──────────
-DB = os.path.join(ROOT, "data", "jobs.db")
-def _db():
-    os.makedirs(os.path.dirname(DB), exist_ok=True)
-    c = sqlite3.connect(DB, timeout=10)
-    c.execute("CREATE TABLE IF NOT EXISTS jobs (hospital TEXT PRIMARY KEY, topic TEXT, status TEXT, ok INTEGER, log TEXT, updated TEXT)")
-    return c
+# ── 작업 상태(P1): 단일 원본 = PostgreSQL generation_jobs. 로그는 프로세스 메모리(실시간 뷰, 전이).
+#   SQLite 신규쓰기 중단 — 상태가 두 곳(SQLite/PG)에 있던 문제 해소. 실행 가드도 PG 기반(재시작에도 유효).
+_LOG = {}       # hospital(slug) → 실시간 스트리밍 로그(전이)
+_MEMJOB = {}    # 비-PG 병원(전이 fallback) → {topic,status,ok}
+_RUNNING_STATES = {"pending", "generating", "generated", "ingesting"}
+
+def _pg_latest_job(h):
+    hid = _pg_hospital_id(h)
+    if not hid:
+        return None
+    try:
+        from store.db import make_engine
+        from sqlalchemy import text
+        from store.repositories import tenant_conn
+        with tenant_conn(make_engine(), hid) as cn:
+            return cn.execute(text(
+                "select status, phase, topic, version_id, error_message from generation_jobs "
+                "where hospital_id=:h order by created_at desc limit 1"), {"h": hid}).mappings().first()
+    except Exception:
+        return None
+
 def job_get(h):
-    c = _db(); r = c.execute("SELECT hospital,topic,status,ok,log,updated FROM jobs WHERE hospital=?", (h,)).fetchone(); c.close()
-    if not r: return {"running": False, "status": "idle", "ok": None, "log": "", "topic": ""}
-    return {"hospital": r[0], "topic": r[1], "status": r[2], "ok": (None if r[3] is None else bool(r[3])),
-            "log": r[4] or "", "updated": r[5], "running": r[2] == "running"}
+    log = _LOG.get(h, "")
+    j = _pg_latest_job(h)
+    if j is not None:      # PG 병원 → generation_jobs가 상태의 단일 원본
+        return {"hospital": h, "topic": j["topic"], "status": j["status"], "phase": j["phase"],
+                "ok": (j["status"] == "completed"), "running": j["status"] in _RUNNING_STATES, "log": log,
+                "version_id": (str(j["version_id"]) if j["version_id"] else None), "error": j["error_message"]}
+    m = _MEMJOB.get(h, {})     # 비-PG 병원(전이)
+    return {"hospital": h, "topic": m.get("topic", ""), "status": m.get("status", "idle"),
+            "ok": m.get("ok"), "running": m.get("status") == "running", "log": log}
+
 def job_set(h, topic=None, status=None, ok=None, log=None):
-    cur = job_get(h)
-    c = _db()
-    c.execute("REPLACE INTO jobs (hospital,topic,status,ok,log,updated) VALUES (?,?,?,?,?,?)",
-              (h, topic if topic is not None else cur.get("topic",""),
-               status if status is not None else cur.get("status","idle"),
-               (1 if ok else 0) if ok is not None else (None if cur.get("ok") is None else (1 if cur["ok"] else 0)),
-               log if log is not None else cur.get("log",""),
-               datetime.datetime.now().isoformat(timespec="seconds")))
-    c.commit(); c.close()
+    """로그는 메모리. 상태의 단일 원본은 PG generation_jobs(PG 병원은 mark_job로 갱신).
+    비-PG 병원만 메모리 상태 유지(전이). SQLite 미사용."""
+    if log is not None:
+        _LOG[h] = log
+    if _pg_hospital_id(h) is None:
+        m = _MEMJOB.setdefault(h, {})
+        if topic is not None: m["topic"] = topic
+        if status is not None: m["status"] = status
+        if ok is not None: m["ok"] = ok
 
 # ── 인증(세션) ──────────────────────────────────────────────
 _sk = os.path.join(ROOT, ".secret")
@@ -476,7 +496,16 @@ def run_ep(h):
     if not os.path.exists(cfg_path(h)): abort(404)
     topic = (request.form.get("topic","").strip() or "주제")[:60]
     evidence = bool(request.form.get("evidence"))
-    reqkey = (request.form.get("reqkey","").strip() or secrets.token_hex(16))[:64]   # 브라우저 생성 우선(더블클릭 방지)
+    import uuid as _uuid
+    reqkey = (request.form.get("reqkey", "").strip() or str(_uuid.uuid4()))   # 브라우저 UUID 우선(더블클릭 방지)
+    hid = _pg_hospital_id(h)
+    if hid:      # 크래시로 멈춘 job은 stale 처리 → 새 생성이 영원히 막히지 않게
+        try:
+            from store.db import make_engine
+            from store.ingest import reap_stale
+            reap_stale(make_engine(), hid)
+        except Exception:
+            pass
     if not job_get(h).get("running"):
         threading.Thread(target=_run_pipeline, args=(h, topic, evidence, reqkey), daemon=True).start()
     return redirect(f"/h/{h}")
