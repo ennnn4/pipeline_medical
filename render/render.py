@@ -227,7 +227,7 @@ def render(pkg, meta=None, evidence=None, images=None):
             evr += f"""<div class="rv" data-scene="ev{i}"><div class="rv-h">
               <span class="vb {v}">{vicon.get(v,v)}</span><span class="rv-b">근거 {i}</span></div>
               <div class="rv-say">{esc(r.get('claim',''))}</div>{srcline}
-              <div class="ev-op">▶ 기계 1차 의견: {esc(r.get('opinion',''))}</div>
+              <div class="ev-op">▶ 1차 의견: {esc(r.get('opinion',''))}</div>
               <div class="rv-ox">
                 <label><input type="radio" name="ev{i}" value="O"> 확인·동의</label>
                 <label><input type="radio" name="ev{i}" value="X"> 재확인 필요</label>
