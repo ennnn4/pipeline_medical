@@ -444,9 +444,19 @@ def _pg_studio_url(h):
             vid = cn.execute(text("select current_version_id from scripts where hospital_id=:h "
                                   "and current_version_id is not null order by updated_at desc limit 1"),
                              {"h": hid}).scalar()
-        return f"/studio/ui/h/{h}/versions/{vid}" if vid else None
+        return f"/scripts/{h}/{vid}" if vid else None
     except Exception:
         return None
+
+@app.route("/scripts/<h>/<version_id>")
+@app.route("/scripts/<h>/<version_id>/<section>")
+def scripts_edit(h, version_id, section="edit"):
+    """P1#5: script-centric 편집 진입점을 대시보드 소유로. 현재는 스튜디오 렌더러로
+    전이 리다이렉트(로직 공통화·/studio 은퇴는 후속 단계). 로그인·CSRF·역할은 스튜디오가 강제."""
+    # 인증은 _guard(before_request)가 이미 강제(session["user"]) → 여기선 라우팅만.
+    anchor = {"evidence": "#evidence", "images": "#images",
+              "approval": "#approval", "versions": "#versions"}.get(section, "")
+    return redirect(f"/studio/ui/h/{h}/versions/{version_id}{anchor}")
 
 def _run_pipeline(h, topic, evidence=True, request_key=None):
     """GPT P0 반영: run.py '전에' PG generation_job(pending) 생성 → generating → generated →
