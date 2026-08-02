@@ -33,10 +33,22 @@ def _call(engine, ctx, fn, *args):
         raise from_sqlstate(_sqlstate(e), str(e))
 
 
+def _ok(event, ctx, self_approval=None):
+    # 성공 이벤트(GPT): "오류 없음"과 "실제 사용됨" 구분. 내용·사유·slug·이메일 미포함, 병원은 해시.
+    try:
+        from services.observability import emit, hid
+        emit(event, hospital=hid(ctx.hospital_id), self_approval=self_approval,
+             request_id=getattr(ctx, "request_id", None))
+    except Exception:
+        pass
+
+
 def approve(engine, ctx, version_id, policy=DEFAULT_POLICY):
     """정상 승인 — 작성자≠승인자·current·evidence gate는 DB가 강제(approver/admin)."""
     permissions.require(ctx, permissions.REVIEW_ROLES)
-    return _call(engine, ctx, repo.approve_version, _as_uuid(version_id), policy)
+    r = _call(engine, ctx, repo.approve_version, _as_uuid(version_id), policy)
+    _ok("approval_succeeded", ctx, self_approval=False)
+    return r
 
 
 def self_approve(engine, ctx, version_id, reason, policy=DEFAULT_POLICY):
@@ -44,7 +56,9 @@ def self_approve(engine, ctx, version_id, reason, policy=DEFAULT_POLICY):
     permissions.require(ctx, {"admin"})
     if not (reason or "").strip():
         raise InvalidStateTransition("자기승인에는 사유가 필요합니다")
-    return _call(engine, ctx, repo.self_approve_version, _as_uuid(version_id), policy, reason.strip())
+    r = _call(engine, ctx, repo.self_approve_version, _as_uuid(version_id), policy, reason.strip())
+    _ok("approval_succeeded", ctx, self_approval=True)
+    return r
 
 
 def reject(engine, ctx, version_id, reason):
@@ -52,7 +66,9 @@ def reject(engine, ctx, version_id, reason):
     permissions.require(ctx, permissions.REVIEW_ROLES)
     if not (reason or "").strip():
         raise InvalidStateTransition("반려에는 사유가 필요합니다")
-    return _call(engine, ctx, repo.reject_version, _as_uuid(version_id), reason.strip())
+    r = _call(engine, ctx, repo.reject_version, _as_uuid(version_id), reason.strip())
+    _ok("approval_rejected", ctx)
+    return r
 
 
 def revoke(engine, ctx, version_id, reason):
@@ -60,4 +76,6 @@ def revoke(engine, ctx, version_id, reason):
     permissions.require(ctx, {"admin"})
     if not (reason or "").strip():
         raise InvalidStateTransition("철회에는 사유가 필요합니다")
-    return _call(engine, ctx, repo.revoke_version, _as_uuid(version_id), reason.strip())
+    r = _call(engine, ctx, repo.revoke_version, _as_uuid(version_id), reason.strip())
+    _ok("approval_revoked", ctx)
+    return r

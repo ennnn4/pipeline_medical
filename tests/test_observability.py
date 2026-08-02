@@ -40,3 +40,18 @@ def test_emit_never_raises():
     class Bad:
         def __str__(self): raise RuntimeError("boom")
     emit("x", weird=Bad())                  # default=str가 터져도 삼켜야 함 — 예외 없이 반환
+
+
+def test_mask_ids_replaces_uuids_and_drops_query():
+    from services.observability import mask_ids
+    u = "3cb48eea-6359-4bfe-9c0b-986a12a3c0ff"
+    assert mask_ids(f"/scripts/{u}/versions/{u}?x=1") == "/scripts/<id>/versions/<id>"
+    assert mask_ids("/studio/ui/boncure/versions") == "/studio/ui/boncure/versions"  # slug 패턴은 보존
+    assert mask_ids(None) is None
+
+
+def test_hid_is_stable_hash_not_raw():
+    from services.observability import hid
+    v = "3cb48eea-6359-4bfe-9c0b-986a12a3c0ff"
+    h = hid(v)
+    assert h and len(h) == 8 and h != v and hid(v) == h and hid(None) is None

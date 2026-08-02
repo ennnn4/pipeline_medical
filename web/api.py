@@ -6,7 +6,7 @@ SDR 준수:
  - 승인은 repositories.approve_version 경로로만(advisory lock 하 hash).
 CAS 충돌→409, 역할/권한(42501)→403, 미검증 claim(23514)→422, 없음(P0002)→404.
 """
-import os, uuid, secrets, hmac
+import os, uuid, secrets, hmac, time
 from contextlib import contextmanager
 from services.context import ActorContext
 from services import scripts as scripts_service
@@ -176,6 +176,7 @@ def create_app(engine=None):
     @app.before_request
     def _rid():
         g.request_id = uuid.uuid4().hex
+        g._t0 = time.perf_counter()        # latency 측정용
         if "_csrf" not in session:
             session["_csrf"] = secrets.token_urlsafe(24)   # 대시보드와 공유 세션이면 이미 있음
         # 상태변경 CSRF 검증: /ui/ 폼만(브라우저). /api/(JSON)·로그인 POST는 면제(API는 추후 토큰인증).
@@ -187,12 +188,21 @@ def create_app(engine=None):
 
     @app.after_request
     def _obs(resp):
-        # /studio endpoint별 요청 수·상태 구조화 로깅 — 물리 통합/redirect 후 놓친 legacy 호출 추적.
+        # /studio endpoint별 요청 수·상태·redirect·latency 로깅 — 물리 통합/redirect 후 legacy 호출 추적.
+        # GPT: method=redirect 가능여부, 404=누락 deep link, 401/403=세션전환, 5xx=새 route 회귀 신호.
         try:
-            from services.observability import emit
+            from services.observability import emit, mask_ids
+            st = resp.status_code
+            lat = None
+            if getattr(g, "_t0", None) is not None:
+                lat = round((time.perf_counter() - g._t0) * 1000, 1)
+            loc = resp.headers.get("Location") if 300 <= st < 400 else None
             emit("http", app="studio", method=request.method,
-                 rule=(request.url_rule.rule if request.url_rule else request.path),
-                 status=resp.status_code)
+                 rule=(request.url_rule.rule if request.url_rule else mask_ids(request.path)),
+                 endpoint=request.endpoint, status=st,
+                 redirect=(300 <= st < 400) or None,
+                 redirect_target=(mask_ids(loc) if loc else None),   # UUID/식별자 마스킹(개인정보 미노출)
+                 request_id=getattr(g, "request_id", None), latency_ms=lat)
         except Exception:
             pass
         return resp

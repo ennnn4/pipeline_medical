@@ -57,6 +57,12 @@ def regenerate_scene(engine, ctx, block_key, feedback="", version_id=None, gener
             {"d": jpg, "p": prompt, "vid": vid, "sh": sh, "ph": ph, "h": ctx.hospital_id, "k": block_key})
         if r.rowcount == 0:
             raise NotFound("해당 장면 이미지가 없습니다")
+    try:                                    # 성공 이벤트(GPT): prompt·block_key 내용 미포함, 병원 해시
+        from services.observability import emit, hid
+        emit("image_regenerated", hospital=hid(ctx.hospital_id),
+             request_id=getattr(ctx, "request_id", None))
+    except Exception:
+        pass
     return {"block_key": block_key}
 
 

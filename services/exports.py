@@ -41,6 +41,12 @@ def prepare_export(engine, ctx, script_id, version_id):
             "select stable_block_key, order_index, block_type, scene, text from script_blocks "
             "where hospital_id=:h and version_id=:v order by order_index"),
             {"h": ctx.hospital_id, "v": vid})]
+    try:                                    # 성공 이벤트(GPT): 내용·slug 미포함, 병원 해시
+        from services.observability import emit, hid
+        emit("export_prepared", hospital=hid(ctx.hospital_id), blocks=len(blocks),
+             request_id=getattr(ctx, "request_id", None))
+    except Exception:
+        pass
     return {"script_id": str(sid), "version_id": str(vid),
             "content_hash": st.version_content_hash, "assessment_hash": st.assessment_set_hash,
             "approver_membership_id": str(st.approver_membership_id) if st.approver_membership_id else None,

@@ -598,6 +598,10 @@ def _run_pipeline(h, topic, evidence=True, request_key=None, membership_id=None)
             try: _ing.mark_job(make_engine(), hid, job_id, "failed", allowed_from={"pending","generating","generated","ingesting"},
                                worker_token=worker_token, error_code="run_error", error_message=str(e), finished=True)
             except Exception: pass
+            try:
+                from services.observability import emit, hid as _hid
+                emit("generation_failed", hospital=_hid(hid), stage="run")
+            except Exception: pass
     if ok and hid and job_id:
         try:
             _ing.mark_job(make_engine(), hid, job_id, "generated", allowed_from={"generating"}, worker_token=worker_token, phase="parsed")
@@ -606,11 +610,19 @@ def _run_pipeline(h, topic, evidence=True, request_key=None, membership_id=None)
             res = _ing.ingest_content(make_engine(), hid, job_id, pkg.get("script") or [])  # topic·script_id 모두 job에서
             log += f"\n[스튜디오] 편집·근거·이미지 준비 완료(블록 {res['blocks']}·주장 {res['claims']})."
             job_set(h, log=log)
+            try:                            # 성공 이벤트(GPT): 병원 해시·블록/주장 수만(내용 미포함)
+                from services.observability import emit, hid as _hid
+                emit("generation_completed", hospital=_hid(hid), blocks=res.get("blocks"), claims=res.get("claims"))
+            except Exception: pass
         except Exception as e:
             log += f"\n[스튜디오 적재 오류] {e}"
             # completed는 덮지 않음(늦은 예외 방지)
             try: _ing.mark_job(make_engine(), hid, job_id, "failed", allowed_from={"pending","generating","generated","ingesting"},
                                error_code="ingest_error", error_message=str(e), finished=True)
+            except Exception: pass
+            try:
+                from services.observability import emit, hid as _hid
+                emit("generation_failed", hospital=_hid(hid), stage="ingest")
             except Exception: pass
     elif ok and not hid:
         log += "\n[안내] 이 병원은 스튜디오(PostgreSQL) 연결이 없어 파일만 생성했습니다."
