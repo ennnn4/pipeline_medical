@@ -214,10 +214,11 @@ def claim_job(engine, hospital_id, job_id, worker_token, membership_id=None):
         return (False, "hospital_busy")   # 병원당 active job 부분유니크 위반(다른 job 실행 중)
 
 def reap_stale(engine, hospital_id, older_than_sec=1800):
-    """heartbeat가 오래 멈춘 generating/ingesting job → stale."""
+    """heartbeat가 오래 멈춘 active(generating/generated/ingesting) job → stale.
+    worker_token을 무효화(NULL)해 늦은 워커가 뒤늦게 상태전이/적재하지 못하게 함(GPT)."""
     with tenant_conn(engine, hospital_id) as cn:
-        cn.execute(text("update generation_jobs set status='stale', updated_at=now() "
-                        "where hospital_id=:h and status in ('generating','ingesting') "
+        cn.execute(text("update generation_jobs set status='stale', worker_token=null, updated_at=now() "
+                        "where hospital_id=:h and status in ('generating','generated','ingesting') "
                         "and coalesce(heartbeat_at, started_at, created_at) < now() - (:s || ' seconds')::interval"),
                    {"h": hospital_id, "s": str(older_than_sec)})
 

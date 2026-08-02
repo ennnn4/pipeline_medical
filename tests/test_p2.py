@@ -142,6 +142,20 @@ def test_one_active_job_per_hospital(rw, tenant, mats):
     assert acquired is False and reason == "hospital_busy"
 
 
+def test_reap_invalidates_worker_token(rw, tenant, mats):
+    h = tenant["hospital_id"]
+    M.save_material(rw, h, "r.txt", b"D")
+    j = I.create_job(rw, h, "reap", str(uuid.uuid4()))["job_id"]
+    M.snapshot_job_materials(rw, h, j)
+    assert I.claim_job(rw, h, j, "tok")[0] is True
+    I.reap_stale(rw, h, older_than_sec=0)                  # 즉시 stale + 토큰 무효화
+    with tenant_conn(rw, h) as cn:
+        st = cn.execute(text("select status, worker_token from generation_jobs where id=:j"), {"j": j}).first()
+    assert st.status == "stale" and st.worker_token is None
+    # 늦은 워커(옛 토큰)는 상태전이 불가
+    assert I.mark_job(rw, h, j, "generated", allowed_from={"generating"}, worker_token="tok") is False
+
+
 def test_claim_requires_sealed_snapshot(rw, tenant, mats):
     h = tenant["hospital_id"]
     j = I.create_job(rw, h, "미봉인", str(uuid.uuid4()))["job_id"]   # 스냅샷 봉인 안 함
