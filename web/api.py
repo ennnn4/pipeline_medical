@@ -480,25 +480,15 @@ def create_app(engine=None):
     # ── 피드백 반영 이미지 재생성(사람 피드백 → 프롬프트 조정 → gpt-image-1) ──
     @app.post("/ui/h/<slug>/versions/<version_id>/blocks/<block_key>/regen-image")
     def regen_image(slug, version_id, block_key):
-        if not session.get("user_id"):
-            abort(401)
         feedback = (request.form.get("feedback") or "").strip()
-        try:
-            from assets.gen_images import gen_image_bytes
-            from store.seed_images import web_jpeg_bytes
-            with tenant(slug) as (conn, hid, mid):
-                _require_role(conn, hid, mid, {"editor", "approver", "admin"})   # 이미지 재생성 권한
-                row = conn.execute(text("select prompt, topic from scene_images "
-                                        "where hospital_id=:h and block_key=:k limit 1"),
-                                   {"h": hid, "k": block_key}).first()
-            base = (row.prompt if row else None) or f"clean medical educational illustration for scene {block_key}"
-            prompt = base + (f" Reviewer adjustment: {feedback}." if feedback else " Provide a fresh alternative composition.")
-            jpg = web_jpeg_bytes(gen_image_bytes(prompt))       # OpenAI 호출은 DB 트랜잭션 밖
-            with tenant(slug) as (conn, hid, mid):
-                conn.execute(text("update scene_images set data=:d, updated_at=now() "
-                                  "where hospital_id=:h and block_key=:k"),
-                             {"d": jpg, "h": hid, "k": block_key})
+        try:      # 이미지 재생성 규칙(권한·프롬프트·영속)은 공통 image service. OpenAI는 TX 밖.
+            ctx = ActorContext.resolve(app.config["ENGINE"], session.get("user_id"), slug, g.request_id)
+            images_service.regenerate_scene(app.config["ENGINE"], ctx, block_key, feedback)
             return redirect(_u(f"/ui/h/{slug}/versions/{version_id}?m=regen#{block_key}"))
+        except ServiceError as e:
+            if e.http_status == 401:
+                return redirect(_u("/login"))
+            return redirect(_u(f"/ui/h/{slug}/versions/{version_id}?m=regenfail"))
         except Exception:
             return redirect(_u(f"/ui/h/{slug}/versions/{version_id}?m=regenfail"))
 
