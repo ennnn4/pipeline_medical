@@ -19,23 +19,32 @@ try:
 except Exception:
     LOGO_URI = ICON_URI = ""
 
-_CSS = """*{box-sizing:border-box}body{font-family:'Pretendard',-apple-system,'Malgun Gothic',sans-serif;background:#f2f4f6;color:#191f28;margin:0;line-height:1.6}
-.wrap{max-width:820px;margin:0 auto;padding:28px 20px}.card{background:#fff;border:1px solid #e5e8eb;border-radius:16px;padding:22px;margin:14px 0}
-h1{font-size:22px;letter-spacing:-.03em}h2{font-size:16px;margin:0 0 10px}.badge{font-size:12px;font-weight:800;padding:3px 10px;border-radius:100px}
-.stale{background:#fdeaec;color:#f04452}.ok{background:#e6f7f0;color:#12b886}textarea{width:100%;font:inherit;border:1px solid #e5e8eb;border-radius:10px;padding:10px;min-height:64px}
-.btn{font:inherit;font-weight:700;border:0;border-radius:10px;padding:10px 18px;background:#3182f6;color:#fff;cursor:pointer}.btn.g{background:#f2f4f6;color:#191f28;border:1px solid #e5e8eb}
-label{font-size:12px;color:#8b95a1;font-weight:700}input{width:100%;font:inherit;border:1px solid #e5e8eb;border-radius:10px;padding:10px;margin:6px 0 12px}
-.msg{padding:10px 14px;border-radius:10px;margin:10px 0;font-weight:600}.msg.e{background:#fdeaec;color:#f04452}.msg.s{background:#e6f7f0;color:#12b886}
-.blk{border-top:1px solid #eef;padding:12px 0}.key{font-size:12px;color:#8b95a1;font-weight:700}small{color:#8b95a1}
-.thumb{height:92px;border-radius:8px;cursor:pointer;border:1px solid #e5e8eb;object-fit:cover;display:block;margin-top:6px}
+_CSS = """:root{--bg:#fff;--surface:#f9fafb;--surface2:#f2f4f6;--card:#fff;--border:#e5e8eb;--ink:#191f28;--ink2:#4e5968;--muted:#8b95a1;--accent:#3182f6;--accw:#eaf2fe;--acci:#1b64da;--good:#12b886;--danger:#f04452;--font:'Pretendard',-apple-system,BlinkMacSystemFont,'Malgun Gothic',system-ui,sans-serif}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);line-height:1.6;letter-spacing:-.01em;-webkit-font-smoothing:antialiased}
+a{color:var(--acci);text-decoration:none}
+.wrap{max-width:900px;margin:0 auto;padding:8px 22px 90px}
+h1{font-size:24px;font-weight:800;letter-spacing:-.04em;margin:0 0 6px}h2{font-size:16px;font-weight:800;letter-spacing:-.02em;margin:0 0 12px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:18px;padding:22px;box-shadow:0 1px 3px rgba(25,31,40,.03),0 10px 30px rgba(25,31,40,.04);margin-bottom:16px}
+.badge{font-size:12px;font-weight:800;padding:4px 11px;border-radius:100px}
+.stale{background:#fdeaec;color:var(--danger)}.ok{background:#e6f7f0;color:var(--good)}
+label{display:block;font-size:13px;font-weight:700;color:var(--ink2);margin:14px 0 6px}
+input,textarea{width:100%;font-family:var(--font);font-size:15px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:#fff;color:var(--ink)}
+input:focus,textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accw)}textarea{min-height:64px;resize:vertical}
+.btn{font-family:var(--font);font-weight:700;font-size:15px;padding:11px 18px;border-radius:12px;border:1px solid transparent;background:var(--accent);color:#fff;cursor:pointer;text-decoration:none;display:inline-block;transition:.12s}
+.btn:hover{background:#1b6fe0}.btn.g{background:#fff;color:var(--ink);border-color:var(--border)}.btn.g:hover{background:var(--surface2)}
+.msg{padding:11px 15px;border-radius:12px;margin:10px 0;font-weight:600;font-size:14px}.msg.e{background:#fdeaec;color:var(--danger)}.msg.s{background:#e6f7f0;color:var(--good)}
+.blk{border-top:1px solid var(--border);padding:14px 0}.key{font-size:12px;color:var(--muted);font-weight:700}small{color:var(--muted)}
+.thumb{height:92px;border-radius:10px;cursor:pointer;border:1px solid var(--border);object-fit:cover;display:block;margin-top:6px}
 .lb{display:none;position:fixed;inset:0;background:rgba(0,0,0,.86);z-index:100;align-items:center;justify-content:center}
-.lb img{max-width:92vw;max-height:88vh;border-radius:10px;box-shadow:0 8px 40px rgba(0,0,0,.5)}"""
+.lb img{max-width:92vw;max-height:88vh;border-radius:12px;box-shadow:0 8px 40px rgba(0,0,0,.5)}"""
 
 def _page(title, body):
     fav = f"<link rel=icon href='{ICON_URI}'>" if ICON_URI else ""
-    brand = f"<div style='padding:18px 0 8px'><img src='{LOGO_URI}' alt='Medical Pipeline' style='height:38px'></div>" if LOGO_URI else ""
-    return (f"<!doctype html><meta charset=utf-8><title>{escape(title)}</title>{fav}"
-            f"<style>{_CSS}</style><div class=wrap>{brand}{body}</div>")
+    logo = f"<img src='{LOGO_URI}' alt='Medical Pipeline' style='height:34px'>" if LOGO_URI else "<b style='font-size:17px'>Medical Pipeline</b>"
+    nav = (f"<div style='display:flex;align-items:center;gap:12px;padding:16px 0 12px'>{logo}"
+           f"<a class='btn g' href='/' style='margin-left:auto;padding:8px 14px;font-size:13px'>← 대시보드</a></div>")
+    return (f"<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
+            f"<title>{escape(title)}</title>{fav}<style>{_CSS}</style><div class=wrap>{nav}{body}</div>")
 
 
 def _u(path):
