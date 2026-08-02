@@ -170,6 +170,14 @@ def create_app(engine=None):
         code = _sqlstate(exc)
         return {"42501": 403, "23514": 422, "P0002": 404, "2BP01": 409}.get(code, 400), code
 
+    @app.errorhandler(403)
+    def _stale_session(e):
+        # UI 화면에서의 403은 대개 재시드로 세션 user_id가 무효가 된 경우 → 세션 비우고 로그인으로
+        if request.method == "GET" and ("/ui/" in request.path or request.path == "/"):
+            session.clear()
+            return redirect(_u("/login"))
+        return e
+
     # ── 편집 → 새 버전 ──
     @app.post("/api/h/<slug>/scripts/<script_id>/edit")
     def edit(slug, script_id):
