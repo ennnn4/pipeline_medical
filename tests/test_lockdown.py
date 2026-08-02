@@ -29,7 +29,7 @@ def test_app_rw_cannot_insert_into_approved_version(owner, rw, tenant):
         with tenant_conn(rw, h, m) as cn:
             cn.execute(text("insert into script_blocks(id,hospital_id,version_id,stable_block_key,order_index,block_type,text) "
                             "values(:b,:h,:v,'k2',9,'explanation','x')"), {"b": uuid.uuid4(), "h": h, "v": v})
-    assert sqlstate(ei.value) == "2BP01"                  # frozen 트리거
+    assert sqlstate(ei.value) == "P2013"                  # frozen 트리거(decided_version_frozen)
 
 def _seed_link(owner, h):
     import hashlib

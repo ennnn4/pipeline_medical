@@ -112,7 +112,7 @@ def test_approved_version_assessment_frozen(owner, rw, tenant):
                             "support_level,verification_status,medical_risk,created_by_membership_id) "
                             "values(:i,:h,:c,'human_review','hr:1','partial','verified','high',:m)"),
                        {"i": uuid.uuid4(), "h": h, "c": c, "m": m})
-    assert sqlstate(ei.value) == "2BP01"
+    assert sqlstate(ei.value) == "P2013"
 
 def test_cross_hospital_approval_blocked(owner, rw, tenant):
     """A 세션이 B의 version을 승인 시도 → 차단(복합 WHERE not-found)."""

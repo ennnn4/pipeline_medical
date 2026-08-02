@@ -152,7 +152,7 @@ BEGIN
   PERFORM pg_advisory_xact_lock(hashtextextended(NEW.version_id::text, 0));   -- 승인과 동일 lock → TOCTOU 차단
   IF EXISTS (SELECT 1 FROM public.version_approval_states s
              WHERE s.hospital_id=NEW.hospital_id AND s.version_id=NEW.version_id AND s.status='approved') THEN
-    RAISE EXCEPTION 'approved version content is frozen' USING ERRCODE='2BP01';
+    RAISE EXCEPTION 'approved version content is frozen' USING ERRCODE='P2013';  -- 도메인: decided_version_frozen
   END IF;
   RETURN NEW;
 END $$;

@@ -208,7 +208,7 @@ def create_app(engine=None):
 
     def _map_pg(exc):
         code = _sqlstate(exc)
-        return {"42501": 403, "23514": 422, "P0002": 404, "2BP01": 409}.get(code, 400), code
+        return {"42501": 403, "23514": 422, "P0002": 404, "P2013": 409, "P2014": 409}.get(code, 400), code
 
     @app.errorhandler(403)
     def _stale_session(e):

@@ -60,7 +60,8 @@ _SQLSTATE_MAP = {
     "42501": Forbidden,
     "23514": ApprovalPrerequisiteFailed,
     "P0002": NotFound,
-    "2BP01": InvalidStateTransition,   # approved version 동결 위반
+    "P2013": InvalidStateTransition,   # decided_version_frozen(승인/철회 version 내용·근거 동결)
+    "P2014": VersionConflict,          # version supersede 충돌(다른 버전이 이미 supersede)
 }
 
 

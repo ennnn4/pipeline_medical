@@ -61,7 +61,7 @@ BEGIN
     SELECT superseded_by_version_id INTO v_existing FROM public.version_approval_states
       WHERE hospital_id=p_hospital AND version_id=p_old;
     IF v_existing IS DISTINCT FROM p_new THEN
-      RAISE EXCEPTION 'version already superseded by different version' USING ERRCODE='2BP01';
+      RAISE EXCEPTION 'version already superseded by different version' USING ERRCODE='P2014';
     END IF;
   END IF;
 END $$;
@@ -86,7 +86,7 @@ BEGIN
     SELECT status INTO v_status FROM public.version_approval_states
       WHERE hospital_id = NEW.hospital_id AND version_id = v_ver;
     IF v_status IN ('approved','revoked') THEN
-      RAISE EXCEPTION '% version의 근거는 변경 불가(새 버전 필요)', v_status USING ERRCODE='2BP01';
+      RAISE EXCEPTION '% version의 근거는 변경 불가(새 버전 필요)', v_status USING ERRCODE='P2013';  -- decided_version_frozen
     END IF;
   END IF;
   RETURN NEW;
