@@ -103,6 +103,17 @@ def test_waive_requires_admin_and_reason(rw, owner, tenant):
     assert hd.human_decision == "waived" and hd.decision_reason == "근거요건 예외 승인"
 
 
+def test_review_seq_increments(rw, owner, tenant):
+    h = tenant["hospital_id"]; sc, v, cid = _seed_claim(owner, h)
+    ctx = _ctx(owner, tenant, {"approver"})
+    ev.assess_claim(rw, ctx, sc, v, cid, "reject", reason="1차 반려")
+    ev.assess_claim(rw, ctx, sc, v, cid, "confirm")
+    with owner.connect() as cn:
+        seqs = [r[0] for r in cn.execute(text("select review_seq from claim_assessments where claim_id=:c "
+                                              "and assessment_kind='human_review' order by review_seq"), {"c": cid})]
+    assert seqs == [1, 2]                                    # claim별 결정적 순번
+
+
 def test_confirm_sets_accepted_decision(rw, owner, tenant):
     h = tenant["hospital_id"]; sc, v, cid = _seed_claim(owner, h)
     r = ev.assess_claim(rw, _ctx(owner, tenant, {"approver"}), sc, v, cid, "confirm")

@@ -62,6 +62,9 @@ STMTS = [
     # 사람 결정 축(waived 모델, GPT) — verification_status(검증결과)와 분리. automated는 NULL.
     "ALTER TABLE claim_assessments ADD COLUMN IF NOT EXISTS human_decision text;",
     "ALTER TABLE claim_assessments ADD COLUMN IF NOT EXISTS decision_reason text;",
+    # 사람 판정 순번(GPT) — "세 번째 검수"처럼 결정적·설명가능. claim별 1,2,3…(human_review만).
+    "ALTER TABLE claim_assessments ADD COLUMN IF NOT EXISTS review_seq int;",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_assessment_review_seq ON claim_assessments(hospital_id, claim_id, review_seq) WHERE review_seq IS NOT NULL;",
     "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='ck_assessment_human_decision') THEN "
     "ALTER TABLE claim_assessments ADD CONSTRAINT ck_assessment_human_decision CHECK ("
     "human_decision IS NULL OR human_decision IN ('accepted','rejected','waived','not_applicable')) NOT VALID; END IF; END $$;",
@@ -140,7 +143,7 @@ CREATE OR REPLACE FUNCTION public.fn_add_human_assessment(
   p_hospital uuid, p_claim uuid, p_support text, p_verif text, p_risk text,
   p_human_decision text, p_reason text)
 RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
-DECLARE v_actor uuid; v_hospital uuid; v_ver uuid; v_status text; v_id uuid;
+DECLARE v_actor uuid; v_hospital uuid; v_ver uuid; v_status text; v_id uuid; v_seq int;
 BEGIN
   v_actor := NULLIF(current_setting('app.membership_id', true), '')::uuid;
   v_hospital := NULLIF(current_setting('app.hospital_id', true), '')::uuid;
@@ -166,11 +169,15 @@ BEGIN
   IF v_status IN ('approved','revoked') THEN
     RAISE EXCEPTION 'decided version frozen' USING ERRCODE='P2013';
   END IF;
+  -- claim별 판정 순번(결정적) — claim 잠금 하 max+1
+  PERFORM pg_advisory_xact_lock(hashtextextended('claim-review:' || p_claim::text, 0));
+  SELECT coalesce(max(review_seq), 0) + 1 INTO v_seq
+    FROM public.claim_assessments WHERE hospital_id=p_hospital AND claim_id=p_claim AND review_seq IS NOT NULL;
   v_id := gen_random_uuid();
   INSERT INTO public.claim_assessments(id,hospital_id,claim_id,assessment_kind,idempotency_key,
-    support_level,verification_status,medical_risk,rationale,human_decision,decision_reason,created_by_membership_id)
+    support_level,verification_status,medical_risk,rationale,human_decision,decision_reason,review_seq,created_by_membership_id)
   VALUES(v_id, p_hospital, p_claim, 'human_review', gen_random_uuid()::text,
-    p_support, p_verif, p_risk, p_reason, p_human_decision, p_reason, v_actor);
+    p_support, p_verif, p_risk, p_reason, p_human_decision, p_reason, v_seq, v_actor);
   RETURN v_id;
 END $$;
 """.replace("__ROLE_ADMIN__", _ROLE.format(roles="'admin'"))
