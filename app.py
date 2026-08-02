@@ -265,6 +265,16 @@ def _provision_pg(slug, name):
     except Exception:
         pass   # DB 미연결 등은 비-PG 파일 흐름으로 진행(fallback 차단은 생성 시점에서)
 
+def _clear_raw_dir(raw_dir):
+    """생성 전 raw/ 의 기존 파일 제거(스냅샷 정확 복원 전 stale 혼입 방지). 하위 폴더는 건드리지 않음."""
+    if not os.path.isdir(raw_dir):
+        os.makedirs(raw_dir, exist_ok=True); return
+    for nm in os.listdir(raw_dir):
+        p = os.path.join(raw_dir, nm)
+        if os.path.isfile(p):
+            try: os.remove(p)
+            except OSError: pass
+
 def _pg_required():
     """이 배포가 PostgreSQL을 단일 원본으로 쓰는가(DATABASE_URL 설정). 순수 로컬 개발이면 False."""
     return bool(os.environ.get("DATABASE_URL"))
@@ -521,25 +531,32 @@ def _run_pipeline(h, topic, evidence=True, request_key=None):
     request_key = request_key or _uuid.uuid4().hex
     job_id = None
     if hid:
-        try:    # 재배포로 disk가 비었을 수 있으니 PG의 영속 자료를 raw/로 복원 후 생성
-            from store.materials import materialize_to_disk
-            materialize_to_disk(make_engine(), hid, data_dir(h, "raw"))
-        except Exception:
-            pass
         try:
+            from store.materials import snapshot_job_materials, materialize_job_snapshot
+            # 1) job 생성(pending)
             cj = _ing.create_job(make_engine(), hid, topic, request_key,
                                  target_script_id=_pg_script_id_for_topic(hid, topic))
             job_id = cj["job_id"]
             if cj["reused"] and cj["status"] in ("pending", "generating", "ingesting"):
                 job_set(h, status="done", ok=False, log="[중복 요청] 이미 진행 중인 생성이 있습니다."); return
-            _ing.mark_job(make_engine(), hid, job_id, "generating", allowed_from={"pending"}, phase="run.py", started=True)
-            try:    # 생성 시점 자료 스냅샷(재현·책임소재) — 어떤 자료로 만들었는지 job에 결착
-                from store.materials import snapshot_job_materials
-                snapshot_job_materials(make_engine(), hid, job_id)
-            except Exception:
-                pass
+            # 2) pending 상태에서 자료 스냅샷 봉인(재현·책임소재) — 이후 seal 트리거가 변경 차단
+            snapshot_job_materials(make_engine(), hid, job_id)
+            # 3) 실행권 원자적 획득(pending→generating). 못 얻으면 다른 워커가 이미 실행 중 → 중복 실행 차단
+            acquired = _ing.mark_job(make_engine(), hid, job_id, "generating",
+                                     allowed_from={"pending"}, phase="run.py", started=True)
+            if not acquired:
+                job_set(h, status="done", ok=False, log="[중복 요청] 이미 진행 중인 생성이 있습니다."); return
+            # 4) 스냅샷된 '정확한 원본'을 raw/로 복원(checksum 검증). stale 파일 제거 후 기록.
+            _clear_raw_dir(data_dir(h, "raw"))
+            materialize_job_snapshot(make_engine(), hid, job_id, data_dir(h, "raw"))
         except Exception as e:
             log += f"\n[스튜디오 job 경고] {e}"
+            if job_id:   # 스냅샷/복원 실패 시 job을 failed로(정합 깨진 상태로 생성 안 함)
+                try: _ing.mark_job(make_engine(), hid, job_id, "failed",
+                                   allowed_from={"pending","generating"}, error_code="snapshot_error",
+                                   error_message=str(e), finished=True)
+                except Exception: pass
+                job_set(h, status="done", ok=False, log=log); return
     try:
         cmd = [PY, "run.py", "all", "--hospital", h, "--topic", topic]
         if evidence: cmd.append("--evidence")   # 논문 근거 대조 + 시각자료 추출

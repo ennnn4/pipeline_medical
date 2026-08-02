@@ -37,7 +37,18 @@ BEGIN
     RAISE EXCEPTION 'hospital slug already exists' USING ERRCODE = '23505';  -- 관계없는 사용자 → 차단
   END IF;
   v_hid := gen_random_uuid();
-  INSERT INTO public.hospitals(id, slug, name) VALUES (v_hid, p_slug, COALESCE(NULLIF(btrim(p_name), ''), p_slug));
+  BEGIN
+    INSERT INTO public.hospitals(id, slug, name) VALUES (v_hid, p_slug, COALESCE(NULLIF(btrim(p_name), ''), p_slug));
+  EXCEPTION WHEN unique_violation THEN
+    -- 동시 요청 경쟁: 다른 트랜잭션이 먼저 같은 slug 생성. slug unique를 최종 방어선으로 재판정.
+    SELECT id INTO v_hid FROM public.hospitals WHERE slug = p_slug;
+    IF p_owner_user IS NOT NULL THEN
+      SELECT true INTO v_exists FROM public.hospital_memberships
+        WHERE hospital_id = v_hid AND user_id = p_owner_user LIMIT 1;
+    END IF;
+    IF COALESCE(v_exists, false) THEN RETURN v_hid; END IF;
+    RAISE EXCEPTION 'hospital slug already exists' USING ERRCODE = '23505';
+  END;
   IF p_owner_user IS NOT NULL THEN    -- creator를 admin membership으로(요청자만; 임의 owner 지정 불가)
     v_mid := gen_random_uuid();
     INSERT INTO public.hospital_memberships(id, hospital_id, user_id) VALUES (v_mid, v_hid, p_owner_user);

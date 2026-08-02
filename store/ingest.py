@@ -61,6 +61,10 @@ _ADOPT = [
     "ALTER TABLE generation_jobs ADD COLUMN IF NOT EXISTS started_at timestamptz;",
     "ALTER TABLE generation_jobs ADD COLUMN IF NOT EXISTS heartbeat_at timestamptz;",
     "ALTER TABLE generation_jobs ADD COLUMN IF NOT EXISTS finished_at timestamptz;",
+    # 자료 스냅샷 봉인 메타(P2-1b) — 어떤 자료 세트로 생성했는지 봉인 시점·개수·매니페스트 해시
+    "ALTER TABLE generation_jobs ADD COLUMN IF NOT EXISTS material_snapshot_at timestamptz;",
+    "ALTER TABLE generation_jobs ADD COLUMN IF NOT EXISTS material_snapshot_count int;",
+    "ALTER TABLE generation_jobs ADD COLUMN IF NOT EXISTS material_snapshot_hash text;",
     # 구 스키마에 idempotency_key(NOT NULL)가 있을 때만 완화 — 신규 DB엔 없으니 조건부(오류 없음)
     "DO $$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns "
     "WHERE table_schema='public' AND table_name='generation_jobs' AND column_name='idempotency_key') "

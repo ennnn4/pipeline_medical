@@ -9,8 +9,8 @@ from store import ingest as I
 
 @pytest.fixture
 def mats(owner):
-    M.ensure_materials_schema(owner)
-    I.ensure_gen_schema(owner)
+    I.ensure_gen_schema(owner)         # 먼저: generation_jobs + UNIQUE 타깃(복합 FK 전제)
+    M.ensure_materials_schema(owner)   # 그 다음: 복합 FK·seal
     return True
 
 
@@ -82,3 +82,41 @@ def test_genjobs_status_check(rw, tenant, mats):
     with pytest.raises(Exception):     # 화이트리스트 밖 상태 직접 주입 차단
         with tenant_conn(rw, h) as cn:
             cn.execute(text("update generation_jobs set status='bogus' where id=:j"), {"j": j})
+
+
+def test_snapshot_sealed_after_pending(rw, tenant, mats):
+    h = tenant["hospital_id"]; fn = "seal.txt"
+    M.save_material(rw, h, fn, b"DATA")
+    j = I.create_job(rw, h, "봉인", str(uuid.uuid4()))["job_id"]
+    M.snapshot_job_materials(rw, h, j)                     # pending → 허용
+    assert I.mark_job(rw, h, j, "generating", allowed_from={"pending"}) is True
+    with pytest.raises(Exception):                         # 봉인 후 스냅샷 재구성 차단
+        M.snapshot_job_materials(rw, h, j)
+
+
+def test_atomic_job_acquisition(rw, tenant, mats):
+    h = tenant["hospital_id"]
+    j = I.create_job(rw, h, "획득", str(uuid.uuid4()))["job_id"]
+    first = I.mark_job(rw, h, j, "generating", allowed_from={"pending"})
+    second = I.mark_job(rw, h, j, "generating", allowed_from={"pending"})
+    assert first is True and second is False               # 한 워커만 실행권 획득
+
+
+def test_gjm_rejects_cross_tenant_version(owner, rw, tenant, mats):
+    """다른 병원의 material_version_id를 job snapshot에 넣으려 하면 복합 FK가 차단."""
+    from store.provision import ensure_provision, provision_hospital
+    ensure_provision(owner)
+    hA = tenant["hospital_id"]
+    # 병원 B + B의 자료 버전
+    uB = uuid.uuid4()
+    with owner.begin() as cn:
+        cn.execute(text("insert into users(id,email) values(:u,:e)"), {"u": uB, "e": uB.hex + "@t.c"})
+    hB = provision_hospital(rw, "clinicB" + uuid.uuid4().hex[:6], "B", owner_user=uB)
+    verB = M.save_material(rw, hB, "b.txt", b"B-DATA")
+    jA = I.create_job(rw, hA, "cross", str(uuid.uuid4()))["job_id"]
+    with pytest.raises(Exception):     # A의 job + B의 version → FK 위반
+        with tenant_conn(rw, hA) as cn:
+            cn.execute(text("insert into generation_job_materials"
+                            "(id,hospital_id,job_id,material_version_id,filename,size_bytes) "
+                            "values(gen_random_uuid(),:h,:j,:v,'x',1)"),
+                       {"h": hA, "j": jA, "v": verB})

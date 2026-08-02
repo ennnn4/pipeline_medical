@@ -1,4 +1,4 @@
-<title>본큐어 파이프라인 — P1 완료 보고서</title>
+<title>본큐어 파이프라인 — P2 1단계 보고서</title>
 <style>
   :root{
     --bg:#f6f7f9; --card:#fff; --ink:#0b1524; --muted:#5b6b7f; --line:#e6e9ef;
@@ -16,10 +16,8 @@
     --brand:#5b8dff;--brand-soft:#16233a;--ok:#3ecf8e;--ok-soft:#12251c;--warn:#e0b34d;--warn-soft:#2a2413;--code:#0a0f16;--code-ink:#cfe0f5;}
   :root[data-theme=light]{--bg:#f6f7f9;--card:#fff;--ink:#0b1524;--muted:#5b6b7f;--line:#e6e9ef;
     --brand:#1b64f2;--brand-soft:#e8f0fe;--ok:#0f9d58;--ok-soft:#e6f4ea;--warn:#b8860b;--warn-soft:#fbf3dd;--code:#0d1b2a;--code-ink:#d7e3f4;}
-
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.6;
-    -webkit-text-size-adjust:100%}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.6;-webkit-text-size-adjust:100%}
   .wrap{max-width:760px;margin:0 auto;padding:20px 16px 72px}
   header.hd{padding:8px 2px 18px}
   .eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--brand);font-weight:700}
@@ -29,29 +27,19 @@
   .chip{font-size:12.5px;font-weight:600;padding:5px 11px;border-radius:999px;border:1px solid var(--line)}
   .chip.ok{background:var(--ok-soft);color:var(--ok);border-color:transparent}
   .chip.brand{background:var(--brand-soft);color:var(--brand);border-color:transparent}
-
-  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 16px;margin:14px 0;
-    box-shadow:0 1px 2px rgba(10,20,40,.04)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 16px;margin:14px 0;box-shadow:0 1px 2px rgba(10,20,40,.04)}
   h2{font-size:18px;margin:2px 0 10px;display:flex;align-items:center;gap:9px}
-  h2 .n{flex:none;width:26px;height:26px;border-radius:8px;background:var(--brand-soft);color:var(--brand);
-    font-size:13px;font-weight:800;display:grid;place-items:center}
+  h2 .n{flex:none;min-width:26px;height:26px;padding:0 6px;border-radius:8px;background:var(--brand-soft);color:var(--brand);font-size:12px;font-weight:800;display:grid;place-items:center}
   .row{display:flex;gap:10px;padding:9px 0;border-top:1px solid var(--line)}
   .row:first-of-type{border-top:0}
-  .row .tag{flex:none;font-size:11px;font-weight:700;color:var(--ok);align-self:flex-start;margin-top:2px}
+  .row .tag{flex:none;font-size:11px;font-weight:700;color:var(--ok);align-self:flex-start;margin-top:3px;min-width:30px}
   .row p{margin:0;font-size:14.5px}
-  .row p b{font-weight:700}
   .row small{color:var(--muted);display:block;font-size:12.5px;margin-top:2px}
-
-  pre{background:var(--code);color:var(--code-ink);border-radius:12px;padding:13px 13px;overflow-x:auto;
-    font-family:var(--mono);font-size:12.5px;line-height:1.55;margin:10px 0 0}
-  code{font-family:var(--mono)}
-  .note{background:var(--warn-soft);border:1px solid transparent;border-radius:12px;padding:12px 14px;margin:14px 0;
-    font-size:13.5px;color:var(--ink)}
+  pre{background:var(--code);color:var(--code-ink);border-radius:12px;padding:13px;overflow-x:auto;font-family:var(--mono);font-size:12px;line-height:1.55;margin:10px 0 0}
+  .note{background:var(--warn-soft);border-radius:12px;padding:12px 14px;margin:14px 0;font-size:13.5px}
   .note b{color:var(--warn)}
-  .copybar{position:sticky;bottom:0;margin:22px -16px -72px;padding:14px 16px calc(14px + env(safe-area-inset-bottom));
-    background:linear-gradient(to top,var(--bg) 70%,transparent);display:flex;gap:10px}
-  button.copy{flex:1;border:0;border-radius:12px;background:var(--brand);color:#fff;font-weight:700;font-size:15px;
-    padding:14px;cursor:pointer;font-family:var(--sans)}
+  .copybar{position:sticky;bottom:0;margin:22px -16px -72px;padding:14px 16px calc(14px + env(safe-area-inset-bottom));background:linear-gradient(to top,var(--bg) 70%,transparent);display:flex;gap:10px}
+  button.copy{flex:1;border:0;border-radius:12px;background:var(--brand);color:#fff;font-weight:700;font-size:15px;padding:14px;cursor:pointer;font-family:var(--sans)}
   button.copy:active{transform:translateY(1px)}
   .foot{color:var(--muted);font-size:12.5px;text-align:center;margin-top:18px}
   textarea#gpt{position:absolute;left:-9999px;top:-9999px}
@@ -59,95 +47,70 @@
 
 <div class="wrap">
   <header class="hd">
-    <div class="eyebrow">본큐어 파이프라인 · 배포 후 검토</div>
-    <h1>P1 개선 전 항목 완료</h1>
-    <div class="sub">P0 코드리뷰 <b>승인</b> 이후, GPT가 지정한 P1 6개 항목을 순서대로 반영했습니다. 아래는 GPT 재검토용 요약입니다.</div>
+    <div class="eyebrow">본큐어 파이프라인 · P1 승인 → P2</div>
+    <h1>P2 1단계 완료</h1>
+    <div class="sub">GPT가 P1을 <b>승인</b>하고 지정한 순서(“/studio 제거 말고 자료 immutable 버전·fallback 차단 먼저”)대로 진행했습니다. 함께 짚은 배포코드 보안 3건도 먼저 처리했습니다.</div>
     <div class="status">
-      <span class="chip ok">✓ 테스트 74 통과</span>
-      <span class="chip ok">✓ 라이브 반영·푸시</span>
-      <span class="chip brand">Alembic 0002–0006</span>
-      <span class="chip brand">RLS + SECURITY DEFINER</span>
+      <span class="chip ok">✓ 테스트 80 통과</span>
+      <span class="chip ok">✓ 라이브 반영</span>
+      <span class="chip brand">Alembic 0007–0009</span>
     </div>
   </header>
 
   <div class="card">
-    <h2><span class="n">1</span>SQLite 신규쓰기 중단 → PG 단일 원본</h2>
-    <div class="row"><span class="tag">DONE</span><p><b>작업 상태의 이중 저장을 제거</b>했습니다. 대시보드가 쓰던 SQLite 작업기록을 걷어내고, 모든 생성 job은 PostgreSQL <code>generation_jobs</code>만 읽고 씁니다.
-      <small>비-PG(구식 파일) 병원만 메모리 fallback(<code>_MEMJOB</code>)으로 남겨 하위호환. 새 데이터는 전부 PG.</small></p></div>
+    <h2><span class="n">보안</span>배포코드 3건(GPT 지적)</h2>
+    <div class="row"><span class="tag">5.1</span><p><b>provisioning slug 충돌.</b> 관계없는 사용자가 기존 slug를 넘기면 <b>Conflict로 차단</b> — 기존 병원 UUID·멤버십을 넘겨주거나 자동 admin으로 추가하지 않습니다. 같은 사용자의 재시도만 멱등 반환. slug 형식·길이(64) 검증. 대시보드 /new는 기존 config 덮어쓰기 금지.</p></div>
+    <div class="row"><span class="tag">7</span><p><b>CSRF 강화.</b> 두 앱 모두 <code>hmac.compare_digest</code> 상수시간 비교 + <code>X-CSRF-Token</code> 헤더(JSON/fetch) 지원. 토큰은 <code>secrets.token_urlsafe</code>.</p></div>
+    <div class="row"><span class="tag">C.3</span><p><b>비-PG fallback 신규쓰기 차단.</b> DATABASE_URL 배포에서 PG에 없는 병원은 업로드·생성을 막고(자동 재provision 시도 후 안내), 임시디스크 전용 쓰기를 허용하지 않습니다. 단일 원본 원칙 유지.</p></div>
   </div>
 
   <div class="card">
-    <h2><span class="n">2</span>런타임 ensure_* DDL 제거 방침</h2>
-    <div class="row"><span class="tag">DONE</span><p>스키마 변경은 <b>Alembic 마이그레이션(0002–0006)</b>이 단일 경로. 앱 기동 시 테이블을 만드는 즉석 DDL에 의존하지 않으며, <code>ensure_*</code>는 개발/부트스트랩 편의용으로만 남아 운영 스키마의 근거는 마이그레이션입니다.
-      <small>0002–0004 채택(adoption), 0005 프로비저닝 함수, 0006 자료 스냅샷 테이블.</small></p></div>
+    <h2><span class="n">P2-1</span>자료 immutable 버전 — 진짜 재현</h2>
+    <div class="row"><span class="tag">DONE</span><p>파일을 교체해도 원본 bytes를 <b>UPDATE로 덮지 않고 새 버전</b>으로 남깁니다. 생성 job은 그 시점의 정확한 <code>material_version_id</code>를 가리켜, <b>이후 자료가 바뀌어도 당시 원본을 그대로 복원</b>합니다(P2에서 지적한 “manifest만으로는 재현 불가” 해소).</p>
+      <pre>materials            논리 자료항목 + current_version_id 포인터
+material_versions    불변 이력(bytes·checksum). 변경·삭제 트리거 차단
+generation_job_materials → material_version_id (그때 그 원본)
+
+materialize_job_snapshot(job) → 당시 사용한 정확한 파일 복원</pre>
+      <small>실증(sim): v2 스냅샷 후 v3로 교체해도 job 복원은 v2 bytes를 정확히 반환. 논리 자료를 삭제해도 버전 이력은 보존(FK ON DELETE SET NULL).</small></div>
   </div>
 
   <div class="card">
-    <h2><span class="n">3</span>병원 slug → PG UUID 매핑</h2>
-    <div class="row"><span class="tag">DONE</span><p>대시보드의 병원 slug를 PostgreSQL <code>hospitals.id</code>(UUID)로 해석하는 경로를 확립. 자료·job·대본이 전부 <b>hospital_id 기준 RLS</b>로 격리됩니다.</p></div>
+    <h2><span class="n">P2-6</span>DB 제약 강화</h2>
+    <div class="row"><span class="tag">DONE</span><p><code>generation_jobs.status</code> 화이트리스트 <b>CHECK</b>(NOT VALID→VALIDATE), <code>request_idempotency_key</code> NOT NULL. 앱 검증 외 DB 최종 방어선.</p></div>
   </div>
 
-  <div class="card">
-    <h2><span class="n">4</span>새 병원 provisioning</h2>
-    <div class="row"><span class="tag">DONE</span><p>병원 생성 시 PG에 <b>병원 + 생성자 admin 멤버십 + 감사로그</b>를 원자적으로 만듭니다. <code>app_rw</code>에 hospitals 직접 INSERT 권한을 주지 않고 <b>SECURITY DEFINER 함수</b>(소유자 NOLOGIN <code>app_owner</code>)로만 프로비저닝 — 권한 경계 유지.
-      <small>slug 중복은 기존 병원 반환(멱등). 이걸로 동료 업로드 실패의 근본원인(비-PG 병원의 임시디스크 소실)도 해소.</small></p>
-      <pre>SELECT id FROM hospitals WHERE slug = p_slug;   -- 있으면 반환(멱등)
-INSERT INTO hospitals(id,slug,name) VALUES(...);
-INSERT INTO hospital_memberships(...) ;          -- 생성자
-INSERT INTO membership_roles(...,'admin');       -- admin 부여
-INSERT INTO audit_events(...,'hospital.provision');</pre></div>
-  </div>
+  <div class="note"><b>이번 단계에서 일부러 안 한 것(GPT 지시대로):</b> /studio 물리 제거·앱 병합(P2-3/4)은 다음 단계로 남겼습니다. 스튜디오 로직을 공통 service 계층으로 추출한 뒤 대시보드가 edit→evidence→approval→images→versions 순으로 직접 렌더하고, 그 다음 /studio를 은퇴시킵니다.</div>
 
-  <div class="card">
-    <h2><span class="n">5</span>편집 라우트 대시보드 이전 <span style="font-size:12px;color:var(--warn);font-weight:600">· 1단계</span></h2>
-    <div class="row"><span class="tag">DONE</span><p>대시보드가 소유하는 <b>script-centric 진입점</b> <code>/scripts/&lt;병원&gt;/&lt;버전id&gt;[/&lt;섹션&gt;]</code>을 추가했습니다. 생성→편집 CTA가 이제 대시보드 주소를 가리키고, 현재는 스튜디오 렌더러로 전이 리다이렉트(evidence/images/approval 앵커 보존)합니다.</p></div>
-    <div class="note"><b>남은 후속(정직하게):</b> 스튜디오 내부 로직을 공통 서비스로 추출하고 <code>/studio</code>를 완전히 은퇴시키는 <b>앱 병합</b>은 별도 리팩터로 남겼습니다. 별도 WSGI 앱 + RLS 테넌트 구조라 큰 변경이라, 안전하게 진입점부터 대시보드로 옮긴 상태입니다. 사용자 경험은 이미 단일 로그인·동일 디자인으로 통합돼 있습니다.</div>
-  </div>
+  <div class="note">테스트 <b>80개 통과</b>(신규 test_p2 8건: 버전 보존·정확 재현·불변 트리거·삭제 후 보존·충돌 차단·slug 검증·status CHECK). 신규 스키마 전부 비파괴 additive. 라이브 DB 반영(백필 0-null 확인) + <code>master</code> 푸시 완료.</div>
 
-  <div class="card">
-    <h2><span class="n">6</span>CSRF · 역할권한 · 자료 스냅샷</h2>
-    <div class="row"><span class="tag">6a</span><p><b>CSRF 보호.</b> 세션당 토큰(<code>session["_csrf"]</code>)을 발급하고 모든 상태변경 POST를 <code>before_request</code>에서 검증. 대시보드·스튜디오 양쪽 폼에 히든 토큰 주입.</p></div>
-    <div class="row"><span class="tag">6b</span><p><b>병원 내부 역할 게이트.</b> <code>membership_roles</code> 기반으로 편집=editor/approver/admin, 검수=approver/admin, 이미지 재생성=editor 이상으로 제한(403).</p></div>
-    <div class="row"><span class="tag">6c</span><p><b>자료 version 스냅샷.</b> 대본 생성 시점의 자료(파일명·체크섬·크기)를 <code>generation_job_materials</code>로 job에 결착 — <b>어떤 자료로 만든 대본인지</b> 영구 기록(재현·책임소재).</p>
-      <pre>INSERT INTO generation_job_materials
-  (id,hospital_id,job_id,material_id,filename,checksum,size_bytes)
-SELECT gen_random_uuid(), :h, :j, id, filename, checksum, size_bytes
-FROM materials WHERE hospital_id = :h;   -- 생성 직후 스냅샷</pre></div>
-  </div>
+  <div class="copybar"><button class="copy" onclick="copyGpt()">📋 GPT용 전체 복사</button></div>
+  <div class="foot">본큐어 파이프라인 · P2 1단계 · 2026-08-02</div>
+  <textarea id="gpt" readonly>[본큐어 파이프라인 — P2 1단계 완료, 재검토 요청]
 
-  <div class="note">테스트 <b>74개 전부 통과</b>(ingest P0 14 · 동시성 9 · lockdown 7 · RLS 5 · Alembic 실제 upgrade 등). 신규 스키마는 전부 <b>비파괴 additive</b>(downgrade는 운영 데이터 보호를 위해 거부). 라이브 DB 반영 및 <code>master</code> 푸시 완료.</div>
+배경: P1 승인 후 지시한 순서대로 진행. "/studio 제거는 나중에, 자료 immutable 버전과 fallback 차단부터"를 따랐고, 함께 지적한 배포코드 보안 3건도 먼저 처리. 80 tests green, 라이브 반영+푸시 완료.
 
-  <div class="copybar">
-    <button class="copy" onclick="copyGpt()">📋 GPT용 전체 복사</button>
-  </div>
-  <div class="foot">본큐어 유튜브 대본 파이프라인 · P0 승인 → P1 완료 · 2026-08-02</div>
-  <textarea id="gpt" readonly>[본큐어 파이프라인 — P1 개선 완료, 재검토 요청]
+보안(지적 3건):
+- provisioning slug 충돌(5.1): 관계없는 사용자가 기존 slug 요청 시 ProvisionConflict로 차단(기존 병원 UUID/멤버십 노출·자동 admin 추가 금지), 같은 사용자 재시도만 멱등 반환. slug 형식·길이(64) 검증. /new는 기존 config 덮어쓰기 금지. (SECURITY DEFINER 함수, search_path 고정, 객체 schema-qualified 유지, Alembic 0007)
+- CSRF(7): 두 앱 모두 hmac.compare_digest 상수시간 비교 + X-CSRF-Token 헤더(JSON/fetch) 지원. 토큰=secrets.token_urlsafe. 로그인 시 session.clear()로 재발급.
+- 비-PG fallback 신규쓰기 차단(C.3): DATABASE_URL 배포면 PG를 단일원본으로 간주, PG 미등록 병원은 업로드·생성 차단(자동 재provision 시도 후 안내), 임시디스크 전용 쓰기 불허. 순수 로컬(무 DATABASE_URL)만 파일모드 유지.
 
-배경: 직전 P0 코드리뷰에서 "APPROVED"를 받았고, 그때 지시한 P1 6개 항목을 순서대로 반영했다. 74개 테스트 통과, 라이브 반영+푸시 완료.
+P2-1 자료 immutable 버전(재현):
+- material_versions(불변) + materials.current_version_id 포인터. save는 교체 시 UPDATE로 덮지 않고 새 버전 추가(원본 bytes 보존).
+- 불변 트리거: 내용컬럼 변경·DELETE 차단. 단 부모 삭제 시 FK ON DELETE SET NULL(material_id→NULL)은 허용해 버전 이력 보존.
+- 기존 materials 백필(멱등). generation_job_materials가 material_version_id 참조.
+- materialize_job_snapshot(job) = 그때 사용한 정확한 원본 복원. 실증(sim): v2 스냅샷 후 v3 교체해도 v2 bytes 정확 복원. (Alembic 0008)
 
-P1 완료 내역:
-1) SQLite 신규쓰기 중단 → 모든 작업 job은 PostgreSQL generation_jobs 단일 원본. 비-PG(구식 파일) 병원만 메모리 fallback으로 하위호환.
-2) 런타임 ensure_* DDL 의존 제거 → 스키마 근거는 Alembic 0002~0006 단일 경로(0002~0004 채택, 0005 프로비저닝 함수, 0006 자료 스냅샷).
-3) 병원 slug → PG hospitals.id(UUID) 매핑 확립. 자료·job·대본 전부 hospital_id RLS 격리.
-4) 새 병원 provisioning: 병원+생성자 admin 멤버십+감사로그를 SECURITY DEFINER 함수(소유자 NOLOGIN app_owner)로 원자적 생성. app_rw에는 hospitals 직접 INSERT 권한 안 줌(권한경계 유지). slug 중복은 기존 반환(멱등). 동료 업로드 실패 근본원인(비-PG 병원 임시디스크 소실)도 이걸로 해소.
-5) 편집 라우트 대시보드 이전(1단계): 대시보드 소유 /scripts/<병원>/<버전id>[/<섹션>] 진입점 추가, 생성→편집 CTA를 대시보드 주소로. 현재는 스튜디오 렌더러로 전이 리다이렉트(앵커 보존). 남은 후속: 스튜디오 로직 공통 서비스 추출 + /studio 완전 은퇴(앱 병합)는 별도 리팩터로 남김 — 별도 WSGI+RLS 구조라 큰 변경이라 진입점부터 안전하게 이전. UX는 이미 단일 로그인·동일 디자인으로 통합됨.
-6a) CSRF: 세션당 토큰(session["_csrf"]) + before_request에서 모든 상태변경 POST 검증. 대시보드·스튜디오 양쪽 폼에 히든 토큰.
-6b) 역할 게이트: membership_roles 기반 편집=editor/approver/admin, 검수=approver/admin, 이미지 재생성=editor 이상(403).
-6c) 자료 version 스냅샷: 생성 시점 자료(파일명·체크섬·크기)를 generation_job_materials로 job에 결착 → 재현·책임소재.
+P2-6 DB 제약:
+- generation_jobs status CHECK 화이트리스트(pending/generating/generated/ingesting/completed/failed/cancelled/stale, NOT VALID→VALIDATE), request_idempotency_key NOT NULL(NULL은 UUID 백필 후). (Alembic 0009)
 
-공통 원칙: 신규 스키마 전부 비파괴 additive(downgrade는 운영 데이터 보호로 거부). RLS는 ENABLE+FORCE, 정책은 current_setting('app.hospital_id') 기준. SECURITY DEFINER 함수는 NOLOGIN app_owner 소유 + permissive 정책으로 관리형 PG(비-superuser)에서 RLS 우회.
+이번 단계에서 일부러 안 한 것(지시대로): /studio 물리 제거·앱 병합(P2-3/4). 스튜디오 로직 공통 service 추출→대시보드 직접 렌더(edit→evidence→approval→images→versions)→/studio 은퇴 순으로 다음 단계 예정.
 
-질문: (a) #5의 "진입점부터 이전 + /studio 은퇴는 후속 리팩터" 접근이 P1 종료로 수용 가능한지, 아니면 이번에 앱 병합까지 요구하는지. (b) 이 상태를 P1 완료로 승인하고 P2로 넘어가도 되는지. (c) 추가로 봐야 할 리스크가 있는지.</textarea>
+질문: (a) P2-1 재현 모델(material_versions + job이 material_version_id 결착 + materialize_job_snapshot)이 "과거 원본 완전 재현" 요건을 충족하는지. (b) generation_job_materials.material_version_id를 실제 FK로 걸어야 하는지(현재는 컬럼만, 버전은 불변이라 dangling 없음). (c) 다음 단계로 service 계층 추출→/studio 은퇴로 가도 되는지, 아니면 그 전에 승인 흐름(작성자≠승인자·승인후 변경시 자동해제)·실행 job PG 원자적 획득을 먼저 볼지.</textarea>
 </div>
-
 <script>
-  function copyGpt(){
-    var t=document.getElementById('gpt'), b=document.querySelector('.copy');
-    try{
-      navigator.clipboard.writeText(t.value).then(function(){done(b)},function(){legacy(t,b)});
-    }catch(e){legacy(t,b)}
-  }
-  function legacy(t,b){t.style.left='0';t.style.top='0';t.select();try{document.execCommand('copy')}catch(e){}
-    t.style.left='-9999px';done(b)}
+  function copyGpt(){var t=document.getElementById('gpt'),b=document.querySelector('.copy');
+    try{navigator.clipboard.writeText(t.value).then(function(){done(b)},function(){legacy(t,b)})}catch(e){legacy(t,b)}}
+  function legacy(t,b){t.style.left='0';t.style.top='0';t.select();try{document.execCommand('copy')}catch(e){}t.style.left='-9999px';done(b)}
   function done(b){var o=b.textContent;b.textContent='✓ 복사됨 — GPT에 붙여넣기';setTimeout(function(){b.textContent=o},2200)}
 </script>

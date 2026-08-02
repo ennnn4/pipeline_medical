@@ -146,6 +146,57 @@ FROM material_versions v
 WHERE v.material_id = m.id AND m.current_version_id IS NULL;
 """
 
+# P2-1b(GPT): 스냅샷 관계를 DB 최종 방어선으로 — 복합 테넌트 FK + NOT NULL + 중복금지.
+# generation_jobs가 이미 있어야 job FK 가능(guard). 모두 멱등. 백필/정리 뒤 seal 트리거 설치.
+_GJM_INTEGRITY = [
+    # 복합 FK 타깃 UNIQUE(hospital_id, id)
+    "DO $$ BEGIN IF to_regclass('public.generation_jobs') IS NOT NULL AND NOT EXISTS "
+    "(SELECT 1 FROM pg_constraint WHERE conname='uq_genjobs_hosp_id') THEN "
+    "ALTER TABLE generation_jobs ADD CONSTRAINT uq_genjobs_hosp_id UNIQUE (hospital_id, id); END IF; END $$;",
+    "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='uq_matver_hosp_id') THEN "
+    "ALTER TABLE material_versions ADD CONSTRAINT uq_matver_hosp_id UNIQUE (hospital_id, id); END IF; END $$;",
+    # 과거 gjm(P1, material_version_id NULL) 백필: 자료가 그대로면 current=원본
+    "UPDATE generation_job_materials g SET material_version_id = m.current_version_id "
+    "FROM materials m WHERE g.material_id = m.id AND g.material_version_id IS NULL AND m.current_version_id IS NOT NULL;",
+    # 그래도 NULL(자료 삭제됨 등) = 재현불가 legacy 스냅샷 → 정리
+    "DELETE FROM generation_job_materials WHERE material_version_id IS NULL;",
+    # (job, version) 중복 제거 후 UNIQUE
+    "DELETE FROM generation_job_materials a USING generation_job_materials b "
+    "WHERE a.ctid < b.ctid AND a.job_id = b.job_id AND a.material_version_id = b.material_version_id;",
+    "ALTER TABLE generation_job_materials ALTER COLUMN material_version_id SET NOT NULL;",
+    "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='uq_gjm_job_ver') THEN "
+    "ALTER TABLE generation_job_materials ADD CONSTRAINT uq_gjm_job_ver UNIQUE (job_id, material_version_id); END IF; END $$;",
+    # 복합 테넌트 FK(병원간 오연결 차단) — ON DELETE RESTRICT, NOT VALID→VALIDATE
+    "DO $$ BEGIN IF to_regclass('public.generation_jobs') IS NOT NULL AND NOT EXISTS "
+    "(SELECT 1 FROM pg_constraint WHERE conname='fk_gjm_job_tenant') THEN "
+    "ALTER TABLE generation_job_materials ADD CONSTRAINT fk_gjm_job_tenant "
+    "FOREIGN KEY (hospital_id, job_id) REFERENCES generation_jobs(hospital_id, id) ON DELETE RESTRICT NOT VALID; END IF; END $$;",
+    "DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_gjm_job_tenant' AND NOT convalidated) THEN "
+    "ALTER TABLE generation_job_materials VALIDATE CONSTRAINT fk_gjm_job_tenant; END IF; END $$;",
+    "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_gjm_ver_tenant') THEN "
+    "ALTER TABLE generation_job_materials ADD CONSTRAINT fk_gjm_ver_tenant "
+    "FOREIGN KEY (hospital_id, material_version_id) REFERENCES material_versions(hospital_id, id) ON DELETE RESTRICT NOT VALID; END IF; END $$;",
+    "DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_gjm_ver_tenant' AND NOT convalidated) THEN "
+    "ALTER TABLE generation_job_materials VALIDATE CONSTRAINT fk_gjm_ver_tenant; END IF; END $$;",
+]
+
+# 스냅샷 봉인: job이 pending 벗어나면 gjm 변경(INSERT/UPDATE/DELETE) 금지 → 과거 입력 구성 위변조 차단.
+_SEAL = """
+CREATE OR REPLACE FUNCTION public.fn_seal_job_materials() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE v_status text; v_jid uuid;
+BEGIN
+  v_jid := CASE WHEN TG_OP = 'DELETE' THEN OLD.job_id ELSE NEW.job_id END;
+  SELECT status INTO v_status FROM generation_jobs WHERE id = v_jid;
+  IF v_status IS NOT NULL AND v_status <> 'pending' THEN
+    RAISE EXCEPTION 'job 스냅샷은 pending 이후 변경 불가(sealed, status=%)', v_status USING ERRCODE = '0A000';
+  END IF;
+  IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+END $$;
+DROP TRIGGER IF EXISTS trg_seal_job_materials ON generation_job_materials;
+CREATE TRIGGER trg_seal_job_materials BEFORE INSERT OR UPDATE OR DELETE ON generation_job_materials
+  FOR EACH ROW EXECUTE FUNCTION public.fn_seal_job_materials();
+"""
+
 def ensure_materials_schema(owner_engine):
     with owner_engine.begin() as cn:
         cn.execute(text(_DDL))
@@ -161,16 +212,32 @@ def ensure_materials_schema(owner_engine):
             if stmt.strip():
                 cn.execute(text(stmt))
         cn.execute(text(_MV_FREEZE))                 # 백필 후 불변 트리거 설치
+        for s in _GJM_INTEGRITY:                     # 복합 FK·NOT NULL(gjm DML은 seal 트리거 전에)
+            cn.execute(text(s))
+        cn.execute(text(_SEAL))                      # 마지막: 스냅샷 봉인 트리거
 
 def snapshot_job_materials(engine, hospital_id, job_id):
     """생성 시점의 자료를 job에 스냅샷 결착 — 현재 버전(current_version_id)을 정확히 기록.
-    반환: 스냅샷한 자료 수. 이후 파일이 바뀌어도 이 job은 당시 material_version을 가리킨다."""
+    한 트랜잭션에서 INSERT..SELECT(부분 혼합 방지) + job에 스냅샷 메타(count·hash·at) 봉인.
+    반환: 스냅샷한 자료 수. 이후 파일이 바뀌어도 이 job은 당시 material_version을 가리킨다.
+    주의: job이 pending일 때만 호출(seal 트리거가 이후 변경 차단)."""
     with tenant_conn(engine, hospital_id) as cn:
         r = cn.execute(text(
             "insert into generation_job_materials"
             "(id,hospital_id,job_id,material_id,material_version_id,filename,checksum,size_bytes) "
             "select gen_random_uuid(), :h, :j, id, current_version_id, filename, checksum, size_bytes "
-            "from materials where hospital_id=:h"),
+            "from materials where hospital_id=:h and current_version_id is not null"),
+            {"h": hospital_id, "j": job_id})
+        # 스냅샷 매니페스트 해시(파일명+체크섬 정렬 결합) → 이후 변경 없음을 검증 가능
+        cn.execute(text(
+            "update generation_jobs set "
+            "material_snapshot_count = (select count(*) from generation_job_materials where job_id=:j), "
+            "material_snapshot_hash = (select md5(coalesce(string_agg("
+            "  filename||':'||coalesce(checksum,'')||':'||material_version_id::text, '|' "
+            "  order by filename, material_version_id::text),'')) "
+            "  from generation_job_materials where job_id=:j), "
+            "material_snapshot_at = now() "
+            "where id=:j and hospital_id=:h"),
             {"h": hospital_id, "j": job_id})
         return r.rowcount
 
@@ -263,19 +330,34 @@ def list_material_versions(engine, hospital_id, filename=None):
     with tenant_conn(engine, hospital_id) as cn:
         return [dict(r._mapping) for r in cn.execute(text(q), p)]
 
+class SnapshotIntegrityError(RuntimeError):
+    """복원한 자료의 크기/체크섬이 스냅샷과 불일치 — 손상된 재현이므로 생성 중단."""
+
 def materialize_job_snapshot(engine, hospital_id, job_id, dest_dir):
     """생성 job이 '그때 사용한 정확한 원본'을 material_version_id로 복원(재현). 반환: 복원 파일 수.
-    현재 자료가 바뀌었어도 스냅샷된 불변 버전의 bytes를 그대로 씀."""
+    - current_version이 아니라 오직 스냅샷된 material_version_id 경로만 사용.
+    - 복원 bytes의 size·sha256을 스냅샷 값과 재검증(불일치 시 SnapshotIntegrityError).
+    - 임시파일 기록 후 atomic rename(부분 파일 방지). dest_dir은 호출자가 job별로 격리."""
     os.makedirs(dest_dir, exist_ok=True)
     with tenant_conn(engine, hospital_id) as cn:
         rows = cn.execute(text(
-            "select g.filename, v.data from generation_job_materials g "
-            "join material_versions v on v.id = g.material_version_id "
+            "select g.filename, g.checksum, g.size_bytes, v.data, v.checksum as vck "
+            "from generation_job_materials g "
+            "join material_versions v on v.hospital_id = g.hospital_id and v.id = g.material_version_id "
             "where g.hospital_id = :h and g.job_id = :j"),
             {"h": hospital_id, "j": job_id}).all()
     n = 0
     for r in rows:
-        with io.open(os.path.join(dest_dir, os.path.basename(r.filename)), "wb") as f:
-            f.write(bytes(r.data))
+        data = bytes(r.data)
+        want = r.checksum or r.vck
+        if r.size_bytes is not None and len(data) != r.size_bytes:
+            raise SnapshotIntegrityError(f"size 불일치: {r.filename} ({len(data)}≠{r.size_bytes})")
+        if want and hashlib.sha256(data).hexdigest() != want:
+            raise SnapshotIntegrityError(f"checksum 불일치: {r.filename}")
+        final = os.path.join(dest_dir, os.path.basename(r.filename))
+        tmp = final + ".tmp"
+        with io.open(tmp, "wb") as f:
+            f.write(data); f.flush(); os.fsync(f.fileno())
+        os.replace(tmp, final)     # atomic
         n += 1
     return n
