@@ -82,6 +82,32 @@ def test_revert_without_history_notfound(owner, rw, tenant):
         im.revert_scene(rw, _ctx(tenant, {"editor"}), "blk_1")   # 이전 없음
 
 
+def test_upload_replaces_image_keeps_previous(owner, rw, tenant):
+    # 내 사진 업로드: 현재 이미지를 교체하되 이전 것은 보존(비파괴). 웹 JPEG로 정규화.
+    import io
+    try:
+        from PIL import Image
+    except Exception:
+        pytest.skip("Pillow 없음")
+    h = tenant["hospital_id"]; _seed_image(owner, h)          # 현재=b"OLD"
+    buf = io.BytesIO(); Image.new("RGB", (32, 32), (200, 30, 30)).save(buf, "PNG")
+    im.upload_scene(rw, _ctx(tenant, {"editor"}), "blk_1", buf.getvalue())
+    from store.repositories import tenant_conn
+    with tenant_conn(rw, h) as cn:
+        cur = cn.execute(text("select data, mime from scene_images where hospital_id=:h and block_key='blk_1'"), {"h": h}).first()
+        hist = [bytes(r[0]) for r in cn.execute(text("select data from scene_image_versions "
+                "where hospital_id=:h and block_key='blk_1' order by seq"), {"h": h}).all()]
+    assert bytes(cur.data) != b"OLD" and cur.mime == "image/jpeg" and len(cur.data) > 0   # 업로드본으로 교체
+    assert hist == [b"OLD"]                                   # 이전 보존
+
+
+def test_upload_rejects_non_image(owner, rw, tenant):
+    from services.exceptions import InvalidStateTransition
+    h = tenant["hospital_id"]; _seed_image(owner, h)
+    with pytest.raises(InvalidStateTransition):
+        im.upload_scene(rw, _ctx(tenant, {"editor"}), "blk_1", b"not-an-image")
+
+
 def test_image_stale_on_scene_change(owner, rw, tenant):
     """이미지를 version v 장면으로 생성 후 대본 장면이 바뀌면 stale 파생 판정."""
     from store.testkit import new_version, new_block

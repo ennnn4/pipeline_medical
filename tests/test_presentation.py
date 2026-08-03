@@ -52,6 +52,9 @@ def test_version_page_current_shows_editform_and_approve():
     assert "새 버전이 생성되었습니다" in html                 # msg_code=edited 배너
     assert "미승인" in html                                  # stale 배지
     assert "/img/h/boncure/blk_1" in html and "근거 검증" in html  # 대사 옆 이미지·근거 패널
+    assert "💬 대사" in html and "🎨 AI 다시" in html and "내 사진 올리기" in html  # 스토리보드형 편집(업로드 포함)
+    assert 'action="/ui/h/boncure/versions/v-1/blocks/blk_1/upload-image"' in html
+    assert 'enctype=multipart/form-data' in html             # 업로드 form
 
 
 def test_version_page_noncurrent_is_readonly():

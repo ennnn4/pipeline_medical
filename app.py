@@ -761,6 +761,24 @@ def d_revert(h, version_id, block_key):
         return redirect(_ret(f"/scripts/{h}/{version_id}", "regenfail"))
 
 
+@app.post("/scripts/<h>/versions/<version_id>/blocks/<block_key>/upload-image")
+def d_upload(h, version_id, block_key):
+    from services import images as _svc
+    from services.exceptions import ServiceError
+    from store.db import make_engine
+    f = request.files.get("photo")
+    raw = f.read() if f else b""
+    try:
+        _svc.upload_scene(make_engine(), _dash_ctx(h), block_key, raw, version_id=version_id)
+        return redirect(_ret(f"/scripts/{h}/{version_id}", "uploaded", f"#img_{block_key}"))
+    except ServiceError as e:
+        if e.http_status == 401:
+            return redirect("/login")
+        return redirect(_ret(f"/scripts/{h}/{version_id}", "regenfail"))
+    except Exception:
+        return redirect(_ret(f"/scripts/{h}/{version_id}", "regenfail"))
+
+
 @app.get("/scripts/<h>/img/<block_key>")
 def d_img(h, block_key):
     from sqlalchemy import text as _t

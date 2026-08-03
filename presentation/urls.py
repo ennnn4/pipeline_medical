@@ -48,6 +48,9 @@ class StudioUrls:
     def revert(self, version_id, block_key):
         return self._u(f"/ui/h/{self.slug}/versions/{version_id}/blocks/{block_key}/revert-image")
 
+    def upload(self, version_id, block_key):
+        return self._u(f"/ui/h/{self.slug}/versions/{version_id}/blocks/{block_key}/upload-image")
+
     def logout(self):
         return self._u("/logout")
 
@@ -106,6 +109,9 @@ class DashboardUrls:
 
     def revert(self, version_id, block_key):
         return f"/scripts/{self.slug}/versions/{version_id}/blocks/{block_key}/revert-image"
+
+    def upload(self, version_id, block_key):
+        return f"/scripts/{self.slug}/versions/{version_id}/blocks/{block_key}/upload-image"
 
     def diff(self, version_id, from_version_id):
         return self._studio.diff(version_id, from_version_id)   # 디버그 JSON — 잔여 compat

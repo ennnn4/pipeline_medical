@@ -157,36 +157,52 @@ VERSION_MESSAGES = {
     "revoked": '<div class="msg s">승인이 철회되었습니다.</div>',
     "regen": '<div class="msg s">이미지를 다시 생성했습니다(이전 이미지도 보존됨).</div>',
     "reverted": '<div class="msg s">이전 이미지로 되돌렸습니다(방금 것도 보존됨).</div>',
+    "uploaded": '<div class="msg s">사진을 올렸습니다(이전 이미지도 보존됨).</div>',
     "regenfail": '<div class="msg e">이미지 재생성 실패(OpenAI 키/네트워크 확인).</div>',
 }
 
 
 def _block_row(b, urls, csrf, rt, version_id, script_id, is_current, img_keys, img_status):
-    """한 대사(블록) = 왼쪽 편집칸 + 오른쪽 그 대사의 AI 사진(다시/이전). 사진이 대사 옆에 붙는다.
-    편집·이미지 버튼은 같은 form 안에서 formaction으로 각 라우트에 제출(중첩 form 회피)."""
-    key = b["stable_block_key"]
-    ta = (f'<textarea name="edit__{escape(key)}">{escape(b["text"])}</textarea>' if is_current
-          else f'<textarea readonly>{escape(b["text"])}</textarea>')
-    # 오른쪽: 이 대사의 이미지
-    imgcell = '<div style="width:190px;flex:none"><small>이미지 없음</small></div>'
-    if key in (img_keys or set()):
-        stx = (img_status or {}).get(key) or {}
-        sb = ('<div class="badge stale" style="font-size:10px;margin-top:4px">⚠ 대본 바뀜 — 다시 권장</div>'
-              if stx.get("stale") and stx.get("reason") == "source_scene_changed" else "")
-        ctrls = ""
-        if is_current:
-            ctrls = (f'<div style="display:flex;gap:5px;margin-top:5px">'
-                     f'<button class="btn g" style="padding:5px 9px;font-size:12px" '
-                     f'formaction="{escape(urls.regen(version_id, key))}" formmethod=post '
-                     f'onclick="this.innerHTML=\'생성중…\'">🎨 다시</button>'
-                     + (f'<button class="btn g" style="padding:5px 9px;font-size:12px" '
-                        f'formaction="{escape(urls.revert(version_id, key))}" formmethod=post>↩ 이전</button>'
-                        if stx.get("has_prev") else "") + '</div>')
-        imgcell = (f'<div style="width:190px;flex:none"><img class=thumb style="height:120px;width:100%" '
-                   f'src="{escape(urls.img(key))}" alt="scene" onclick="LB(this)">{sb}{ctrls}</div>')
-    return (f'<div class=blk><div class=key>{escape(key)} · {escape(b["block_type"] or "")}</div>'
-            f'<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;margin-top:6px">'
-            f'<div style="flex:1;min-width:240px">{ta}</div>{imgcell}</div></div>')
+    """스토리보드 한 컷 = 화면 지시 + 대사(개별 저장) + 장면 이미지(AI 다시/이전 · 내 사진 업로드).
+    각 동작은 독립 form(중첩 없음): 대사저장·regen·revert·upload가 블록 div 안 sibling."""
+    key = b["stable_block_key"]; ekey = escape(key)
+    btype = escape(b.get("block_type") or "")
+    scene = b.get("scene")
+    scene_html = (f'<div style="font-size:12.5px;color:var(--muted,#8b95a1);margin-bottom:6px">🎬 화면: {escape(scene)}</div>'
+                  if scene else "")
+    if is_current:
+        texted = (f'<div style="font-size:11px;font-weight:700;color:var(--ink2,#4e5968);margin-bottom:3px">💬 대사</div>'
+                  f'<form method=post action="{escape(urls.edit(script_id))}">{csrf_field(csrf)}{rt}'
+                  f'<input type=hidden name=expected value="{escape(version_id)}">'
+                  f'<textarea name="edit__{ekey}">{escape(b["text"])}</textarea>'
+                  f'<button class=btn type=submit style="margin-top:5px;padding:6px 12px;font-size:12px">💾 이 대사 저장</button></form>')
+    else:
+        texted = f'<div style="font-size:11px;font-weight:700;margin-bottom:3px">💬 대사</div><textarea readonly>{escape(b["text"])}</textarea>'
+    # 이미지
+    stx = (img_status or {}).get(key) or {}
+    has_img = key in (img_keys or set())
+    img = (f'<img class=thumb style="height:130px;width:100%" src="{escape(urls.img(key))}" alt="scene" onclick="LB(this)">'
+           if has_img else '<div style="height:130px;border:1px dashed var(--border,#e5e8eb);border-radius:10px;'
+                           'display:grid;place-items:center;color:var(--muted,#8b95a1);font-size:12px">사진 없음</div>')
+    sb = ('<div class="badge stale" style="font-size:10px;margin-top:4px">⚠ 대본 바뀜 — 다시 권장</div>'
+          if stx.get("stale") and stx.get("reason") == "source_scene_changed" else "")
+    ctrls = upload = ""
+    if is_current:
+        ai = (f'<form method=post action="{escape(urls.regen(version_id, key))}" style="margin:0">{csrf_field(csrf)}{rt}'
+              f'<button class="btn g" style="padding:5px 9px;font-size:12px" onclick="this.innerHTML=\'생성중…\'">🎨 AI 다시</button></form>')
+        rev = (f'<form method=post action="{escape(urls.revert(version_id, key))}" style="margin:0">{csrf_field(csrf)}{rt}'
+               f'<button class="btn g" style="padding:5px 9px;font-size:12px">↩ 이전</button></form>'
+               if stx.get("has_prev") else "")
+        ctrls = f'<div style="display:flex;gap:5px;margin-top:5px;flex-wrap:wrap">{ai}{rev}</div>'
+        upload = (f'<form method=post action="{escape(urls.upload(version_id, key))}" enctype=multipart/form-data '
+                  f'style="margin-top:5px">{csrf_field(csrf)}{rt}'
+                  f'<input type=file name=photo accept="image/*" style="font-size:11px;width:100%">'
+                  f'<button class="btn g" style="padding:4px 9px;font-size:11px;margin-top:3px">⬆ 내 사진 올리기</button></form>')
+    imgcell = f'<div style="width:200px;flex:none">{img}{sb}{ctrls}{upload}</div>'
+    return (f'<div class=blk id="img_{ekey}"><div class=key>'
+            f'<span class="badge" style="background:#eef4ff;color:#3182f6">{btype}</span> {ekey}</div>'
+            f'<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;margin-top:8px">'
+            f'<div style="flex:1;min-width:240px">{scene_html}{texted}</div>{imgcell}</div></div>')
 
 
 def version_page(ws, urls, csrf, msg_code=None, return_to=None, embed=False):
@@ -200,13 +216,8 @@ def version_page(ws, urls, csrf, msg_code=None, return_to=None, embed=False):
     rt = _rt(return_to)
     rows = "".join(_block_row(b, urls, csrf, rt, version_id, script_id, is_current, img_keys, img_status)
                    for b in blocks)
-    # 하나의 편집 form: 대사 텍스트 저장 + 각 이미지 버튼(formaction). is_current일 때만 편집 가능.
-    if is_current:
-        editform = (f'<form method=post action="{escape(urls.edit(script_id))}">{csrf_field(csrf)}{rt}'
-                    f'<input type=hidden name=expected value="{escape(version_id)}">{rows}'
-                    f'<button class=btn type=submit style="margin-top:12px">💾 대본 저장</button></form>')
-    else:
-        editform = f'<p><small>현재 버전이 아니라 편집할 수 없습니다(불변).</small></p>{rows}'
+    # 블록마다 독립 저장(대사 저장·AI 다시·되돌리기·업로드 각각) — 중첩 form 없음.
+    editform = rows if is_current else f'<p><small>현재 버전이 아니라 편집할 수 없습니다(불변).</small></p>{rows}'
     act = ws["available_actions"]
     approve = reject = revoke = export = ""
     if act["can_approve"]:

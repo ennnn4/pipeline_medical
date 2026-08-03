@@ -8,7 +8,7 @@ import uuid, hashlib
 from sqlalchemy import text
 from store.repositories import tenant_conn
 from services import permissions
-from services.exceptions import NotFound, ServiceError
+from services.exceptions import NotFound, ServiceError, InvalidStateTransition
 
 
 def _default_generator(prompt):
@@ -78,6 +78,44 @@ def regenerate_scene(engine, ctx, block_key, feedback="", version_id=None, gener
     except Exception:
         pass
     return {"block_key": block_key}
+
+
+def upload_scene(engine, ctx, block_key, raw_bytes, version_id=None, topic=None):
+    """장면 이미지를 사용자가 올린 사진으로 교체(비파괴 — 현재 것은 히스토리 보존). 웹 JPEG로 정규화.
+    editor/approver/admin(+platform_operator)만. 이미지 없던 블록이면 새로 INSERT(topic 필요)."""
+    permissions.require(ctx, permissions.IMAGE_ROLES)
+    from store.seed_images import web_jpeg_bytes
+    if not raw_bytes:
+        raise InvalidStateTransition("업로드된 파일이 없습니다")
+    try:
+        jpg = web_jpeg_bytes(raw_bytes)                      # 리사이즈·JPEG 정규화(형식 오류면 예외)
+    except Exception:
+        raise InvalidStateTransition("이미지 파일이 아니거나 형식을 읽을 수 없습니다")
+    vid = (version_id if isinstance(version_id, uuid.UUID) else uuid.UUID(str(version_id))) if version_id else None
+    sh = None
+    with tenant_conn(engine, ctx.hospital_id, membership_id=ctx.membership_id) as conn:
+        exists = conn.execute(text("select topic from scene_images where hospital_id=:h and block_key=:k limit 1"),
+                              {"h": ctx.hospital_id, "k": block_key}).first()
+        if vid:
+            sh = _block_scene_hash(conn, ctx.hospital_id, vid, block_key)
+    with tenant_conn(engine, ctx.hospital_id, membership_id=ctx.membership_id,
+                     request_id=ctx.request_id) as conn:
+        _archive_current(conn, ctx.hospital_id, block_key)   # 비파괴: 현재 이미지 보존
+        if exists:
+            conn.execute(text(
+                "update scene_images set data=:d, mime='image/jpeg', prompt=coalesce(prompt,'[업로드]'), "
+                "source_version_id=:vid, source_scene_hash=:sh, generated_by_membership_id="
+                "NULLIF(current_setting('app.membership_id', true), '')::uuid, updated_at=now() "
+                "where hospital_id=:h and block_key=:k"),
+                {"d": jpg, "vid": vid, "sh": sh, "h": ctx.hospital_id, "k": block_key})
+        else:
+            tp = topic or (exists.topic if exists else None) or "업로드"
+            conn.execute(text(
+                "insert into scene_images(id,hospital_id,topic,block_key,mime,data,prompt,source_version_id,source_scene_hash,"
+                "generated_by_membership_id) values(gen_random_uuid(),:h,:tp,:k,'image/jpeg',:d,'[업로드]',:vid,:sh,"
+                "NULLIF(current_setting('app.membership_id', true), '')::uuid)"),
+                {"h": ctx.hospital_id, "tp": tp, "k": block_key, "d": jpg, "vid": vid, "sh": sh})
+    return {"block_key": block_key, "uploaded": True}
 
 
 def revert_scene(engine, ctx, block_key, seq=None):

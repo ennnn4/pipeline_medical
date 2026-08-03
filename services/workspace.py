@@ -28,7 +28,7 @@ def get_version_workspace(engine, ctx, version_id, policy="policy-1"):
         if sc is None:
             raise NotFound("버전을 찾을 수 없습니다")
         blocks = [dict(r) for r in conn.execute(text(
-            "select stable_block_key, order_index, block_type, text from script_blocks "
+            "select stable_block_key, order_index, block_type, scene, text from script_blocks "
             "where hospital_id=:h and version_id=:v order by order_index"),
             {"h": ctx.hospital_id, "v": vid}).mappings()]
         stale = repo.is_stale(conn, _as_uuid(ctx.hospital_id), vid, policy)
