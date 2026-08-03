@@ -368,9 +368,14 @@ def hospital(h):
         misswarn += '<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 40MB 넘는 파일은 제외됐어요(영구저장 한도). 나눠서 올려주세요.</div>'
     if request.args.get("err") == "nopg":
         misswarn += '<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 이 병원은 영구저장(PostgreSQL)에 등록되지 않아 업로드를 막았어요(임시저장 방지). 관리자에게 병원 재등록을 요청하세요.</div>'
-    # ③ 결과물: 편집 버튼 없이, 현재 대본을 대사별(텍스트+그 장면 AI 사진)로 이 화면에서 바로 수정.
-    inline_edit = _inline_workspace(h)
-    outlist = ("".join(f'<div class=out><span>{os.path.basename(o)[:-5]}</span><a class=btn href="/h/{h}/view/{os.path.basename(o)}" target=_blank>스토리보드 미리보기</a></div>' for o in outs) or '<div class=muted>아직 만든 대본이 없어요.</div>')
+    # ③ 결과물: 목록만. '✏️ 편집' = 예쁜 스토리보드를 그대로 두고 대사 편집·AI사진 얹은 편집 페이지.
+    def _topic_of(fn):
+        b = os.path.basename(fn)
+        return b[:-len("_package.html")] if b.endswith("_package.html") else b[:-5]
+    outlist = ("".join(f'<div class=out><span>{os.path.basename(o)[:-5]}</span>'
+                       f'<a class=btn href="/h/{h}/edit/{_topic_of(o)}">✏️ 편집(대사·사진)</a>'
+                       f'<a class="btn g" href="/h/{h}/view/{os.path.basename(o)}" target=_blank>미리보기</a></div>'
+                       for o in outs) or '<div class=muted>아직 만든 대본이 없어요.</div>')
     dz_opts = "".join(f'<button type=button class="btn dz" onclick="setTopic(this)">{d}</button>' for d in diseases)
     job = job_get(h)
     running = job.get("running")
@@ -417,8 +422,7 @@ def hospital(h):
     <div class=card>
       <h2 style="margin-top:0">③ 결과물</h2>
       {outlist}
-    </div>
-    {inline_edit}"""
+    </div>"""
     script = """<script>
     var drop=document.getElementById('drop'),fin=document.getElementById('fin');
     drop.onclick=function(){fin.click()};
@@ -932,6 +936,61 @@ def view(h, fn):
     p = os.path.join(data_dir(h,"out"), os.path.basename(fn))
     if not os.path.exists(p): abort(404)
     return send_file(p)
+
+@app.route("/h/<h>/edit/<topic>")
+def edit_story(h, topic):
+    """예쁜 스토리보드를 '그대로' 동적 재렌더 + 대사 ✏️수정 + 장면 AI사진(다시·이전·업로드).
+    논문그림·화면·타임코드 등 비주얼은 package/assets로 유지, 대사는 PG 현재본, 이미지는 PG scene_images."""
+    import json as _json
+    from render.render import render as _render, _meta
+    from services.context import ActorContext
+    from services.exceptions import ServiceError
+    from store.db import make_engine
+    from store.repositories import tenant_conn
+    from sqlalchemy import text as _t
+    base = os.path.join(data_dir(h, "out"), f"{os.path.basename(topic)}_package")
+    if not os.path.exists(base + ".json"):
+        abort(404)
+    pkg = _json.load(open(base + ".json", encoding="utf-8"))
+    def _ld(suf, key=None):
+        p = base + suf
+        if not os.path.exists(p):
+            return None
+        try:
+            d = _json.load(open(p, encoding="utf-8")); return d.get(key) if key else d
+        except Exception:
+            return None
+    evidence = _ld(".evidence.json", "results"); images = _ld(".assets.json")
+    # PG 계정 아니면(또는 병원 미연결) 예쁜 정적 미리보기로 안내
+    try:
+        eng = make_engine()
+        ctx = ActorContext.resolve(eng, session.get("user_id"), h, getattr(g, "request_id", None))
+    except ServiceError:
+        return redirect(f"/h/{h}/view/{os.path.basename(topic)}_package.html")
+    with tenant_conn(eng, ctx.hospital_id) as cn:
+        row = cn.execute(_t("select sv.id vid, sv.script_id sid from script_versions sv join scripts s "
+                            "on s.id=sv.script_id where sv.hospital_id=:h and s.current_version_id=sv.id "
+                            "order by sv.created_at desc limit 1"), {"h": ctx.hospital_id}).first()
+        if not row:
+            return redirect(f"/h/{h}/view/{os.path.basename(topic)}_package.html")
+        vid, sid = row.vid, row.sid
+        blocks = cn.execute(_t("select order_index, stable_block_key, text from script_blocks "
+                               "where hospital_id=:h and version_id=:v order by order_index"),
+                            {"h": ctx.hospital_id, "v": vid}).all()
+        imgkeys = {r[0] for r in cn.execute(_t("select block_key from scene_images where hospital_id=:h"), {"h": ctx.hospital_id})}
+        prevkeys = {r[0] for r in cn.execute(_t("select distinct block_key from scene_image_versions where hospital_id=:h"), {"h": ctx.hospital_id})}
+    csrf = f'<input type="hidden" name="_csrf" value="{session.get("_csrf","")}">'
+    rt = f'<input type="hidden" name="return_to" value="/h/{h}/edit/{os.path.basename(topic)}">'
+    vid_s = str(vid)
+    edit = {"by_idx": {b.order_index: {"key": b.stable_block_key, "text": b.text} for b in blocks},
+            "csrf": csrf, "rt": rt, "version_id": vid_s,
+            "edit_url": f"/scripts/{h}/{sid}/edit",
+            "img_url": (lambda k: f"/scripts/{h}/img/{k}"),
+            "has_img": (lambda k: k in imgkeys), "has_prev": (lambda k: k in prevkeys),
+            "regen_url": (lambda k: f"/scripts/{h}/versions/{vid_s}/blocks/{k}/regen-image"),
+            "revert_url": (lambda k: f"/scripts/{h}/versions/{vid_s}/blocks/{k}/revert-image"),
+            "upload_url": (lambda k: f"/scripts/{h}/versions/{vid_s}/blocks/{k}/upload-image")}
+    return _render(pkg, _meta(h), evidence=evidence, images=images, edit=edit)
 
 LOGIN = """<!doctype html><html lang=ko><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
 <title>로그인 · 병원 유튜브 대본 생성기</title><style>{{css}}</style></head><body>

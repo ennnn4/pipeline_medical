@@ -127,7 +127,56 @@ def _emph(text):
         t = t.replace(kw, f"<b>{kw}</b>")
     return t
 
-def render(pkg, meta=None, evidence=None, images=None):
+# ── 편집 오버레이(대사 ✏️수정 + 장면 AI사진 다시/이전/업로드) — 예쁜 스토리보드는 그대로, 편집만 얹음 ──
+_ED_CSS = """
+.ed-btn{font-size:11px;padding:2px 9px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--acci);cursor:pointer;margin-left:8px;vertical-align:middle;font-weight:700}
+.ed-f{margin-top:8px}
+.ed-f textarea{width:100%;min-height:96px;font-family:inherit;font-size:14px;line-height:1.6;padding:10px 12px;border:1px solid var(--border);border-radius:9px;background:var(--card);color:var(--ink);box-sizing:border-box}
+.eb{font-size:12px;font-weight:700;padding:6px 12px;border-radius:8px;border:1px solid transparent;background:#3182f6;color:#fff;cursor:pointer}
+.eb.g{background:var(--card);color:var(--ink);border:1px solid var(--border)}
+.ai-box{border:1px solid var(--border);border-radius:12px;padding:12px 13px;background:var(--surface)}
+.ai-box .pb-h{font-size:13px;font-weight:800;color:var(--acci);margin-bottom:6px}
+.ai-img{width:100%;max-width:190px;border-radius:8px;display:block;cursor:zoom-in}
+.ai-none{height:100px;border:1px dashed var(--border);border-radius:8px;display:grid;place-items:center;color:var(--muted);font-size:12px}
+.ai-r{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}
+"""
+_ED_JS = """<script>
+function edE(k){document.getElementById('say_'+k).style.display='none';document.getElementById('edf_'+k).style.display='block';}
+function edC(k){document.getElementById('edf_'+k).style.display='none';document.getElementById('say_'+k).style.display='inline';}
+</script>"""
+
+
+def _ed_say(say_esc, key, edit):
+    """대사: 평소엔 완성문장, ✏️수정 누르면 그 자리서 편집·저장(대시보드 edit 라우트로)."""
+    ek = esc(key)
+    return (f'<span class="desc" id="say_{ek}">{say_esc}</span>'
+            f'<button class="ed-btn" type="button" onclick="edE(\'{ek}\')">✏️ 수정</button>'
+            f'<form class="ed-f" id="edf_{ek}" method="post" action="{esc(edit["edit_url"])}" style="display:none">'
+            f'{edit["csrf"]}{edit["rt"]}<input type="hidden" name="expected" value="{esc(edit["version_id"])}">'
+            f'<textarea name="edit__{ek}">{say_esc}</textarea>'
+            f'<div style="margin-top:7px;display:flex;gap:6px"><button class="eb" type="submit">💾 저장</button>'
+            f'<button class="eb g" type="button" onclick="edC(\'{ek}\')">취소</button></div></form>')
+
+
+def _ed_img(key, edit):
+    """이 장면의 AI 사진 + 🎨 AI 다시 · ↩ 이전 · ⬆ 내 사진 업로드(논문 그림 썸네일과 나란히)."""
+    ek = esc(key); csrf = edit["csrf"]; rt = edit["rt"]
+    if edit["has_img"](key):
+        u = esc(edit["img_url"](key))
+        img = f'<a href="{u}" target="_blank"><img class="ai-img" src="{u}" alt="AI 사진"></a>'
+    else:
+        img = '<div class="ai-none">AI 사진 없음 — 만들거나 올리세요</div>'
+    regen = (f'<form method="post" action="{esc(edit["regen_url"](key))}" style="margin:0">{csrf}{rt}'
+             f'<button class="eb g" onclick="this.innerHTML=\'생성중…\'">🎨 AI 다시</button></form>')
+    revert = ((f'<form method="post" action="{esc(edit["revert_url"](key))}" style="margin:0">{csrf}{rt}'
+               f'<button class="eb g">↩ 이전</button></form>') if edit["has_prev"](key) else "")
+    upload = (f'<form method="post" action="{esc(edit["upload_url"](key))}" enctype="multipart/form-data" style="margin-top:6px">{csrf}{rt}'
+              f'<input type="file" name="photo" accept="image/*" style="font-size:11px;max-width:170px">'
+              f'<button class="eb g" style="margin-top:4px">⬆ 내 사진 올리기</button></form>')
+    return f'<div class="ai-box"><div class="pb-h">🖼 이 장면 AI 사진</div>{img}<div class="ai-r">{regen}{revert}</div>{upload}</div>'
+
+
+def render(pkg, meta=None, evidence=None, images=None, edit=None):
     meta = meta or {}
     script = pkg.get("script", [])
     say_chars = sum(len((b.get("say") or "").replace(" ","")) for b in script)
@@ -158,12 +207,21 @@ def render(pkg, meta=None, evidence=None, images=None):
             planbox = (f'<div class="planbox"><div class="pb-h">🎬 이 장면 이미지 <span class="pb-tag">논문에 없음</span></div>'
                        f'<details class="pb-d"><summary>🤖 AI 생성 프롬프트 <button class="pb-copy" type="button">복사</button></summary>'
                        f'<div class="pb-p">{esc(plan.get("prompt",""))}</div></details></div>')   # 스톡 구매 버튼 제거(요청)
-        sidecol = f'<div class="sidecol">{refwrap}{planbox}</div>' if (thumbs or planbox) else ""
+        # 편집 오버레이: 이 비트↔PG 블록(order_index=idx) 매핑. 대사=PG 현재본, AI 사진 셀 추가.
+        say = b.get('say', '')
+        ekey = None
+        if edit:
+            bi = edit["by_idx"].get(idx)
+            if bi:
+                ekey = bi["key"]; say = bi.get("text") or say
+        ai_cell = _ed_img(ekey, edit) if (edit and ekey) else ""
+        say_html = _ed_say(esc(say), ekey, edit) if (edit and ekey) else f'<span class="desc">{esc(say)}</span>'
+        sidecol = f'<div class="sidecol">{refwrap}{ai_cell}{planbox}</div>' if (thumbs or planbox or ai_cell) else ""
         beats += f"""<div class="beat{crit}"><div class="tc">{esc(tc_html)}</div><div class="body">
           <div class="bt">{esc(b.get('block',''))} {tags}</div>
           <div class="stage">{frame_html(b, esc(tc.split('–')[0].split(' - ')[0].strip()))}{sidecol}</div>
           <div class="scene"><span class="lab">🎬 화면</span><span class="desc">{esc(b.get('scene',''))}</span></div>
-          <div class="scene talk"><span class="lab">🎙 대사</span><span class="desc">{esc(b.get('say',''))}</span></div>
+          <div class="scene talk"><span class="lab">🎙 대사</span>{say_html}</div>
         </div></div>"""
 
     def acc(title, items):
@@ -313,7 +371,7 @@ def render(pkg, meta=None, evidence=None, images=None):
         plan_js = r"""<script>document.querySelectorAll('.pb-copy').forEach(function(btn){btn.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();var d=btn.closest('.pb-d');var p=d&&d.querySelector('.pb-p');if(!p)return;function ok(){var o=btn.textContent;btn.textContent='복사됨';setTimeout(function(){btn.textContent='복사';},1200);}if(navigator.clipboard){navigator.clipboard.writeText(p.textContent).then(ok,function(){});}else{var ta=document.createElement('textarea');ta.value=p.textContent;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');ok();}catch(err){}document.body.removeChild(ta);}});});</script>"""
 
     return f"""<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{esc(title)} · 본큐어 유튜브</title><style>{CSS}</style></head><body>
+<title>{esc(title)} · 본큐어 유튜브</title><style>{CSS}{_ED_CSS if edit else ''}</style></head><body>
 <nav class="nav"><div class="nav-in"><div class="brand"><span class="dot">본</span>본큐어 유튜브 · 대본 패키지</div>
 <div class="nav-links"><a href="#hook">기획</a><a href="#script">대본</a><a href="#deliverables">산출물</a>{'<a href="#evidence-check">근거 검수</a>' if evidence else ''}<a href="#review">원장 검수</a></div>
 <button class="toggle" id="tg" aria-label="테마 전환">◐</button></div></nav>
@@ -342,6 +400,7 @@ def render(pkg, meta=None, evidence=None, images=None):
 {lb_js}
 {plan_js}
 {_rvjs}
+{_ED_JS if edit else ''}
 </body></html>"""
 
 def _meta(hospital="boncure"):
