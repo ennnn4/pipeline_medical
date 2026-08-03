@@ -206,13 +206,8 @@ def render(pkg, meta=None, evidence=None, images=None, edit=None):
             thumbs += f'<img class="rth" src="{esc(g.get("src",""))}" data-i="{gi}" loading="lazy" alt="논문 그림" title="{esc(g.get("caption",""))}">'
         n = len(beat_figs.get(str(idx), []))
         refwrap = f'<div class="refthumbs"><div class="rth-row">{thumbs}</div><div class="rth-lab">📄 논문 그림 {n}장 · 클릭해 확대</div></div>' if thumbs else ""
-        # 논문사진이 없지만 시각자료가 필요한 장면 → AI 프롬프트 + 구매 칩(옆에 인라인)
-        plan = plan_by_tc.get(tc)
+        # (제거 요청) '이 장면 이미지/AI 생성 프롬프트' planbox 삭제 — 편집화면의 실제 AI 사진 셀로 대체.
         planbox = ""
-        if plan:
-            planbox = (f'<div class="planbox"><div class="pb-h">🎬 이 장면 이미지 <span class="pb-tag">논문에 없음</span></div>'
-                       f'<details class="pb-d"><summary>🤖 AI 생성 프롬프트 <button class="pb-copy" type="button">복사</button></summary>'
-                       f'<div class="pb-p">{esc(plan.get("prompt",""))}</div></details></div>')   # 스톡 구매 버튼 제거(요청)
         # 편집 오버레이: 이 비트↔PG 블록(order_index=idx) 매핑. 대사=PG 현재본, AI 사진 셀 추가.
         say = b.get('say', '')
         ekey = None
