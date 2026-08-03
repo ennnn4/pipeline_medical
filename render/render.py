@@ -129,6 +129,10 @@ def _emph(text):
 
 # ── 편집 오버레이(대사 ✏️수정 + 장면 AI사진 다시/이전/업로드) — 예쁜 스토리보드는 그대로, 편집만 얹음 ──
 _ED_CSS = """
+.stage .sidecol{max-width:none;flex:1 1 340px;flex-direction:row;flex-wrap:wrap;align-items:flex-start;gap:14px}
+.stage .sidecol .refthumbs{flex:0 0 auto}
+.stage .sidecol .ai-box{flex:1 1 260px}
+.ai-img{max-width:100%}
 .scene.talk{display:block}
 .scene.talk .lab{display:block;margin-bottom:5px}
 .ed-btn{font-size:11px;padding:2px 9px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--acci);cursor:pointer;margin-left:8px;vertical-align:middle;font-weight:700}
