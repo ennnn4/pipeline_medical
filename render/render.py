@@ -129,9 +129,10 @@ def _emph(text):
 
 # ── 편집 오버레이(대사 ✏️수정 + 장면 AI사진 다시/이전/업로드) — 예쁜 스토리보드는 그대로, 편집만 얹음 ──
 _ED_CSS = """
+.stage .frame-cap{display:none}
 .stage .sidecol{max-width:none;flex:1 1 340px;flex-direction:row;flex-wrap:wrap;align-items:flex-start;gap:14px}
-.stage .sidecol .refthumbs{flex:0 0 auto}
-.stage .sidecol .ai-box{flex:1 1 260px}
+.stage .sidecol .ai-box{flex:1 1 300px;order:1}
+.stage .sidecol .refthumbs{flex:0 0 auto;order:2}
 .ai-img{max-width:100%}
 .scene.talk{display:block}
 .scene.talk .lab{display:block;margin-bottom:5px}
@@ -217,7 +218,8 @@ def render(pkg, meta=None, evidence=None, images=None, edit=None):
                 ekey = bi["key"]; say = bi.get("text") or say
         ai_cell = _ed_img(ekey, edit) if (edit and ekey) else ""
         say_html = _ed_say(esc(say), ekey, edit) if (edit and ekey) else f'<span class="desc">{esc(say)}</span>'
-        sidecol = f'<div class="sidecol">{refwrap}{ai_cell}{planbox}</div>' if (thumbs or planbox or ai_cell) else ""
+        # AI 사진 먼저(왼쪽) → 논문 사진 오른쪽, 가로 병렬(요청).
+        sidecol = f'<div class="sidecol">{ai_cell}{refwrap}</div>' if (thumbs or ai_cell) else ""
         beats += f"""<div class="beat{crit}"><div class="tc">{esc(tc_html)}</div><div class="body">
           <div class="bt">{esc(b.get('block',''))} {tags}</div>
           <div class="stage">{frame_html(b, esc(tc.split('–')[0].split(' - ')[0].strip()))}{sidecol}</div>
