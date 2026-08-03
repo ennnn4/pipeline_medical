@@ -558,6 +558,17 @@ def scripts_edit(h, version_id, section="edit"):
     from presentation.urls import DashboardUrls
     from store.db import make_engine
     eng = make_engine()
+    if not session.get("user_id"):
+        # 레거시 users.yaml 계정(admin 등)은 PostgreSQL 신원이 없어 편집화면(PG 멤버십 필요)을 못 엶.
+        # 홈으로 조용히 튕기지 않고 원인·해결을 안내(계정 이슈이지 기능 오류 아님).
+        return _render.page("편집 권한 계정 필요",
+            '<div class=card><h1>이 계정으로는 편집화면을 열 수 없어요</h1>'
+            '<p>편집 · 근거검증 · 장면이미지 · 승인 화면은 <b>PostgreSQL 계정</b>(병원 담당 이메일)으로 '
+            '로그인해야 열립니다. 지금 로그인한 <b>admin</b>은 관리용 레거시 계정이라 병원 멤버십이 없습니다.</p>'
+            '<p>로그아웃 후 <b>병원 담당 이메일 계정</b>(예: <code>demo@boncure.kr</code>)으로 다시 로그인하면 '
+            '편집화면과 장면이미지가 바로 열립니다.</p>'
+            '<a class="btn" href="/logout">로그아웃하고 다시 로그인</a> '
+            '<a class="btn g" href="/" style="margin-left:6px">← 대시보드</a></div>'), 200
     try:
         ctx = ActorContext.resolve(eng, session.get("user_id"), h, getattr(g, "request_id", None))
         ws = workspace_service.get_version_workspace(eng, ctx, version_id)
