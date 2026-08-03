@@ -135,9 +135,13 @@ CREATE TRIGGER trg_freeze_assessment BEFORE INSERT ON claim_assessments
 
 # 사람 판정(human_review) 전용 쓰기 함수(GPT P0) — app_rw 직접 INSERT 회수, capability를 DB가 강제.
 # waive/not_applicable=admin, accepted/rejected=approver/admin. 승인/철회 version은 동결(P2013).
+# platform 부여 role(grant_source='platform')은 연결된 grant가 active + revoked_at 없을 때만 유효(GPT).
 _ROLE = ("EXISTS (SELECT 1 FROM public.hospital_memberships hm JOIN public.membership_roles mr "
          "ON mr.hospital_id=hm.hospital_id AND mr.membership_id=hm.id "
-         "WHERE hm.hospital_id=p_hospital AND hm.id=v_actor AND hm.archived_at IS NULL AND mr.role IN ({roles}))")
+         "LEFT JOIN public.platform_access_grants g ON g.id=mr.platform_grant_id "
+         "WHERE hm.hospital_id=p_hospital AND hm.id=v_actor AND hm.archived_at IS NULL "
+         "AND mr.revoked_at IS NULL AND (mr.grant_source <> 'platform' OR g.status='active') "
+         "AND mr.role IN ({roles}))")
 _FN_ADD_ASSESSMENT = ("""
 CREATE OR REPLACE FUNCTION public.fn_add_human_assessment(
   p_hospital uuid, p_claim uuid, p_support text, p_verif text, p_risk text,
@@ -181,7 +185,7 @@ BEGIN
   RETURN v_id;
 END $$;
 """.replace("__ROLE_ADMIN__", _ROLE.format(roles="'admin'"))
-   .replace("__ROLE_APPROVER__", _ROLE.format(roles="'approver','admin'")))
+   .replace("__ROLE_APPROVER__", _ROLE.format(roles="'approver','admin','platform_operator'")))  # 근거 accepted/rejected는 platform_operator도(waive/na는 admin만)
 
 _FN_ADD_GRANTS = [
     "REVOKE INSERT ON claim_assessments FROM app_rw;",   # 사람 판정은 전용 함수로만

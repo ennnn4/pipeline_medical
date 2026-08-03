@@ -30,10 +30,12 @@ def bootstrapped_url():
     from store.ingest import ensure_gen_schema
     from store.materials import ensure_materials_schema
     from store.provision import ensure_provision
+    from store.platform_ops import ensure_platform_ops
     from store.approval_foundation import ensure_approval_foundation
     from store.seed_images import ensure_scene_images
     from store.approval_fns import ensure_approval_fns
     ensure_gen_schema(eng); ensure_materials_schema(eng); ensure_provision(eng)
+    ensure_platform_ops(eng)
     ensure_approval_foundation(eng); ensure_scene_images(eng); ensure_approval_fns(eng)
     yield eng
     eng.dispose()
@@ -50,10 +52,29 @@ def test_approval_fn_is_strengthened_single_owner(bootstrapped_url):
     assert owner == "app_owner"            # 소유권 유지
 
 
+def test_platform_ops_objects_and_acl(bootstrapped_url):
+    # platform operator: 테이블·컬럼·함수 존재 + ensure는 app_rw 실행 가능, grant/revoke는 불가, 직접 쓰기 회수.
+    with bootstrapped_url.connect() as cn:
+        assert cn.execute(text("select to_regclass('public.platform_access_grants')")).scalar()
+        for col in ("grant_source", "platform_grant_id", "revoked_at"):
+            assert cn.execute(text("select 1 from information_schema.columns where table_name='membership_roles' "
+                                   "and column_name=:c"), {"c": col}).scalar(), col
+        ens = cn.execute(text("select has_function_privilege('app_rw','public.fn_ensure_platform_operator_membership(uuid)','EXECUTE')")).scalar()
+        lst = cn.execute(text("select has_function_privilege('app_rw','public.fn_list_platform_hospitals()','EXECUTE')")).scalar()
+        grant_x = cn.execute(text("select has_function_privilege('app_rw','public.fn_grant_platform_operator(uuid,uuid)','EXECUTE')")).scalar()
+        ins = cn.execute(text("select has_table_privilege('app_rw','platform_access_grants','INSERT')")).scalar()
+        sel = cn.execute(text("select has_table_privilege('app_rw','platform_access_grants','SELECT')")).scalar()
+    assert ens is True and lst is True         # resolve·병원목록은 app_rw 실행
+    assert grant_x is False                    # 부여/철회는 owner 전용
+    assert ins is False and sel is True        # 직접 쓰기 회수, 읽기만(role 유효성 판정용)
+
+
 def test_required_functions_exist(bootstrapped_url):
     need = {"fn_approve_core", "fn_self_approve_version", "fn_reject_version", "fn_revoke_version",
             "fn_add_human_assessment", "fn_mark_version_superseded", "fn_freeze_assessment_if_decided",
-            "fn_seal_job_materials", "fn_provision_hospital"}
+            "fn_seal_job_materials", "fn_provision_hospital",
+            "fn_ensure_platform_operator_membership", "fn_grant_platform_operator",
+            "fn_revoke_platform_operator", "fn_list_platform_hospitals"}
     with bootstrapped_url.connect() as cn:
         have = {r[0] for r in cn.execute(text("select proname from pg_proc where proname = any(:n)"),
                                          {"n": list(need)})}
