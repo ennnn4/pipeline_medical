@@ -62,11 +62,13 @@
     <h2><span class="n">▶</span>물리 통합 브랜치 진행 — <code>physical-consolidation</code></h2>
     <div class="row"><span class="tag">✓ 7A</span><p><b>presentation 추출</b> — /studio 렌더링(_page·패널·CSS·라이트박스)을 공유 <code>presentation/</code>(render·urls·formatters)로 이관. Flask 미의존, URL 어댑터 주입. /studio는 URL 불변으로 그걸 렌더.</p></div>
     <div class="row"><span class="tag">✓ 7B</span><p><b>대시보드 직접 렌더</b> — <code>/scripts/&lt;h&gt;/&lt;vid&gt;</code>가 /studio 리다이렉트 대신 workspace service+공유 presentation으로 <b>직접 렌더</b>(canonical). DashboardUrls: 읽기=대시보드, 쓰기·자산=/studio compat(세션·CSRF 공유).</p></div>
-    <div class="row"><span class="tag todo">8·9</span><p><b>parity → cutover</b> — 내부링크 전환→/studio GET 302→legacy write 관찰→<b>7~14일 연속 POST/API 0 확인 후</b> DispatcherMiddleware·studio app 제거. GPT가 관측에 게이트 → 라이브 관측 대기.</p></div>
-    <div class="row"><span class="tag todo">R2</span><p><b>R2/S3</b> — bytea 추세가 기준 넘을 때(<code>store.storage_stats</code>로 관측).</p></div>
+    <div class="row"><span class="tag">✓ 관측</span><p><b>surface/compat</b> — http 이벤트에 surface(studio_legacy/dashboard_canonical)·compat 태깅. 대시보드 after_request 신설. cutover 판단을 로그에서 바로 집계.</p></div>
+    <div class="row"><span class="tag">✓ 8</span><p><b>읽기 parity</b> — studio(/ui)·대시보드(/scripts)가 같은 버전 렌더 시 핵심요소 동등 테스트. 내부 링크는 이미 /scripts canonical.</p></div>
+    <div class="row"><span class="tag todo">9</span><p><b>cutover·제거</b> — 머지·배포→관측→/studio GET 302→legacy POST <b>7~14일 0 확인 후</b> studio app 제거. <b>라이브 관측 게이트</b>.</p></div>
+    <div class="row"><span class="tag todo">R2</span><p><b>R2/S3</b> — bytea 추세가 기준 넘을 때(<code>store.storage_stats</code>).</p></div>
   </div>
 
-  <div class="note">GPT 승인대로 물리 통합 브랜치에서 <b>7A(추출)·7B(대시보드 직접 렌더)</b>를 완료했습니다. 개발은 진행 가능하고, <b>cutover·/studio 제거만 라이브 관측(legacy POST/API=0)에 게이트</b>되어 있습니다. 154 tests green. master는 운영 마감까지 라이브, 물리 통합은 branch에서 리뷰 대기.</div>
+  <div class="note">물리 통합 브랜치에서 GPT 개발 항목(<b>7A 추출·7B 대시보드 직접 렌더·surface/compat 관측·읽기 parity</b>)을 <b>전부 완료</b>했습니다. 156 tests green. 브랜치는 <b>머지 준비 완료</b> — cutover·/studio 제거만 라이브 관측(legacy POST=0, 7~14일)에 게이트됩니다. master는 운영 마감까지 라이브.</div>
 
   <div class="gpthint">아래 상자를 눌러 전체 선택 후 복사하거나, 버튼을 누르세요.</div>
   <textarea id="gpt" readonly onclick="this.focus();this.select();">[본큐어 파이프라인 — 관측성·관문 보강 완료(GPT 추가 요구 전부 반영)]
