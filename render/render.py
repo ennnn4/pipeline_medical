@@ -10,6 +10,10 @@ try:
 except ImportError:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from frames import frame_html
+try:
+    from web.branding import LOGO_URI     # 홈과 동일한 Medical Pipeline 로고(data URI)
+except Exception:
+    LOGO_URI = ""
 
 CSS = """
 :root{--bg:#fff;--surface:#f9fafb;--surface2:#f2f4f6;--card:#fff;--border:#e5e8eb;--ink:#191f28;--ink2:#4e5968;--muted:#8b95a1;--accent:#3182f6;--accw:#eaf2fe;--acci:#1b64da;--good:#12b886;--gw:#e6f7f0;--warn:#f59f00;--ww:#fff4e0;--danger:#f04452;--dw:#fdeaec;--radius:20px;--radius-sm:12px;--shadow:0 1px 3px rgba(25,31,40,.04),0 8px 24px rgba(25,31,40,.05);--font:'Pretendard',-apple-system,BlinkMacSystemFont,'Malgun Gothic',system-ui,sans-serif;--maxw:1080px}
@@ -387,7 +391,7 @@ def render(pkg, meta=None, evidence=None, images=None, edit=None):
 
     return f"""<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{esc(title)} · 본큐어 유튜브</title><style>{CSS}{_ED_CSS if edit else ''}</style></head><body>
-<nav class="nav"><div class="nav-in"><div class="brand"><span class="dot">OM</span>아워마케팅</div>
+<nav class="nav"><div class="nav-in"><div class="brand">{('<img src="'+LOGO_URI+'" alt="Medical Pipeline" style="height:28px">') if LOGO_URI else '<span class="dot">OM</span>아워마케팅'}</div>
 <div class="nav-links"><a href="#hook">기획</a><a href="#script">대본</a><a href="#deliverables">산출물</a>{'<a href="#evidence-check">근거 검수</a>' if evidence else ''}<a href="#review">원장 검수</a></div>
 <button class="toggle" id="tg" aria-label="테마 전환">◐</button></div></nav>
 <header class="hero wrap"><span class="eyebrow">Episode Package · 콘텐츠 디렉터 시스템</span>
