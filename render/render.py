@@ -212,7 +212,7 @@ def render(pkg, meta=None, evidence=None, images=None, edit=None):
     beats = ""
     for idx, b in enumerate(script):
         tc = b.get("tc","")
-        tc_html = tc.replace("–","<br>").replace(" - ","<br>")
+        tc_html = esc(tc).replace("–","<br>").replace(" - ","<br>")   # esc 먼저 → 그 다음 <br> 삽입(안 그럼 <br>가 글자로 이스케이프됨)
         crit = " crit" if any(w in (b.get("block","")) for w in crit_words) else ""
         tags = "".join(f'<span class="tag{" bad" if "0" in t or "없음" in t else ""}">{esc(t)}</span>' for t in b.get("tags",[]))
         # 이 장면에 매칭된 논문 그림 → 작은 썸네일 줄(클릭 시 라이트박스 확대·넘기기)
@@ -236,7 +236,7 @@ def render(pkg, meta=None, evidence=None, images=None, edit=None):
         say_html = _ed_say(esc(say), ekey, edit) if (edit and ekey) else f'<span class="desc">{esc(say)}</span>'
         # AI 사진 먼저(왼쪽) → 논문 사진 오른쪽, 가로 병렬(요청).
         sidecol = f'<div class="sidecol">{ai_cell}{refwrap}</div>' if (thumbs or ai_cell) else ""
-        beats += f"""<div class="beat{crit}"><div class="tc">{esc(tc_html)}</div><div class="body">
+        beats += f"""<div class="beat{crit}"><div class="tc">{tc_html}</div><div class="body">
           <div class="bt">{esc(b.get('block',''))} {tags}</div>
           <div class="stage">{frame_html(b, esc(tc.split('–')[0].split(' - ')[0].strip()))}{sidecol}</div>
           <div class="scene"><span class="lab">🎬 화면</span><span class="desc">{esc(b.get('scene',''))}</span></div>
@@ -318,13 +318,13 @@ def render(pkg, meta=None, evidence=None, images=None, edit=None):
     if images:
         _zhref = images.get("zip_datauri") or images.get("zip")   # 임베드(data URI) 우선 → 어디서 열든 다운로드됨
         _zname = images.get("zip_name") or "images.zip"
-        zipline = (f'<p class="lead" style="margin-top:14px">📦 <a href="{esc(_zhref)}" download="{esc(_zname)}">이미지 zip 다운로드</a> — 추출한 논문 그림(원본) + 장면별 AI프롬프트·구매링크 매니페스트</p>' if _zhref else "")
-        fc = images.get("fig_count", 0); mc = images.get("matched_count", 0); pc = len(images.get("plans", []))
+        zipline = (f'<p class="lead" style="margin-top:14px">📦 <a href="{esc(_zhref)}" download="{esc(_zname)}">이미지 zip 다운로드</a> — 추출한 논문 그림(원본) 모음</p>' if _zhref else "")
+        fc = images.get("fig_count", 0); mc = images.get("matched_count", 0)
+        _figline = (f'· 📄 논문 그림 <b>{fc}장</b> 추출 → 관련 <b>{mc}장</b>을 근거 장면 옆 썸네일로(클릭하면 크게·넘기기)'
+                    if fc else '· 📄 논문 그림 <b>0장</b> — <b>논문 PDF를 업로드</b>하면 자동 추출해 관련 장면 옆에 붙여요(지금은 논문 자료가 없어요)')
         img_sec = f"""<section class="sec wrap" id="assets"><div class="sec-tag">Visual Assets</div>
         <h2>시각자료 — 어디에 붙였나</h2>
-        <p class="lead">시각자료는 전부 <b>대본의 해당 장면 옆</b>에 붙였어요:</p>
-        <p class="lead">· 📄 논문 그림 <b>{fc}장</b> 추출 → 관련 <b>{mc}장</b>을 근거 장면 옆 썸네일로(클릭하면 크게·넘기기)<br>
-        · 🎬 논문에 없지만 그림이 필요한 <b>{pc}장면</b> → 그 장면 옆에 <b>AI 생성 프롬프트(복사) + 구매·검색 링크</b><br>
+        <p class="lead">{_figline}<br>
         · 나머지(콜드오픈·인트로·실연·응급·CTA 등)는 원장 정면/실연이라 <b>스토리보드로 충분</b> — 별도 이미지 불필요</p>
         <p class="lead" style="font-size:13px;color:var(--muted)">※ 논문 추출본은 참고용 — 영상 사용엔 학회지·환자 동의 확인 필요.</p>
         {zipline}</section>"""
