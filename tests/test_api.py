@@ -91,6 +91,19 @@ def test_approve_success_and_audit(client, owner):
                          {"v": d["version_id"]}).scalar()
     assert rid and len(rid) == 32
 
+def test_ui_version_page_renders_via_presentation(client, owner):
+    # Step 7A: /studio 버전페이지가 공유 presentation으로 렌더되는 end-to-end 확인.
+    d = _setup(owner, role="editor", verified_claim=True); _login(client, d["user_id"])
+    r = client.get(f"/ui/h/{d['slug']}/versions/{d['version_id']}")
+    html = r.get_data(as_text=True)
+    assert r.status_code == 200
+    assert "<title>버전 1" in html                                    # 셸 렌더
+    assert 'name="edit__blk_1"' in html and 'name="edit__blk_2"' in html  # 블록 편집 textarea
+    assert f"/ui/h/{d['slug']}/scripts/{d['script_id']}/edit" in html     # 편집 액션 URL
+    assert "근거 검증" in html                                        # 근거 패널
+    assert 'name=_csrf' in html                                       # csrf 필드 주입
+
+
 def test_diff_and_get_version(client, owner):
     d = _setup(owner, role="editor"); _login(client, d["user_id"])
     r = client.post(f"/api/h/{d['slug']}/scripts/{d['script_id']}/edit",
