@@ -524,12 +524,25 @@ def _pg_studio_url(h):
 @app.route("/scripts/<h>/<version_id>")
 @app.route("/scripts/<h>/<version_id>/<section>")
 def scripts_edit(h, version_id, section="edit"):
-    """P1#5: script-centric 편집 진입점을 대시보드 소유로. 현재는 스튜디오 렌더러로
-    전이 리다이렉트(로직 공통화·/studio 은퇴는 후속 단계). 로그인·CSRF·역할은 스튜디오가 강제."""
-    # 인증은 _guard(before_request)가 이미 강제(session["user"]) → 여기선 라우팅만.
-    anchor = {"evidence": "#evidence", "images": "#images",
-              "approval": "#approval", "versions": "#versions"}.get(section, "")
-    return redirect(f"/studio/ui/h/{h}/versions/{version_id}{anchor}")
+    """Step 7B: 버전페이지를 대시보드가 canonical로 '직접 렌더'(workspace service + 공유 presentation).
+    쓰기·자산 액션은 전환기 동안 /studio compat 엔드포인트로(세션·CSRF 공유). Step 9에서 대시보드로 이전.
+    인증은 _guard(before_request)가 session['user'] 강제 + 여기서 user_id로 ActorContext 해석."""
+    from services.context import ActorContext
+    from services import workspace as workspace_service
+    from services.exceptions import ServiceError
+    from presentation import render as _render
+    from presentation.urls import DashboardUrls
+    from store.db import make_engine
+    eng = make_engine()
+    try:
+        ctx = ActorContext.resolve(eng, session.get("user_id"), h, request.headers.get("X-Request-Id"))
+        ws = workspace_service.get_version_workspace(eng, ctx, version_id)
+    except ServiceError as e:
+        if e.http_status == 401:
+            return redirect("/login?next=" + f"/scripts/{h}/{version_id}")
+        abort(e.http_status)
+    return _render.version_page(ws, DashboardUrls(h), session.get("_csrf", ""),
+                                msg_code=request.args.get("m"))
 
 def _run_pipeline(h, topic, evidence=True, request_key=None, membership_id=None):
     """GPT P0 반영: run.py '전에' PG generation_job(pending) 생성 → generating → generated →

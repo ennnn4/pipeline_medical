@@ -153,17 +153,17 @@ def version_page(ws, urls, csrf, msg_code=None):
                  f'<input type=hidden name=expected value="{version_id}">{rows}'
                  f'<button class=btn type=submit>💾 편집 저장(새 버전 생성)</button></form>') if is_current
                 else f'<p><small>이 버전은 현재 버전이 아니라 편집할 수 없습니다(불변).</small></p>{rows}')
-    rj = urls.version(version_id); act = ws["available_actions"]
+    act = ws["available_actions"]
     approve = reject = revoke = export = ""
     if act["can_approve"]:
-        approve = (f'<form method=post action="{rj}/approve" style="display:inline-block;margin-top:12px">{csrf_field(csrf)}'
+        approve = (f'<form method=post action="{urls.approve(version_id)}" style="display:inline-block;margin-top:12px">{csrf_field(csrf)}'
                    f'<button class=btn type=submit>✅ 승인</button></form>')
-        reject = (f'<form method=post action="{rj}/reject" style="display:inline-block;margin-top:12px;margin-left:6px">{csrf_field(csrf)}'
+        reject = (f'<form method=post action="{urls.reject(version_id)}" style="display:inline-block;margin-top:12px;margin-left:6px">{csrf_field(csrf)}'
                   f'<input name=reason placeholder="반려 사유" style="padding:6px 8px;font-size:13px">'
                   f'<button class=btn type=submit style="background:#f04452">반려</button></form>')
     if act["can_revoke"]:
         export = f'<a class="btn g" style="margin-left:6px" href="{urls.export(script_id, version_id)}">⬇ export(JSON)</a>'
-        revoke = (f'<form method=post action="{rj}/revoke" style="display:inline-block;margin-top:12px;margin-left:6px">{csrf_field(csrf)}'
+        revoke = (f'<form method=post action="{urls.revoke(version_id)}" style="display:inline-block;margin-top:12px;margin-left:6px">{csrf_field(csrf)}'
                   f'<input name=reason placeholder="철회 사유" style="padding:6px 8px;font-size:13px">'
                   f'<button class=btn type=submit style="background:#f04452">승인 철회</button></form>')
     diff = (f'<a class="btn g" href="{urls.diff(version_id, ws["parent_version_id"])}">diff(JSON)</a>'

@@ -50,3 +50,56 @@ class StudioUrls:
 
     def dashboard(self):
         return "/"
+
+
+class DashboardUrls:
+    """대시보드 canonical route에서 공유 버전페이지를 렌더할 때 쓰는 어댑터(전환기 하이브리드, 7B).
+
+    읽기·nav는 대시보드 경로(/scripts/<slug>/<version_id>)로, 쓰기·자산은 아직 /studio compat
+    엔드포인트로 보낸다(두 앱 세션·CSRF 공유). Step 9에서 쓰기까지 대시보드로 옮기면
+    _studio 위임을 대시보드 자체 route로 교체한다(presentation·template은 불변)."""
+
+    def __init__(self, slug):
+        self.slug = slug
+        self._studio = StudioUrls(lambda p: "/studio" + p, slug)   # 쓰기·자산 compat
+
+    # 읽기·nav — 대시보드 canonical
+    def version(self, version_id):
+        return f"/scripts/{self.slug}/{version_id}"
+
+    def dashboard(self):
+        return "/"
+
+    def logout(self):
+        return "/logout"
+
+    # 쓰기·자산 — /studio compat(전환기)
+    def edit(self, script_id):
+        return self._studio.edit(script_id)
+
+    def approve(self, version_id):
+        return self._studio.approve(version_id)
+
+    def reject(self, version_id):
+        return self._studio.reject(version_id)
+
+    def revoke(self, version_id):
+        return self._studio.revoke(version_id)
+
+    def self_approve(self, version_id):
+        return self._studio.self_approve(version_id)
+
+    def export(self, script_id, version_id):
+        return self._studio.export(script_id, version_id)
+
+    def diff(self, version_id, from_version_id):
+        return self._studio.diff(version_id, from_version_id)
+
+    def review(self, claim_id):
+        return self._studio.review(claim_id)
+
+    def img(self, block_key):
+        return self._studio.img(block_key)
+
+    def regen(self, version_id, block_key):
+        return self._studio.regen(version_id, block_key)
