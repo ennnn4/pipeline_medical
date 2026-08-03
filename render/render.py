@@ -21,7 +21,7 @@ h1,h2,h3{margin:0;letter-spacing:-.035em;font-weight:800;text-wrap:balance}
 .nav{position:sticky;top:0;z-index:50;background:color-mix(in srgb,var(--bg) 82%,transparent);backdrop-filter:saturate(1.4) blur(14px);border-bottom:1px solid var(--border)}
 .nav-in{max-width:var(--maxw);margin:0 auto;padding:14px 24px;display:flex;align-items:center;gap:20px}
 .brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:16px;letter-spacing:-.04em}
-.brand .dot{width:22px;height:22px;border-radius:7px;background:var(--accent);display:grid;place-items:center;color:#fff;font-size:13px}
+.brand .dot{min-width:22px;height:22px;padding:0 5px;border-radius:7px;background:var(--accent);display:grid;place-items:center;color:#fff;font-size:11px;font-weight:800}
 .nav-links{display:flex;gap:4px;margin-left:auto;flex-wrap:wrap}
 .nav-links a{font-size:14px;font-weight:600;color:var(--ink2);text-decoration:none;padding:7px 12px;border-radius:9px}
 .nav-links a:hover{color:var(--ink);background:var(--surface2)}
@@ -387,7 +387,7 @@ def render(pkg, meta=None, evidence=None, images=None, edit=None):
 
     return f"""<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{esc(title)} · 본큐어 유튜브</title><style>{CSS}{_ED_CSS if edit else ''}</style></head><body>
-<nav class="nav"><div class="nav-in"><div class="brand"><span class="dot">본</span>본큐어 유튜브 · 대본 패키지</div>
+<nav class="nav"><div class="nav-in"><div class="brand"><span class="dot">OM</span>아워마케팅</div>
 <div class="nav-links"><a href="#hook">기획</a><a href="#script">대본</a><a href="#deliverables">산출물</a>{'<a href="#evidence-check">근거 검수</a>' if evidence else ''}<a href="#review">원장 검수</a></div>
 <button class="toggle" id="tg" aria-label="테마 전환">◐</button></div></nav>
 <header class="hero wrap"><span class="eyebrow">Episode Package · 콘텐츠 디렉터 시스템</span>
