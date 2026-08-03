@@ -38,5 +38,19 @@ UI를 대시보드에 복붙(중복·불일치) 금지, 두 앱이 render helper
 - **8 parity**: block/claim/image 수·effective assessment·approval 상태·available action·stale 배지·CSRF·승인/반려/철회·export·이미지 재생성·타테넌트 접근·stale version 제출·예외→HTTP 매핑·audit. **redirect destination·flash message까지** 비교(DB 결과만 아님).
 - **9 은퇴**: 내부 링크 대시보드 route로 변경 → /studio GET deep link 302 redirect → 기존 POST/API는 즉시 302 금지(method·body 손실) service 기반 thin compatibility wrapper 유지 → legacy endpoint 호출량(관측) 관찰 → 0되면 write endpoint 종료 → DispatcherMiddleware 제거 → studio app 제거 → 잔여 template/static 중복 제거.
 
+## Step 9 착수 기준 (GPT 확정, 2026-08-03)
+**렌더링 방식**: A 확정 — 순수 Python `presentation/`(f-string) 유지, Jinja 전환은 /studio 은퇴 후 별도 UI 리팩터로 분리. 조건(충족됨): 본문/속성 구분 escape, URL은 route adapter 생성, CSRF 주입, raw HTML은 고정 내부 조각만, XSS 회귀 관문(`tests/test_presentation.py::test_version_page_xss_escaping`).
+
+**/studio GET → /scripts 302 redirect 착수 기준**(모두 충족 시):
+1. master 6123e7e 배포(2026-08-03) 후 **최소 7일** 연속 운영 → 가장 이른 시점 **2026-08-10** 이후.
+2. 신규 `/scripts/...` canonical **20회 이상** 정상 렌더.
+3. 신규 경로 설명 안 되는 **5xx 0건**, 401/403 비정상 증가 없음.
+4. 기존 GET deep link마다 canonical URL 존재, redirect target의 hospital/version 식별자 정확 보존.
+5. 핵심 기능 E2E 최소 1회씩 성공(편집·evidence·승인/자기승인·반려/철회·export·이미지 재생성).
+- **사용량이 7일 내 20회 미달 시**: 14일로 연장 + 부족 기능 E2E 재실행 후 전환.
+- redirect는 **302**만(301/308 금지 — 롤백 곤란). version/hospital 식별자 보존·미존재 자원 NotFound·권한은 canonical route에서 재검사·query는 allowlist·redirect loop 없음·`surface=studio_legacy,compat=true,redirect=true` 이벤트 발생 확인.
+
+**Legacy POST/API 제거**: GET redirect 후 compat wrapper 유지 → 호출 **7일(저사용 14일) 연속 0** 확인 → studio app 제거(legacy write endpoint→DispatcherMiddleware→create_app→호환코드·중복자산 순). rollback 배포 태그 확보 후.
+
 ## 함께 정리(용량 추세 따라)
-- 이미지 bytea → R2/S3 (총량·증가량은 관측 대상).
+- 이미지 bytea → R2/S3 (총량·증가량은 관측 대상). R2 신호: DB의 10~15%↑·수개월 내 수GB·백업/복원 지연·조회가 pool 영향·CDN/signed URL 필요·외부 소비.
