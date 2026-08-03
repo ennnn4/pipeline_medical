@@ -50,8 +50,8 @@ def test_version_page_current_shows_editform_and_approve():
     assert "/versions/v-1/approve" in html and "/versions/v-1/reject" in html  # 승인 가능
     assert "승인 철회" not in html                            # can_revoke=False
     assert "새 버전이 생성되었습니다" in html                 # msg_code=edited 배너
-    assert "미승인/stale" in html                            # stale 배지
-    assert "/img/h/boncure/blk_1" in html and "근거 검증" in html  # 이미지·근거 패널
+    assert "미승인" in html                                  # stale 배지
+    assert "/img/h/boncure/blk_1" in html and "근거 검증" in html  # 대사 옆 이미지·근거 패널
 
 
 def test_version_page_noncurrent_is_readonly():
@@ -60,7 +60,7 @@ def test_version_page_noncurrent_is_readonly():
     assert "현재 버전이 아니라 편집할 수 없습니다" in html
     assert "/scripts/s-1/edit" not in html                   # 편집 제출 폼 없음(불변)
     assert "편집 저장" not in html
-    assert "승인 철회" in html and "export(JSON)" in html     # can_revoke=True
+    assert "승인 철회" in html and "내보내기" in html          # can_revoke=True
 
 
 def test_evidence_panel_counts_and_quote():

@@ -39,6 +39,23 @@ document.addEventListener('keydown',function(e){var lb=document.getElementById('
 </script>"""
 
 
+def _rt(return_to):
+    """저장 후 복귀 경로 hidden 필드(대시보드 인라인 편집용). 없으면 빈 문자열."""
+    return f'<input type=hidden name=return_to value="{escape(return_to)}">' if return_to else ""
+
+
+# 대시보드 페이지에 워크스페이스를 박아넣을 때 필요한 최소 스타일(대시보드 CSS에 없는 클래스만).
+_EMBED_CSS = """.blk{border-top:1px solid var(--border,#e5e8eb);padding:14px 0}
+.key{font-size:12px;color:var(--muted,#8b95a1);font-weight:700}
+.thumb{height:92px;border-radius:10px;cursor:pointer;border:1px solid var(--border,#e5e8eb);object-fit:cover;display:block;margin-top:6px}
+.lb{display:none;position:fixed;inset:0;background:rgba(0,0,0,.86);z-index:100;align-items:center;justify-content:center}
+.lb img{max-width:92vw;max-height:88vh;border-radius:12px}
+.msg{padding:11px 15px;border-radius:12px;margin:10px 0;font-weight:600;font-size:14px}
+.msg.s{background:#e6f7f0;color:#12b886}.msg.e{background:#fdeaec;color:#f04452}
+.badge{font-size:12px;font-weight:800;padding:4px 11px;border-radius:100px}
+.badge.stale{background:#fdeaec;color:#f04452}.badge.ok{background:#e6f7f0;color:#12b886}"""
+
+
 def page(title, body, dashboard_href="/"):
     """공통 HTML 셸(로고·대시보드 nav·CSS). dashboard_href=상단 '← 대시보드' 링크."""
     fav = f"<link rel=icon href='{ICON_URI}'>" if ICON_URI else ""
@@ -50,13 +67,13 @@ def page(title, body, dashboard_href="/"):
             f"<title>{escape(title)}</title>{fav}<style>{CSS}</style><div class=wrap>{nav}{body}</div>")
 
 
-def _review_buttons(claim_id, is_current, urls, csrf, version_id, script_id):
+def _review_buttons(claim_id, is_current, urls, csrf, version_id, script_id, return_to=None):
     """원장 검수/반려 버튼(사람 판정=human_review, 자동보다 우선). 현재 버전에서만 노출.
     version_id·script_id 명시 전송 → service가 current 재검사·소속 검증(지연 저장 차단)."""
     if not is_current:
         return ""
     act = escape(urls.review(claim_id))     # 속성 삽입 → escape(식별자 방어심층)
-    hidden = (f'{csrf_field(csrf)}<input type=hidden name=version_id value="{escape(version_id)}">'
+    hidden = (f'{csrf_field(csrf)}{_rt(return_to)}<input type=hidden name=version_id value="{escape(version_id)}">'
               f'<input type=hidden name=script_id value="{escape(script_id)}">')
     return (f'<div style="margin-top:6px;display:flex;gap:6px">'
             f'<form method=post action="{act}" style="margin:0">{hidden}<input type=hidden name=decision value=confirm>'
@@ -65,7 +82,7 @@ def _review_buttons(claim_id, is_current, urls, csrf, version_id, script_id):
             f'<button class=btn style="padding:4px 12px;font-size:13px;background:#f04452">반려</button></form></div>')
 
 
-def evidence_panel(claims, is_current, urls, csrf, version_id, script_id):
+def evidence_panel(claims, is_current, urls, csrf, version_id, script_id, return_to=None):
     """버전의 의학주장별 유효 근거판정 + 원문 인용 + 원장 검수/반려."""
     if not claims:
         return ('<div class=card><h2>근거 검증 (4단계)</h2>'
@@ -90,7 +107,7 @@ def evidence_panel(claims, is_current, urls, csrf, version_id, script_id):
             f'<span class="badge" style="{style}">{label}</span>{sup}'
             f'{f"<small>{escape(kind)}</small>" if kind else ""}</div>'
             f'<div style="margin-top:6px;font-size:14px">{escape((c["claim_text"] or "")[:220])}</div>'
-            f'{src}{quote}{rat}{_review_buttons(c["id"], is_current, urls, csrf, version_id, script_id)}</div>')
+            f'{src}{quote}{rat}{_review_buttons(c["id"], is_current, urls, csrf, version_id, script_id, return_to)}</div>')
     note = ('<p><small>자동검증은 <b>논문 원문을 실제로 대조</b>해 판정합니다(근거 문장 인용). '
             '의학적 근거등급·환자적용의 최종 판단은 원장 몫이며, <b>원장 확정/반려가 자동판정보다 우선</b>합니다.</small></p>')
     summary = (f'검증됨 <b style="color:#12b886">{verified}</b> · '
@@ -144,38 +161,71 @@ VERSION_MESSAGES = {
 }
 
 
-def version_page(ws, urls, csrf, msg_code=None):
-    """버전페이지 전체(셸 포함). ws=workspace service 결과, urls=StudioUrls, csrf=세션 토큰."""
+def _block_row(b, urls, csrf, rt, version_id, script_id, is_current, img_keys, img_status):
+    """한 대사(블록) = 왼쪽 편집칸 + 오른쪽 그 대사의 AI 사진(다시/이전). 사진이 대사 옆에 붙는다.
+    편집·이미지 버튼은 같은 form 안에서 formaction으로 각 라우트에 제출(중첩 form 회피)."""
+    key = b["stable_block_key"]
+    ta = (f'<textarea name="edit__{escape(key)}">{escape(b["text"])}</textarea>' if is_current
+          else f'<textarea readonly>{escape(b["text"])}</textarea>')
+    # 오른쪽: 이 대사의 이미지
+    imgcell = '<div style="width:190px;flex:none"><small>이미지 없음</small></div>'
+    if key in (img_keys or set()):
+        stx = (img_status or {}).get(key) or {}
+        sb = ('<div class="badge stale" style="font-size:10px;margin-top:4px">⚠ 대본 바뀜 — 다시 권장</div>'
+              if stx.get("stale") and stx.get("reason") == "source_scene_changed" else "")
+        ctrls = ""
+        if is_current:
+            ctrls = (f'<div style="display:flex;gap:5px;margin-top:5px">'
+                     f'<button class="btn g" style="padding:5px 9px;font-size:12px" '
+                     f'formaction="{escape(urls.regen(version_id, key))}" formmethod=post '
+                     f'onclick="this.innerHTML=\'생성중…\'">🎨 다시</button>'
+                     + (f'<button class="btn g" style="padding:5px 9px;font-size:12px" '
+                        f'formaction="{escape(urls.revert(version_id, key))}" formmethod=post>↩ 이전</button>'
+                        if stx.get("has_prev") else "") + '</div>')
+        imgcell = (f'<div style="width:190px;flex:none"><img class=thumb style="height:120px;width:100%" '
+                   f'src="{escape(urls.img(key))}" alt="scene" onclick="LB(this)">{sb}{ctrls}</div>')
+    return (f'<div class=blk><div class=key>{escape(key)} · {escape(b["block_type"] or "")}</div>'
+            f'<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;margin-top:6px">'
+            f'<div style="flex:1;min-width:240px">{ta}</div>{imgcell}</div></div>')
+
+
+def version_page(ws, urls, csrf, msg_code=None, return_to=None, embed=False):
+    """대사별 인라인 편집기 — 각 대사 옆에 그 AI 사진(🎨다시/↩이전). 텍스트 편집·이미지 버튼이 한 화면.
+    return_to: 저장 후 복귀 경로(대시보드 인라인용). embed: 셸 없이 본문만(대시보드에 박아넣기)."""
     msg = VERSION_MESSAGES.get(msg_code, "")
     script_id = ws["script_id"]; blocks = ws["blocks"]; claims = ws["claims"]
     is_current = ws["is_current"]; stale = ws["stale"]; version_id = ws["version_id"]
-    badge = ('<span class="badge stale">미승인/stale</span>' if stale
-             else '<span class="badge ok">승인됨</span>')
-    rows = "".join(
-        f'<div class=blk><div class=key>{escape(b["stable_block_key"])} · {escape(b["block_type"])}</div>'
-        f'<textarea name="edit__{escape(b["stable_block_key"])}">{escape(b["text"])}</textarea></div>' for b in blocks)
-    editform = ((f'<form method=post action="{escape(urls.edit(script_id))}">{csrf_field(csrf)}'
-                 f'<input type=hidden name=expected value="{escape(version_id)}">{rows}'
-                 f'<button class=btn type=submit>💾 편집 저장(새 버전 생성)</button></form>') if is_current
-                else f'<p><small>이 버전은 현재 버전이 아니라 편집할 수 없습니다(불변).</small></p>{rows}')
+    img_keys = ws["img_keys"]; img_status = ws["images_status"]
+    badge = ('<span class="badge stale">미승인</span>' if stale else '<span class="badge ok">승인됨</span>')
+    rt = _rt(return_to)
+    rows = "".join(_block_row(b, urls, csrf, rt, version_id, script_id, is_current, img_keys, img_status)
+                   for b in blocks)
+    # 하나의 편집 form: 대사 텍스트 저장 + 각 이미지 버튼(formaction). is_current일 때만 편집 가능.
+    if is_current:
+        editform = (f'<form method=post action="{escape(urls.edit(script_id))}">{csrf_field(csrf)}{rt}'
+                    f'<input type=hidden name=expected value="{escape(version_id)}">{rows}'
+                    f'<button class=btn type=submit style="margin-top:12px">💾 대본 저장</button></form>')
+    else:
+        editform = f'<p><small>현재 버전이 아니라 편집할 수 없습니다(불변).</small></p>{rows}'
     act = ws["available_actions"]
     approve = reject = revoke = export = ""
     if act["can_approve"]:
-        approve = (f'<form method=post action="{escape(urls.approve(version_id))}" style="display:inline-block;margin-top:12px">{csrf_field(csrf)}'
+        approve = (f'<form method=post action="{escape(urls.approve(version_id))}" style="display:inline-block;margin-top:12px">{csrf_field(csrf)}{rt}'
                    f'<button class=btn type=submit>✅ 승인</button></form>')
-        reject = (f'<form method=post action="{escape(urls.reject(version_id))}" style="display:inline-block;margin-top:12px;margin-left:6px">{csrf_field(csrf)}'
+        reject = (f'<form method=post action="{escape(urls.reject(version_id))}" style="display:inline-block;margin-top:12px;margin-left:6px">{csrf_field(csrf)}{rt}'
                   f'<input name=reason placeholder="반려 사유" style="padding:6px 8px;font-size:13px">'
                   f'<button class=btn type=submit style="background:#f04452">반려</button></form>')
     if act["can_revoke"]:
-        export = f'<a class="btn g" style="margin-left:6px" href="{escape(urls.export(script_id, version_id))}">⬇ export(JSON)</a>'
-        revoke = (f'<form method=post action="{escape(urls.revoke(version_id))}" style="display:inline-block;margin-top:12px;margin-left:6px">{csrf_field(csrf)}'
+        export = f'<a class="btn g" style="margin-left:6px" href="{escape(urls.export(script_id, version_id))}">⬇ 내보내기</a>'
+        revoke = (f'<form method=post action="{escape(urls.revoke(version_id))}" style="display:inline-block;margin-top:12px;margin-left:6px">{csrf_field(csrf)}{rt}'
                   f'<input name=reason placeholder="철회 사유" style="padding:6px 8px;font-size:13px">'
                   f'<button class=btn type=submit style="background:#f04452">승인 철회</button></form>')
-    diff = (f'<a class="btn g" href="{escape(urls.diff(version_id, ws["parent_version_id"]))}">diff(JSON)</a>'
-            if ws["parent_version_id"] else "")
-    evidence = evidence_panel(claims, is_current, urls, csrf, version_id, script_id)
-    images = images_panel(blocks, ws["img_keys"], is_current, ws["images_status"], urls, csrf, version_id)
-    body = (f'<div class=card><h1>버전 v{ws["version_no"]} {badge}</h1>{msg}'
-            f'<h2>블록 (편집 → 새 immutable 버전)</h2>{editform}{approve}{reject}{revoke}{export} {diff} '
-            f'<a class="btn g" href="{escape(urls.logout())}">로그아웃</a></div>{images}{evidence}')
+    evidence = evidence_panel(claims, is_current, urls, csrf, version_id, script_id, return_to=return_to)
+    inner = (f'<div class=card><h2 style="margin-top:0">대본 · 장면 이미지 (대사별로 편집 · 사진 다시뽑기)</h2>{msg}'
+             f'{editform}{approve}{reject}{revoke}{export}</div>{evidence}')
+    if embed:
+        return f'<style>{_EMBED_CSS}</style>{inner}{_LIGHTBOX}'
+    body = (f'<div class=card><h1>버전 v{ws["version_no"]} {badge} '
+            f'<a class="btn g" style="float:right;padding:6px 12px;font-size:13px" href="{escape(urls.logout())}">로그아웃</a></h1></div>'
+            f'{inner}{_LIGHTBOX}')
     return page(f"버전 {ws['version_no']}", body, dashboard_href=urls.dashboard())

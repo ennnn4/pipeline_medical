@@ -157,8 +157,7 @@ def render(pkg, meta=None, evidence=None, images=None):
         if plan:
             planbox = (f'<div class="planbox"><div class="pb-h">🎬 이 장면 이미지 <span class="pb-tag">논문에 없음</span></div>'
                        f'<details class="pb-d"><summary>🤖 AI 생성 프롬프트 <button class="pb-copy" type="button">복사</button></summary>'
-                       f'<div class="pb-p">{esc(plan.get("prompt",""))}</div></details>'
-                       f'<a class="pb-buy" href="{esc(plan.get("buy_link","#"))}" target="_blank">🛒 스톡 구매·검색</a></div>')
+                       f'<div class="pb-p">{esc(plan.get("prompt",""))}</div></details></div>')   # 스톡 구매 버튼 제거(요청)
         sidecol = f'<div class="sidecol">{refwrap}{planbox}</div>' if (thumbs or planbox) else ""
         beats += f"""<div class="beat{crit}"><div class="tc">{esc(tc_html)}</div><div class="body">
           <div class="bt">{esc(b.get('block',''))} {tags}</div>

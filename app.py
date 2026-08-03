@@ -368,10 +368,9 @@ def hospital(h):
         misswarn += '<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 40MB 넘는 파일은 제외됐어요(영구저장 한도). 나눠서 올려주세요.</div>'
     if request.args.get("err") == "nopg":
         misswarn += '<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 이 병원은 영구저장(PostgreSQL)에 등록되지 않아 업로드를 막았어요(임시저장 방지). 관리자에게 병원 재등록을 요청하세요.</div>'
-    studio_url = _pg_studio_url(h)   # 이제 대시보드 canonical(/scripts/...) — 대시보드가 직접 렌더
-    studio_cta = (f'<a class="btn pri" href="{studio_url}" style="display:block;text-align:center;margin-bottom:12px">'
-                  f'✏️ 편집 · 근거검증 · 장면이미지 · 승인 →</a>') if studio_url else ''
-    outlist = studio_cta + ("".join(f'<div class=out><span>{os.path.basename(o)[:-5]}</span><a class=btn href="/h/{h}/view/{os.path.basename(o)}" target=_blank>대시보드 열기</a></div>' for o in outs) or '<div class=muted>아직 만든 대본이 없어요.</div>')
+    # ③ 결과물: 편집 버튼 없이, 현재 대본을 대사별(텍스트+그 장면 AI 사진)로 이 화면에서 바로 수정.
+    inline_edit = _inline_workspace(h)
+    outlist = ("".join(f'<div class=out><span>{os.path.basename(o)[:-5]}</span><a class=btn href="/h/{h}/view/{os.path.basename(o)}" target=_blank>스토리보드 미리보기</a></div>' for o in outs) or '<div class=muted>아직 만든 대본이 없어요.</div>')
     dz_opts = "".join(f'<button type=button class="btn dz" onclick="setTopic(this)">{d}</button>' for d in diseases)
     job = job_get(h)
     running = job.get("running")
@@ -418,7 +417,8 @@ def hospital(h):
     <div class=card>
       <h2 style="margin-top:0">③ 결과물</h2>
       {outlist}
-    </div>"""
+    </div>
+    {inline_edit}"""
     script = """<script>
     var drop=document.getElementById('drop'),fin=document.getElementById('fin');
     drop.onclick=function(){fin.click()};
@@ -528,6 +528,38 @@ def _pg_script_id_for_topic(hid, topic):
     except Exception:
         return None
 
+def _inline_workspace(h):
+    """병원 페이지에 박아넣을 인라인 편집기 — 현재 대본을 대사별(텍스트+그 장면 AI 사진)로 이 화면에서
+    바로 수정. 저장·이미지 다시뽑기·되돌리기 모두 여기서(return_to로 이 페이지 복귀). PG 계정만."""
+    if not session.get("user_id"):
+        return ('<div class=card><p class=muted>대본 편집은 병원 담당 PostgreSQL 계정으로 로그인해야 열립니다'
+                '(현재 계정은 편집 권한이 없어요).</p></div>')
+    try:
+        from services.context import ActorContext
+        from services import workspace as _ws
+        from services.exceptions import ServiceError
+        from presentation import render as _render
+        from presentation.urls import DashboardUrls
+        from store.db import make_engine
+        from store.repositories import tenant_conn
+        from sqlalchemy import text
+        eng = make_engine()
+        ctx = ActorContext.resolve(eng, session.get("user_id"), h, getattr(g, "request_id", None))
+        with tenant_conn(eng, ctx.hospital_id) as cn:
+            vid = cn.execute(text("select current_version_id from scripts where hospital_id=:h "
+                                  "and current_version_id is not null order by updated_at desc limit 1"),
+                             {"h": ctx.hospital_id}).scalar()
+        if not vid:
+            return ""      # 아직 대본 없음
+        wsd = _ws.get_version_workspace(eng, ctx, vid)
+        return _render.version_page(wsd, DashboardUrls(h), session.get("_csrf", ""),
+                                    msg_code=request.args.get("m"), return_to=f"/h/{h}", embed=True)
+    except ServiceError:
+        return ""
+    except Exception:
+        return ""
+
+
 def _pg_studio_url(h):
     """이 병원의 최신 PG 버전 편집 URL(대시보드 canonical /scripts, Step 7B부터 대시보드가 직접 렌더). 없으면 None."""
     try:
@@ -588,6 +620,16 @@ def _dash_ctx(h):
     return ActorContext.resolve(make_engine(), session.get("user_id"), h, getattr(g, "request_id", None))
 
 
+def _ret(default_path, msg=None, frag=""):
+    """저장 후 복귀 경로. 폼의 return_to(대시보드 인라인)면 그리로, 아니면 default(/scripts…).
+    안전한 로컬 경로만 허용(/h/ 또는 /scripts/)."""
+    rt = request.form.get("return_to") or ""
+    base = rt if (rt.startswith("/h/") or rt.startswith("/scripts/")) else default_path
+    if msg:
+        base += ("&" if "?" in base else "?") + "m=" + msg
+    return base + frag
+
+
 @app.post("/scripts/<h>/<script_id>/edit")
 def d_edit(h, script_id):
     import uuid as _uuid
@@ -603,13 +645,13 @@ def d_edit(h, script_id):
     try:
         res = _svc.edit_blocks(make_engine(), _dash_ctx(h), script_id, expected, edits)
         if res.get("no_change"):
-            return redirect(f"/scripts/{h}/{expected}")
-        return redirect(f"/scripts/{h}/{res['version_id']}?m=edited")
+            return redirect(_ret(f"/scripts/{h}/{expected}"))
+        return redirect(_ret(f"/scripts/{h}/{res['version_id']}", "edited"))
     except ServiceError as e:
         if e.http_status == 401:
             return redirect("/login")
         if e.http_status == 409:
-            return redirect(f"/scripts/{h}/{expected}?m=conflict")
+            return redirect(_ret(f"/scripts/{h}/{expected}", "conflict"))
         abort(e.http_status)
 
 
@@ -622,14 +664,14 @@ def _dash_approval(h, version_id, fn, ok_msg):
         abort(400)
     try:
         fn(_dash_ctx(h))
-        return redirect(f"/scripts/{h}/{version_id}?m={ok_msg}")
+        return redirect(_ret(f"/scripts/{h}/{version_id}", ok_msg))
     except ServiceError as e:
         m = {403: "e403", 422: "e422", 409: "conflict"}.get(e.http_status)
         if m is None:
             if e.http_status == 401:
                 return redirect("/login")
             abort(e.http_status)
-        return redirect(f"/scripts/{h}/{version_id}?m={m}")
+        return redirect(_ret(f"/scripts/{h}/{version_id}", m))
 
 
 @app.post("/scripts/<h>/versions/<version_id>/approve")
@@ -677,10 +719,10 @@ def d_review(h, claim_id):
         abort(400)
     try:
         _svc.assess_claim(make_engine(), _dash_ctx(h), script_id, version_id, claim_id, decision)
-        return redirect(f"/scripts/{h}/{version_id}?m=reviewed")
+        return redirect(_ret(f"/scripts/{h}/{version_id}", "reviewed"))
     except ServiceError as e:
         if e.http_status == 409:
-            return redirect(f"/scripts/{h}/{version_id}?m=conflict")
+            return redirect(_ret(f"/scripts/{h}/{version_id}", "conflict"))
         if e.http_status == 401:
             return redirect("/login")
         abort(e.http_status)
@@ -694,13 +736,13 @@ def d_regen(h, version_id, block_key):
     feedback = (request.form.get("feedback") or "").strip()
     try:
         _svc.regenerate_scene(make_engine(), _dash_ctx(h), block_key, feedback, version_id=version_id)
-        return redirect(f"/scripts/{h}/{version_id}?m=regen#img_{block_key}")
+        return redirect(_ret(f"/scripts/{h}/{version_id}", "regen", f"#img_{block_key}"))
     except ServiceError as e:
         if e.http_status == 401:
             return redirect("/login")
-        return redirect(f"/scripts/{h}/{version_id}?m=regenfail")
+        return redirect(_ret(f"/scripts/{h}/{version_id}", "regenfail"))
     except Exception:
-        return redirect(f"/scripts/{h}/{version_id}?m=regenfail")
+        return redirect(_ret(f"/scripts/{h}/{version_id}", "regenfail"))
 
 
 @app.post("/scripts/<h>/versions/<version_id>/blocks/<block_key>/revert-image")
@@ -710,13 +752,13 @@ def d_revert(h, version_id, block_key):
     from store.db import make_engine
     try:
         _svc.revert_scene(make_engine(), _dash_ctx(h), block_key)
-        return redirect(f"/scripts/{h}/{version_id}?m=reverted#img_{block_key}")
+        return redirect(_ret(f"/scripts/{h}/{version_id}", "reverted", f"#img_{block_key}"))
     except ServiceError as e:
         if e.http_status == 401:
             return redirect("/login")
-        return redirect(f"/scripts/{h}/{version_id}?m=regenfail")
+        return redirect(_ret(f"/scripts/{h}/{version_id}", "regenfail"))
     except Exception:
-        return redirect(f"/scripts/{h}/{version_id}?m=regenfail")
+        return redirect(_ret(f"/scripts/{h}/{version_id}", "regenfail"))
 
 
 @app.get("/scripts/<h>/img/<block_key>")
