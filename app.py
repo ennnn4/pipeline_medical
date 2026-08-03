@@ -754,8 +754,13 @@ def d_revert(h, version_id, block_key):
     from services import images as _svc
     from services.exceptions import ServiceError
     from store.db import make_engine
+    seq = request.form.get("seq")
     try:
-        _svc.revert_scene(make_engine(), _dash_ctx(h), block_key)
+        seq = int(seq) if seq else None
+    except (TypeError, ValueError):
+        seq = None
+    try:
+        _svc.revert_scene(make_engine(), _dash_ctx(h), block_key, seq=seq)   # 지정 seq(그 사진으로) 또는 최신
         return redirect(_ret(f"/scripts/{h}/{version_id}", "reverted", f"#img_{block_key}"))
     except ServiceError as e:
         if e.http_status == 401:
@@ -781,6 +786,25 @@ def d_upload(h, version_id, block_key):
         return redirect(_ret(f"/scripts/{h}/{version_id}", "regenfail"))
     except Exception:
         return redirect(_ret(f"/scripts/{h}/{version_id}", "regenfail"))
+
+
+@app.get("/scripts/<h>/imgv/<block_key>/<int:seq>")
+def d_imgv(h, block_key, seq):
+    """이전(히스토리) 장면 이미지 서빙 — 갤러리에서 나란히 보여주기용."""
+    from sqlalchemy import text as _t
+    from store.repositories import tenant_conn
+    from store.db import make_engine
+    try:
+        ctx = _dash_ctx(h)
+    except Exception:
+        abort(403)
+    with tenant_conn(make_engine(), ctx.hospital_id, membership_id=ctx.membership_id) as cn:
+        row = cn.execute(_t("select mime, data from scene_image_versions "
+                            "where hospital_id=:h and block_key=:k and seq=:s limit 1"),
+                         {"h": ctx.hospital_id, "k": block_key, "s": seq}).first()
+    if not row:
+        abort(404)
+    return Response(bytes(row.data), mimetype=row.mime or "image/jpeg", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/scripts/<h>/img/<block_key>")
@@ -978,7 +1002,10 @@ def edit_story(h, topic):
                                "where hospital_id=:h and version_id=:v order by order_index"),
                             {"h": ctx.hospital_id, "v": vid}).all()
         imgkeys = {r[0] for r in cn.execute(_t("select block_key from scene_images where hospital_id=:h"), {"h": ctx.hospital_id})}
-        prevkeys = {r[0] for r in cn.execute(_t("select distinct block_key from scene_image_versions where hospital_id=:h"), {"h": ctx.hospital_id})}
+        # 갤러리: 블록별 이전 이미지 seq 목록(오래된→최신). 현재본 + 이 히스토리를 나란히 보여준다.
+        hist_by_key = {}
+        for r in cn.execute(_t("select block_key, seq from scene_image_versions where hospital_id=:h order by block_key, seq"), {"h": ctx.hospital_id}):
+            hist_by_key.setdefault(r[0], []).append(r[1])
     csrf = f'<input type="hidden" name="_csrf" value="{session.get("_csrf","")}">'
     rt = f'<input type="hidden" name="return_to" value="/h/{h}/edit/{os.path.basename(topic)}">'
     vid_s = str(vid)
@@ -986,7 +1013,9 @@ def edit_story(h, topic):
             "csrf": csrf, "rt": rt, "version_id": vid_s,
             "edit_url": f"/scripts/{h}/{sid}/edit",
             "img_url": (lambda k: f"/scripts/{h}/img/{k}"),
-            "has_img": (lambda k: k in imgkeys), "has_prev": (lambda k: k in prevkeys),
+            "has_img": (lambda k: k in imgkeys),
+            "hist": (lambda k: hist_by_key.get(k, [])),   # 이전 이미지 seq 목록(갤러리)
+            "imgv_url": (lambda k, s: f"/scripts/{h}/imgv/{k}/{s}"),
             "regen_url": (lambda k: f"/scripts/{h}/versions/{vid_s}/blocks/{k}/regen-image"),
             "revert_url": (lambda k: f"/scripts/{h}/versions/{vid_s}/blocks/{k}/revert-image"),
             "upload_url": (lambda k: f"/scripts/{h}/versions/{vid_s}/blocks/{k}/upload-image")}

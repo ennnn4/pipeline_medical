@@ -142,8 +142,13 @@ _ED_CSS = """
 .eb{font-size:12px;font-weight:700;padding:6px 12px;border-radius:8px;border:1px solid transparent;background:#3182f6;color:#fff;cursor:pointer}
 .eb.g{background:var(--card);color:var(--ink);border:1px solid var(--border)}
 .ai-box{border:1px solid var(--border);border-radius:12px;padding:12px 13px;background:var(--surface)}
-.ai-box .pb-h{font-size:13px;font-weight:800;color:var(--acci);margin-bottom:6px}
-.ai-img{width:100%;max-width:190px;border-radius:8px;display:block;cursor:zoom-in}
+.ai-box .pb-h{font-size:13px;font-weight:800;color:var(--acci);margin-bottom:8px}
+.ai-gal{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start}
+.gt{width:150px;text-align:center}
+.gt img{width:150px;height:100px;object-fit:cover;border-radius:8px;border:1px solid var(--border);cursor:zoom-in;display:block;background:var(--surface)}
+.gt.cur img{border:2px solid var(--accent)}
+.gt-b{margin-top:5px;width:100%;padding:4px 0}
+.gt-cur{margin-top:5px;font-size:11px;font-weight:800;color:var(--good)}
 .ai-none{height:100px;border:1px dashed var(--border);border-radius:8px;display:grid;place-items:center;color:var(--muted);font-size:12px}
 .ai-r{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}
 """
@@ -166,22 +171,28 @@ def _ed_say(say_esc, key, edit):
 
 
 def _ed_img(key, edit):
-    """이 장면의 AI 사진 + 🎨 AI 다시 · ↩ 이전 · ⬆ 내 사진 업로드(논문 그림 썸네일과 나란히)."""
-    ek = esc(key); csrf = edit["csrf"]; rt = edit["rt"]
-    if edit["has_img"](key):
+    """이 장면 사진 갤러리 — 이전 사진들 + 현재(사용중)이 나란히. 새로 만들거나 올릴 때마다 오른쪽에 추가,
+    각 사진 '이걸로' 눌러 골라 씀. 밑에 🎨 AI 새로 만들기 · ⬆ 내 사진 올리기."""
+    csrf = edit["csrf"]; rt = edit["rt"]
+    tiles = []
+    for s in edit["hist"](key):                    # 이전 사진들(오래된→최신)
+        u = esc(edit["imgv_url"](key, s))
+        tiles.append(f'<div class="gt"><a href="{u}" target="_blank"><img src="{u}" alt="이전 사진"></a>'
+                     f'<form method="post" action="{esc(edit["revert_url"](key))}" style="margin:0">{csrf}{rt}'
+                     f'<input type="hidden" name="seq" value="{s}"><button class="eb g gt-b">이걸로</button></form></div>')
+    if edit["has_img"](key):                       # 현재 사용중(가장 오른쪽)
         u = esc(edit["img_url"](key))
-        img = f'<a href="{u}" target="_blank"><img class="ai-img" src="{u}" alt="AI 사진"></a>'
-    else:
-        img = '<div class="ai-none">AI 사진 없음 — 만들거나 올리세요</div>'
+        tiles.append(f'<div class="gt cur"><a href="{u}" target="_blank"><img src="{u}" alt="현재 사진"></a>'
+                     f'<div class="gt-cur">✓ 사용중</div></div>')
+    gallery = (f'<div class="ai-gal">{"".join(tiles)}</div>' if tiles
+               else '<div class="ai-none">사진 없음 — 아래에서 만들거나 올리세요</div>')
     regen = (f'<form method="post" action="{esc(edit["regen_url"](key))}" style="margin:0">{csrf}{rt}'
-             f'<button class="eb g" onclick="this.innerHTML=\'생성중…\'">🎨 AI 다시</button></form>')
-    revert = ((f'<form method="post" action="{esc(edit["revert_url"](key))}" style="margin:0">{csrf}{rt}'
-               f'<button class="eb g">↩ 이전</button></form>') if edit["has_prev"](key) else "")
-    upload = (f'<form method="post" action="{esc(edit["upload_url"](key))}" enctype="multipart/form-data" style="margin-top:6px">{csrf}{rt}'
-              f'<input type="file" name="photo" accept="image/*" style="font-size:11px;max-width:170px">'
+             f'<button class="eb g" onclick="this.innerHTML=\'생성중…\'">🎨 AI 새로 만들기</button></form>')
+    upload = (f'<form method="post" action="{esc(edit["upload_url"](key))}" enctype="multipart/form-data" style="margin:0">{csrf}{rt}'
+              f'<input type="file" name="photo" accept="image/*" style="font-size:11px;max-width:150px">'
               f'<button class="eb g" style="margin-top:4px">⬆ 내 사진 올리기</button></form>')
-    note = '<div style="font-size:11px;color:var(--muted);margin-top:6px">🎨 다시·⬆ 업로드해도 이전 사진은 보존 — ↩ 이전으로 복구</div>'
-    return f'<div class="ai-box"><div class="pb-h">🖼 이 장면 AI 사진</div>{img}<div class="ai-r">{regen}{revert}</div>{upload}{note}</div>'
+    return (f'<div class="ai-box"><div class="pb-h">🖼 이 장면 사진 <span style="font-weight:600;color:var(--muted);font-size:11px">· 만들거나 올릴 때마다 오른쪽에 추가, 골라 쓰기</span></div>'
+            f'{gallery}<div class="ai-r" style="margin-top:9px">{regen}{upload}</div></div>')
 
 
 def render(pkg, meta=None, evidence=None, images=None, edit=None):
