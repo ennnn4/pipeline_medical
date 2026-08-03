@@ -48,3 +48,16 @@ def test_dashboard_route_renders_not_redirects(dash_client, owner):
     assert r.status_code == 200                                           # 리다이렉트(302) 아님
     assert "<title>버전 1" in html and 'name="edit__blk_1"' in html        # 대시보드가 직접 렌더
     assert "/studio/ui/h/" in html                                        # 쓰기 액션은 /studio compat
+
+
+def test_dashboard_http_obs_tags_canonical_surface(dash_client, owner, caplog):
+    import json, logging
+    d = _setup(owner, role="editor")
+    with dash_client.session_transaction() as s:
+        s["user"] = "tester"; s["user_id"] = str(d["user_id"])
+    with caplog.at_level(logging.INFO, logger="boncure.obs"):
+        dash_client.get(f"/scripts/{d['slug']}/{d['version_id']}")
+    evs = [json.loads(r.message) for r in caplog.records if r.name == "boncure.obs"]
+    http = [e for e in evs if e.get("obs") == "http" and e.get("endpoint") == "scripts_edit"]
+    assert http and http[0]["surface"] == "dashboard_canonical" and http[0]["compat"] is False
+    assert http[0]["app"] == "dashboard" and "latency_ms" in http[0]

@@ -5,8 +5,8 @@ boncure-pipeline 로컬 웹앱 — 터미널·yaml 없이 브라우저로 쓴다
 기능: 병원 만들기(폼) · 자료 업로드(끌어놓기) · 대본 생성(버튼) · 대시보드 보기.
 엔진(run.py)을 그대로 호출하므로 파이프라인 로직은 재사용.
 """
-import os, sys, glob, subprocess, threading, re, io, secrets, sqlite3, datetime, unicodedata, hmac
-from flask import Flask, request, redirect, send_file, abort, render_template_string, jsonify, url_for, session
+import os, sys, glob, subprocess, threading, re, io, secrets, sqlite3, datetime, unicodedata, hmac, time
+from flask import Flask, request, redirect, send_file, abort, render_template_string, jsonify, url_for, session, g
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
@@ -89,6 +89,7 @@ app.jinja_env.globals["csrf"] = lambda: session.get("_csrf", "")
 
 @app.before_request
 def _guard():
+    g._t0 = time.perf_counter(); g.request_id = secrets.token_hex(16)   # 관측(latency·상관)
     if "_csrf" not in session:
         session["_csrf"] = secrets.token_urlsafe(24)   # 세션당 CSRF 토큰
     if request.endpoint in ("login","static"): return   # 공개 회원가입 없음(로그인 POST는 세션전이라 면제)
@@ -98,6 +99,29 @@ def _guard():
         good = session.get("_csrf") or ""
         if not (sent and good and hmac.compare_digest(str(sent), str(good))):
             abort(400)
+
+
+@app.after_request
+def _obs_dashboard(resp):
+    # 대시보드 http 관측 — 신규 canonical route(/scripts=dashboard_canonical) vs 기타 대시보드.
+    # /studio(studio_legacy, compat)와 surface로 대비해 cutover·제거 판단(GPT).
+    try:
+        from services.observability import emit, mask_ids
+        st = resp.status_code
+        lat = round((time.perf_counter() - g._t0) * 1000, 1) if getattr(g, "_t0", None) is not None else None
+        canonical = request.endpoint == "scripts_edit"
+        loc = resp.headers.get("Location") if 300 <= st < 400 else None
+        emit("http", app="dashboard",
+             surface=("dashboard_canonical" if canonical else "dashboard"), compat=False,
+             method=request.method,
+             rule=(request.url_rule.rule if request.url_rule else mask_ids(request.path)),
+             endpoint=request.endpoint, status=st,
+             redirect=(300 <= st < 400) or None,
+             redirect_target=(mask_ids(loc) if loc else None),
+             request_id=getattr(g, "request_id", None), latency_ms=lat)
+    except Exception:
+        pass
+    return resp
 
 def _yaml():
     import yaml; return yaml
@@ -535,7 +559,7 @@ def scripts_edit(h, version_id, section="edit"):
     from store.db import make_engine
     eng = make_engine()
     try:
-        ctx = ActorContext.resolve(eng, session.get("user_id"), h, request.headers.get("X-Request-Id"))
+        ctx = ActorContext.resolve(eng, session.get("user_id"), h, getattr(g, "request_id", None))
         ws = workspace_service.get_version_workspace(eng, ctx, version_id)
     except ServiceError as e:
         if e.http_status == 401:

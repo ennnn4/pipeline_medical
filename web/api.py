@@ -90,7 +90,9 @@ def create_app(engine=None):
             if getattr(g, "_t0", None) is not None:
                 lat = round((time.perf_counter() - g._t0) * 1000, 1)
             loc = resp.headers.get("Location") if 300 <= st < 400 else None
-            emit("http", app="studio", method=request.method,
+            # surface=studio_legacy(제거 예정 계층), compat=True(전환기 동안 전부 호환 계층).
+            # 대시보드 canonical(dashboard_canonical, compat=False)과 로그에서 바로 대비(GPT).
+            emit("http", app="studio", surface="studio_legacy", compat=True, method=request.method,
                  rule=(request.url_rule.rule if request.url_rule else mask_ids(request.path)),
                  endpoint=request.endpoint, status=st,
                  redirect=(300 <= st < 400) or None,
