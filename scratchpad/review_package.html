@@ -64,7 +64,8 @@
     <div class="row"><span class="tag">✓ 7B</span><p><b>대시보드 직접 렌더</b> — <code>/scripts/&lt;h&gt;/&lt;vid&gt;</code>가 /studio 리다이렉트 대신 workspace service+공유 presentation으로 <b>직접 렌더</b>(canonical). DashboardUrls: 읽기=대시보드, 쓰기·자산=/studio compat(세션·CSRF 공유).</p></div>
     <div class="row"><span class="tag">✓ 관측</span><p><b>surface/compat</b> — http 이벤트에 surface(studio_legacy/dashboard_canonical)·compat 태깅. 대시보드 after_request 신설. cutover 판단을 로그에서 바로 집계.</p></div>
     <div class="row"><span class="tag">✓ 8</span><p><b>읽기 parity</b> — studio(/ui)·대시보드(/scripts)가 같은 버전 렌더 시 핵심요소 동등 테스트. 내부 링크는 이미 /scripts canonical.</p></div>
-    <div class="row"><span class="tag todo">9</span><p><b>cutover·제거</b> — 머지·배포→관측→/studio GET 302→legacy POST <b>7~14일 0 확인 후</b> studio app 제거. <b>라이브 관측 게이트</b>.</p></div>
+    <div class="row"><span class="tag">✓ 머지</span><p><b>master 머지·배포 완료</b>(6123e7e) — 대시보드 canonical 렌더가 <b>라이브</b>. surface 관측 시작(/login 200·/ 302 정상).</p></div>
+    <div class="row"><span class="tag todo">9</span><p><b>cutover·제거</b> — 관측 축적→/studio GET 302→legacy POST <b>7~14일 0 확인 후</b> studio app 제거. <b>라이브 관측 게이트</b>.</p></div>
     <div class="row"><span class="tag todo">R2</span><p><b>R2/S3</b> — bytea 추세가 기준 넘을 때(<code>store.storage_stats</code>).</p></div>
   </div>
 
