@@ -50,6 +50,23 @@ def test_dashboard_route_renders_not_redirects(dash_client, owner):
     assert "/studio/ui/h/" in html                                        # 쓰기 액션은 /studio compat
 
 
+def test_studio_dashboard_read_parity(dash_client, rw, owner):
+    # Step 8 읽기 parity — 같은 버전을 studio·대시보드로 렌더 시 핵심 요소가 동등(액션 URL 프리픽스만 다름).
+    from web.api import create_app
+    studio = create_app(engine=rw); studio.config["TESTING"] = True
+    sc = studio.test_client()
+    d = _setup(owner, role="approver", verified_claim=True)
+    for c in (sc, dash_client):
+        with c.session_transaction() as s:
+            s["user"] = "tester"; s["user_id"] = str(d["user_id"])
+    s_html = sc.get(f"/ui/h/{d['slug']}/versions/{d['version_id']}").get_data(as_text=True)
+    b_html = dash_client.get(f"/scripts/{d['slug']}/{d['version_id']}").get_data(as_text=True)
+    for token in ('name="edit__blk_1"', 'name="edit__blk_2"', "근거 검증", "<title>버전 1", "✅ 승인"):
+        assert token in s_html and token in b_html                        # 읽기·액션 가용성 동등
+    assert "/studio/ui/h/" in b_html                                      # 대시보드 쓰기=studio compat
+    assert "/studio/ui/h/" not in s_html                                  # studio 자체는 프리픽스 없음(script_root)
+
+
 def test_dashboard_http_obs_tags_canonical_surface(dash_client, owner, caplog):
     import json, logging
     d = _setup(owner, role="editor")

@@ -529,7 +529,7 @@ def _pg_script_id_for_topic(hid, topic):
         return None
 
 def _pg_studio_url(h):
-    """이 병원의 최신 PG 버전 편집 URL(스튜디오). 없으면 None."""
+    """이 병원의 최신 PG 버전 편집 URL(대시보드 canonical /scripts, Step 7B부터 대시보드가 직접 렌더). 없으면 None."""
     try:
         from store.db import make_engine
         from sqlalchemy import text
