@@ -372,9 +372,21 @@ def hospital(h):
     elif _ok == "0":
         misswarn += '<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 업로드된 파일이 없어요. 파일이 선택됐는지, 허용 형식(pdf·docx·txt·zip 등)인지 확인해 주세요.</div>'
     if request.args.get("big") == "1":
-        misswarn += '<div class=note style="border-color:var(--warn,#e0a800);color:var(--warn,#b8860b)">ℹ️ 40MB 넘는 파일은 이번 생성엔 쓰이지만 영구저장은 안 돼요(재시작 시 소실). 나머지는 영구 저장됩니다.</div>'
+        misswarn += '<div class=note style="border-color:var(--warn,#e0a800);color:var(--warn,#b8860b)">⚠️ 40MB 넘는 파일은 <b>저장도 생성도 안 돼요</b>. zip은 풀어서 안의 파일이 각각 저장돼요 — 그래도 40MB 넘는 개별 파일(영상 등)은 제외됩니다.</div>'
     if request.args.get("err") == "nopg":
         misswarn += '<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 이 병원은 영구저장(PostgreSQL)에 등록되지 않아 업로드를 막았어요(임시저장 방지). 관리자에게 병원 재등록을 요청하세요.</div>'
+    _uprep = session.pop("_upreport", None)   # 업로드 파일별 결과(투명 공개) — 무엇이 저장/스킵/실패했는지
+    if _uprep:
+        _ic = {"ok": "✅", "big": "🚫", "skip": "⚠️", "fail": "❌"}
+        _rows = "".join(
+            f'<div style="display:flex;gap:8px;font-size:12.5px;padding:3px 0;border-bottom:1px solid var(--border)">'
+            f'<span>{_ic.get(st, "•")}</span><span style="flex:1;word-break:break-all">{nm.replace("&","&amp;").replace("<","&lt;")}</span>'
+            f'<span class=muted style="white-space:nowrap">{dt.replace("&","&amp;").replace("<","&lt;")}</span></div>'
+            for (nm, st, dt) in _uprep)
+        _nok = sum(1 for r in _uprep if r[1] == "ok")
+        misswarn += (f'<details class=note open style="border-color:var(--border)"><summary style="cursor:pointer;font-weight:700">'
+                     f'📋 업로드 결과 — 영구저장 {_nok}개 / 전체 {len(_uprep)}개 (자세히)</summary>'
+                     f'<div style="margin-top:8px">{_rows}</div></details>')
     # ③ 결과물: 목록. disk .html ∪ PG(script_artifacts) → 재배포로 디스크가 비어도 목록 유지.
     def _topic_of(fn):
         b = os.path.basename(fn)
@@ -544,25 +556,73 @@ def upload(h):
             eng = make_engine()
         except Exception:
             eng = None
-    saved = 0; toobig = []
+    import zipfile as _zip
+    _INNER_OK = ALLOWED_EXT - {".zip"}       # zip 안 파일은 중첩 zip 제외
+    saved = 0; toobig = []; report = []      # report: (표시명, 상태, 상세) — 사용자에게 투명 공개
+    _uid = session.get("user_id")
+
+    def _persist(nm, data, tag=""):
+        """bytes 하나를 PG 영구저장. 상태를 report에 남김. 성공 시 True."""
+        nonlocal saved
+        if len(data) > _MAT_MAX:
+            toobig.append(nm); report.append((tag + nm, "big", f"{len(data)//(1024*1024)}MB(40MB 초과) — 저장·생성 제외"))
+            return False
+        if not eng:
+            report.append((tag + nm, "fail", "DB 연결 없음")); return False
+        try:
+            save_material(eng, hid, nm, data, created_by=_uid)
+            saved += 1; report.append((tag + nm, "ok", f"영구저장 {max(1,len(data)//1024)}KB")); return True
+        except Exception as e:
+            report.append((tag + nm, "fail", f"PG 저장 실패: {type(e).__name__}: {e}")); return False
+
     for f in request.files.getlist("files"):
         if not f or not f.filename: continue
         name = safe_filename(f.filename)     # 한글 유지 + 경로탈출 방지
         if not name: continue
-        if os.path.splitext(name)[1].lower() not in ALLOWED_EXT: continue  # 허용 확장자만
+        ext = os.path.splitext(name)[1].lower()
+        if ext not in ALLOWED_EXT:           # 허용 확장자만(눈에 보이게 스킵 기록)
+            report.append((name, "skip", f"허용 안 되는 형식({ext or '없음'})")); continue
         path = os.path.join(dest, name)
-        f.save(path)                         # 스트리밍 저장(대용량도 메모리 부담↓). 이번 생성에 즉시 사용.
-        sz = os.path.getsize(path)
-        if eng and sz <= _MAT_MAX:           # 한도 이하 → PG 영구 저장(재시작에도 유지)
+        try:
+            f.save(path)                     # 스트리밍 저장(대용량도 메모리 부담↓)
+        except Exception as e:
+            report.append((name, "fail", f"디스크 저장 실패: {e}")); continue
+        if ext == ".zip":
+            # zip은 통째로 PG에 넣지 않고(대개 40MB↑ → 저장·생성 제외됨) '안의 파일들'을 각각 영구저장
+            # → 무료 티어에서도 저장되고 생성 스냅샷에 포함됨. 디스크에서 lazy 읽어 메모리 절약.
+            try:
+                with _zip.ZipFile(path) as zf:
+                    members = [zi for zi in zf.infolist() if not zi.is_dir()]
+                    if not members:
+                        report.append((name, "skip", "빈 zip"))
+                    for zi in members:
+                        raw_nm = _decode_zipname(zi)
+                        inner = safe_filename(os.path.basename(raw_nm.replace("\\", "/")))
+                        if not inner or inner.startswith(".") or "__MACOSX" in raw_nm:
+                            continue
+                        iext = os.path.splitext(inner)[1].lower()
+                        if iext not in _INNER_OK:
+                            report.append((name + " ▸ " + inner, "skip", f"형식({iext or '없음'})")); continue
+                        if zi.file_size > _MAT_MAX:     # 읽기 전에 크기로 걸러 메모리 폭증 방지
+                            toobig.append(inner); report.append((name + " ▸ " + inner, "big", f"{zi.file_size//(1024*1024)}MB(40MB 초과)")); continue
+                        try:
+                            data = zf.read(zi)
+                        except Exception as e:
+                            report.append((name + " ▸ " + inner, "fail", f"압축해제 실패: {e}")); continue
+                        _persist(inner, data, tag=name + " ▸ ")
+            except _zip.BadZipFile:
+                report.append((name, "fail", "손상된 zip"))
+            except Exception as e:
+                report.append((name, "fail", f"zip 처리 오류: {e}"))
+        else:
             try:
                 with open(path, "rb") as fh:
-                    save_material(eng, hid, name, fh.read(), created_by=session.get("user_id"))
-            except Exception:
-                pass
-        elif eng:                            # 한도 초과 → 임시(disk)로만. 막지 않고 이번 생성엔 사용.
-            toobig.append(name)
-        saved += 1
-    q = f"?ok={saved}" + ("&big=1" if toobig else "")
+                    _persist(name, fh.read())
+            except Exception as e:
+                report.append((name, "fail", f"읽기 실패: {e}"))
+
+    session["_upreport"] = report[:60]       # 병원 페이지에서 파일별 결과 공개
+    q = f"?ok={saved}" + ("&big=1" if toobig else "") + ("&uperr=1" if any(r[1] == "fail" for r in report) else "")
     return redirect(f"/h/{h}{q}")
 
 def _pg_hospital_id(slug):
