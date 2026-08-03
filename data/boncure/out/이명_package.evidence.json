@@ -1,0 +1,101 @@
+{
+ "results": [
+  {
+   "claim": "김성은 등 2025, 대한침도의학회지 9(1):50-57 (송정현 공저) — 35세 여성 1례, 침도 포함 한의복합치료 20회, THI 54→2, 이명 NRS 3.5→0.5, 12kHz 역치 우 30→20dB·좌 35→20dB, 부작용 없음. 【필수 한계】단일 증례·대조군 없음 / 돌발",
+   "source": "c013.txt",
+   "is_primary": true,
+   "cite": [
+    "name:김성은",
+    "vols:9(1)",
+    "years:2025"
+   ],
+   "nums_found": [
+    "0.5",
+    "12",
+    "2",
+    "20",
+    "3.5",
+    "30",
+    "35",
+    "54"
+   ],
+   "nums_missing": [],
+   "verdict": "OK",
+   "opinion": "원문 논문에서 출처·수치 확인됨. (증례 근거등급 타당성은 원장 판단)",
+   "source_name": "침도요법 및 한의복합치료로 호전된 돌발성 난청 및 메니에르의증으로 인한 이명 치험례.pdf"
+  },
+  {
+   "claim": "Bulut 외 2016, Medical Science Monitor 22:495 — 경추 전만 소실군의 추골동맥 혈류 지표 176 vs 208(p=.002). 【필수 한계】연관성이며 인과 아님, 18~45세 대상, 임상 증상 미평가. '뇌 혈류 막힘·산소 부족' 표현 사용 불가",
+   "source": "c097.txt",
+   "is_primary": true,
+   "cite": [
+    "name:Bulut",
+    "years:2016"
+   ],
+   "nums_found": [
+    "002",
+    "22"
+   ],
+   "nums_missing": [],
+   "verdict": "OK",
+   "opinion": "원문 논문에서 출처·수치 확인됨. (증례 근거등급 타당성은 원장 판단)",
+   "source_name": "06_DelenBozan2023_전만소실과어지럼이명.pdf"
+  },
+  {
+   "claim": "Delen & Bozan 2023, Van Medical Journal 30(3) — 전만 소실군에서 이명+어지럼 동반 25% vs 4.3%(p=.017). 【필수 한계】이명 단독은 유의하지 않음(p=.534), 단면 연구로 인과 아님, 소수 표본이라 '몇 배' 표현 금지",
+   "source": "c097.txt",
+   "is_primary": true,
+   "cite": [
+    "name:Bozan",
+    "name:Delen",
+    "vols:30(3)",
+    "years:2023"
+   ],
+   "nums_found": [
+    "017",
+    "25",
+    "4.3",
+    "534"
+   ],
+   "nums_missing": [],
+   "verdict": "OK",
+   "opinion": "원문 논문에서 출처·수치 확인됨. (증례 근거등급 타당성은 원장 판단)",
+   "source_name": "06_DelenBozan2023_전만소실과어지럼이명.pdf"
+  },
+  {
+   "claim": "Zaccaro 외 2018, Frontiers in Human Neuroscience 12:353 — 분당 10회 미만 느린 호흡이 HRV 증가·부교감 우세와 연관. 【필수 한계】건강인 대상 리뷰(메타분석 아님), 질병 치료 효과 증명 아님, '긴 날숨이 핵심 기전'이라 말할 수 없음",
+   "source": "c096.txt",
+   "is_primary": true,
+   "cite": [
+    "name:Zaccaro",
+    "years:2018"
+   ],
+   "nums_found": [
+    "10"
+   ],
+   "nums_missing": [],
+   "verdict": "OK",
+   "opinion": "원문 논문에서 출처·수치 확인됨. (증례 근거등급 타당성은 원장 판단)",
+   "source_name": "04_Zaccaro2018_느린호흡.pdf"
+  },
+  {
+   "claim": "Hansraj 2014, Surgical Technology International 25:277 — 중립 4~5kg, 60도 굴곡 시 27kg 상당 부하. 【필수 한계】계산 모델이며 실측 아님, '목이 망가진다'가 아니라 '근육 작업량·피로 증가'로만 해석",
+   "source": "c099.txt",
+   "is_primary": true,
+   "cite": [
+    "name:Hansraj",
+    "years:2014"
+   ],
+   "nums_found": [],
+   "nums_missing": [],
+   "verdict": "OK",
+   "opinion": "원문 논문에서 출처·수치 확인됨. (증례 근거등급 타당성은 원장 판단)",
+   "source_name": "09_Hansraj2014_고개각도부하.pdf"
+  }
+ ],
+ "summary": {
+  "ok": 5,
+  "external": 0,
+  "total": 5
+ }
+}
