@@ -180,7 +180,8 @@ def _ed_img(key, edit):
     upload = (f'<form method="post" action="{esc(edit["upload_url"](key))}" enctype="multipart/form-data" style="margin-top:6px">{csrf}{rt}'
               f'<input type="file" name="photo" accept="image/*" style="font-size:11px;max-width:170px">'
               f'<button class="eb g" style="margin-top:4px">⬆ 내 사진 올리기</button></form>')
-    return f'<div class="ai-box"><div class="pb-h">🖼 이 장면 AI 사진</div>{img}<div class="ai-r">{regen}{revert}</div>{upload}</div>'
+    note = '<div style="font-size:11px;color:var(--muted);margin-top:6px">🎨 다시·⬆ 업로드해도 이전 사진은 보존 — ↩ 이전으로 복구</div>'
+    return f'<div class="ai-box"><div class="pb-h">🖼 이 장면 AI 사진</div>{img}<div class="ai-r">{regen}{revert}</div>{upload}{note}</div>'
 
 
 def render(pkg, meta=None, evidence=None, images=None, edit=None):
