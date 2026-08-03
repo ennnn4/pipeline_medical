@@ -21,10 +21,10 @@ class Conflict(Exception):
 _PREFIX = "boncure.v1:"
 
 @contextmanager
-def tenant_conn(engine, hospital_id, membership_id=None, request_id=None):
-    """app.hospital_id(+선택 app.membership_id, app.request_id)가 트랜잭션에 설정된 Connection. app_rw 경로 전용.
-    membership_id는 인증된 사용자의 membership — 승인 등 신원 결합 작업에 함수가 세션에서 읽는다(파라미터 신뢰 금지).
-    request_id는 감사 추적용(승인 audit에 기록)."""
+def tenant_conn(engine, hospital_id, membership_id=None, request_id=None, user_id=None):
+    """app.hospital_id(+선택 app.membership_id, app.request_id, app.user_id)가 트랜잭션에 설정된 Connection.
+    app_rw 경로 전용. membership_id·user_id는 인증된 사용자 신원 — 함수가 세션 GUC에서 읽는다(파라미터 신뢰 금지).
+    user_id는 platform operator 멤버십 자동 프로비저닝(fn_ensure_platform_operator_membership)이 읽는다."""
     with engine.connect() as conn:
         with conn.begin():
             conn.execute(text("select set_config('app.hospital_id', :h, true)"), {"h": str(hospital_id)})
@@ -32,6 +32,8 @@ def tenant_conn(engine, hospital_id, membership_id=None, request_id=None):
                          {"m": str(membership_id) if membership_id else ""})
             conn.execute(text("select set_config('app.request_id', :r, true)"),
                          {"r": str(request_id) if request_id else ""})
+            conn.execute(text("select set_config('app.user_id', :u, true)"),
+                         {"u": str(user_id) if user_id else ""})
             yield conn
 
 def _sha(domain, obj):

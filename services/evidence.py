@@ -29,7 +29,7 @@ def assess_claim(engine, ctx, script_id, version_id, claim_id, decision, reason=
     반환: {claim_id, version_id, decision}."""
     if decision not in _DECISION:
         raise InvalidStateTransition(f"허용되지 않은 결정: {decision}")
-    permissions.require(ctx, {"admin"} if decision in _ELEVATED else permissions.REVIEW_ROLES)
+    permissions.require(ctx, {"admin"} if decision in _ELEVATED else permissions.EVIDENCE_REVIEW_ROLES)
     sup, vf, risk, human_decision, default_reason = _DECISION[decision]
     reason = (reason or default_reason or "").strip()
     if decision in _ELEVATED and not reason:

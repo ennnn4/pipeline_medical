@@ -139,11 +139,24 @@ from store.approval_fns import ensure_approval_fns
 ensure_gen_schema(eng)              # generation_jobs(+status CHECK·active 유니크·worker_token)
 ensure_materials_schema(eng)        # materials·material_versions·gjm 복합FK·seal
 ensure_provision(eng)              # fn_provision_hospital(충돌정책)
+from store.platform_ops import ensure_platform_ops
+ensure_platform_ops(eng)           # platform_access_grants + membership_roles grant_source + ensure/grant/revoke(approval_foundation보다 먼저)
 ensure_approval_foundation(eng)    # 작성자·superseded·자기승인·waived·gate snapshot·revoke·approval_event
 ensure_approval_fns(eng)           # 승인 core+wrappers(fn_approve_version을 core 위임형으로 교체)
 from store.seed_images import ensure_scene_images
 ensure_scene_images(eng)           # scene_images + provenance(이미지 stale 판정)
 print("[schema] 생성job·자료버전·승인함수·provisioning·이미지 적용(reseed 안전)")
+
+# ── 3.6) platform operator(대행사 전 병원 접근) 계정 시딩 — reseed 후에도 유지 ──
+#   SEED_PLATFORM_EMAIL(+SEED_PLATFORM_PW) 지정 시 생성. 미지정이면 건너뜀.
+_pf_email = os.environ.get("SEED_PLATFORM_EMAIL")
+if _pf_email:
+    from store.platform_ops import ensure_platform_admin_user
+    _pf_pw = os.environ.get("SEED_PLATFORM_PW") or __import__("secrets").token_urlsafe(12)
+    _pf_uid = ensure_platform_admin_user(eng, _pf_email, _pf_pw, name=os.environ.get("SEED_PLATFORM_NAME"))
+    print(f"[platform] operator 계정 시딩: {_pf_email} (user_id={_pf_uid})")
+    if not os.environ.get("SEED_PLATFORM_PW"):
+        print(f"[platform] 임시 비밀번호: {_pf_pw}")
 
 # ── 4) app_rw 실제 비밀번호 설정 ──────────────────────────
 _pw_lit = APP_RW_PASSWORD.replace("'", "''")   # ALTER ROLE는 유틸리티문(파라미터 바인딩 불가) → 안전 이스케이프 후 인라인
