@@ -390,9 +390,10 @@ def hospital(h):
       <div class=chk style="margin:11px 0 6px">{chk}</div>
       {misswarn}
       <form id=upf method=post action="/h/{h}/upload" enctype=multipart/form-data><input type=hidden name=_csrf value="{_csrf}">
-        <div class=drop id=drop>파일을 여기로 끌어다 놓거나 클릭 (pdf·docx·txt·zip)
+        <div class=drop id=drop><span id=drophint>파일을 여기로 끌어다 놓거나 클릭 (pdf·docx·txt·zip)</span>
           <input id=fin type=file name=files multiple style="display:none">
         </div>
+        <div id=fsel class=muted style="margin-top:8px;font-size:13px;line-height:1.7"></div>
         <div class=row style="margin-top:12px"><button class="btn pri" type=submit>업로드</button>
         <span class=muted>설문지·인터뷰·논문·강의자료·기존 대본 등. zip 통째로도 OK</span></div>
       </form>
@@ -426,7 +427,10 @@ def hospital(h):
     script = """<script>
     var drop=document.getElementById('drop'),fin=document.getElementById('fin');
     drop.onclick=function(){fin.click()};
-    fin.onchange=function(){if(fin.files.length)drop.textContent=fin.files.length+'개 선택됨 — 업로드를 누르세요'};
+    fin.onchange=function(){var n=fin.files.length;
+      document.getElementById('drophint').textContent=n?(n+'개 선택됨 — 업로드를 누르세요'):'파일을 여기로 끌어다 놓거나 클릭 (pdf·docx·txt·zip)';
+      var names=[].map.call(fin.files,function(f){return '📎 '+f.name;}).join('<br>');
+      document.getElementById('fsel').innerHTML=n?('선택된 파일:<br>'+names):'';};
     ['dragover','dragenter'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('over')}));
     ['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('over')}));
     drop.addEventListener('drop',ev=>{fin.files=ev.dataTransfer.files;fin.onchange()});
