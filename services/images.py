@@ -32,6 +32,19 @@ def _block_scene_hash(conn, hospital_id, version_id, block_key):
     return scene_hash(block_key, r.block_type, r.scene, r.text)
 
 
+def _archive_current(conn, hospital_id, block_key):
+    """현재 scene_images 이미지를 히스토리로 보존(비파괴). 다음 seq 부여. 현재 이미지 없으면 no-op."""
+    seq = conn.execute(text("select coalesce(max(seq),0)+1 from scene_image_versions "
+                            "where hospital_id=:h and block_key=:k"), {"h": hospital_id, "k": block_key}).scalar()
+    n = conn.execute(text(
+        "insert into scene_image_versions(hospital_id, block_key, seq, mime, data, prompt, model, "
+        "source_version_id, source_scene_hash, source_prompt_hash, generated_by_membership_id) "
+        "select hospital_id, block_key, :seq, mime, data, prompt, model, source_version_id, source_scene_hash, "
+        "source_prompt_hash, generated_by_membership_id from scene_images where hospital_id=:h and block_key=:k"),
+        {"seq": seq, "h": hospital_id, "k": block_key}).rowcount
+    return seq if n else None
+
+
 def regenerate_scene(engine, ctx, block_key, feedback="", version_id=None, generator=None):
     """장면 이미지 재생성 → scene_images 갱신(영속) + provenance 기록. editor/approver/admin만.
     version_id를 주면 그 version 장면 입력의 source_scene_hash를 결착(대본 변경 시 stale 판정).
@@ -49,6 +62,7 @@ def regenerate_scene(engine, ctx, block_key, feedback="", version_id=None, gener
     jpg = generator(prompt)                                   # 외부 호출은 트랜잭션 밖
     with tenant_conn(engine, ctx.hospital_id, membership_id=ctx.membership_id,
                      request_id=ctx.request_id) as conn:
+        _archive_current(conn, ctx.hospital_id, block_key)   # 비파괴: 현재(이전) 이미지 보존 후 새 것으로
         r = conn.execute(text(
             "update scene_images set data=:d, prompt=:p, source_version_id=:vid, source_scene_hash=:sh, "
             "source_prompt_hash=:ph, generated_by_membership_id="
@@ -66,6 +80,33 @@ def regenerate_scene(engine, ctx, block_key, feedback="", version_id=None, gener
     return {"block_key": block_key}
 
 
+def revert_scene(engine, ctx, block_key, seq=None):
+    """이전 이미지로 되돌리기(비파괴) — 현재 것도 히스토리에 보존한 뒤 지정(또는 가장 최근) 아카이브를 현재로.
+    둘 다 남으므로 다시 앞뒤로 전환 가능. editor/approver/admin(+platform_operator)만."""
+    permissions.require(ctx, permissions.IMAGE_ROLES)
+    with tenant_conn(engine, ctx.hospital_id, membership_id=ctx.membership_id,
+                     request_id=ctx.request_id) as conn:
+        q = ("select seq, mime, data, prompt, model, source_version_id, source_scene_hash, source_prompt_hash "
+             "from scene_image_versions where hospital_id=:h and block_key=:k "
+             + ("and seq=:s " if seq is not None else "") + "order by seq desc limit 1")
+        p = {"h": ctx.hospital_id, "k": block_key}
+        if seq is not None:
+            p["s"] = seq
+        t = conn.execute(text(q), p).first()
+        if t is None:
+            raise NotFound("되돌릴 이전 이미지가 없습니다")
+        _archive_current(conn, ctx.hospital_id, block_key)   # 현재(새) 것도 보존 → 앞뒤 전환 가능
+        r = conn.execute(text(
+            "update scene_images set data=:d, prompt=:p, mime=:m, source_version_id=:vid, "
+            "source_scene_hash=:sh, source_prompt_hash=:ph, updated_at=now() "
+            "where hospital_id=:h and block_key=:k"),
+            {"d": t.data, "p": t.prompt, "m": t.mime, "vid": t.source_version_id, "sh": t.source_scene_hash,
+             "ph": t.source_prompt_hash, "h": ctx.hospital_id, "k": block_key})
+        if r.rowcount == 0:
+            raise NotFound("해당 장면 이미지가 없습니다")
+    return {"block_key": block_key, "reverted_to_seq": t.seq}
+
+
 def list_scene_status(engine, ctx, version_id):
     """이 version의 블록별 이미지 존재·stale 파생 판정(대본 장면이 이미지 생성 당시와 달라졌는지).
     반환: {block_key: {'has_image', 'stale', 'reason'}}. source 결착이 없으면 legacy_unbound(수동 확인)."""
@@ -77,16 +118,19 @@ def list_scene_status(engine, ctx, version_id):
         imgs = {r.block_key: r for r in conn.execute(text(
             "select block_key, source_version_id, source_scene_hash from scene_images where hospital_id=:h"),
             {"h": ctx.hospital_id})}
+        prev = {r[0] for r in conn.execute(text(   # 이전 이미지(되돌리기 가능) 존재하는 블록
+            "select distinct block_key from scene_image_versions where hospital_id=:h"), {"h": ctx.hospital_id})}
     for b in blocks:
         img = imgs.get(b.stable_block_key)
+        hp = b.stable_block_key in prev
         if img is None:
-            out[b.stable_block_key] = {"has_image": False, "stale": False, "reason": None}
+            out[b.stable_block_key] = {"has_image": False, "stale": False, "reason": None, "has_prev": hp}
             continue
         if img.source_scene_hash is None:
-            out[b.stable_block_key] = {"has_image": True, "stale": True, "reason": "legacy_unbound"}
+            out[b.stable_block_key] = {"has_image": True, "stale": True, "reason": "legacy_unbound", "has_prev": hp}
             continue
         cur = scene_hash(b.stable_block_key, b.block_type, b.scene, b.text)
         stale = cur != img.source_scene_hash
         out[b.stable_block_key] = {"has_image": True, "stale": stale,
-                                   "reason": ("source_scene_changed" if stale else None)}
+                                   "reason": ("source_scene_changed" if stale else None), "has_prev": hp}
     return out

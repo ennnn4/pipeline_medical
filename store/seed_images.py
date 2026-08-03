@@ -35,13 +35,51 @@ _PROVENANCE = [
     "ALTER TABLE scene_images ADD COLUMN IF NOT EXISTS generated_by_membership_id uuid;",
 ]
 
+# 이미지 히스토리(비파괴 재생성) — 재생성/되돌리기 시 현재 이미지를 여기 보존(append-only).
+# 다시 뽑은 게 더 별로면 이전 것으로 되돌릴 수 있게. 논문 원본 사진은 scene_images가 아니라
+# 스토리보드(assets/build.py)에 있으므로 이 재생성 대상이 아니다(= 건드리지 않음).
+_HISTORY_DDL = """
+CREATE TABLE IF NOT EXISTS scene_image_versions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  hospital_id uuid NOT NULL REFERENCES hospitals(id),
+  block_key text NOT NULL,
+  seq int NOT NULL,
+  mime text NOT NULL DEFAULT 'image/jpeg',
+  data bytea NOT NULL,
+  prompt text,
+  model text,
+  source_version_id uuid,
+  source_scene_hash text,
+  source_prompt_hash text,
+  generated_by_membership_id uuid,
+  archived_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (hospital_id, block_key, seq)
+);
+"""
+
+def _history_policies():
+    return [
+        "ALTER TABLE scene_image_versions ENABLE ROW LEVEL SECURITY;",
+        "ALTER TABLE scene_image_versions FORCE ROW LEVEL SECURITY;",
+        "DROP POLICY IF EXISTS siv_rw ON scene_image_versions;",
+        f"CREATE POLICY siv_rw ON scene_image_versions TO app_rw "
+        f"USING (hospital_id = {_TENANT_SET}) WITH CHECK (hospital_id = {_TENANT_SET});",
+        "DROP POLICY IF EXISTS siv_def ON scene_image_versions;",
+        "CREATE POLICY siv_def ON scene_image_versions TO app_owner USING (true) WITH CHECK (true);",
+        "GRANT SELECT, INSERT ON scene_image_versions TO app_rw;",      # append-only(수정·삭제 없음=이력 보존)
+        "GRANT SELECT, INSERT, DELETE ON scene_image_versions TO app_owner;",
+    ]
+
 def ensure_scene_images(owner_engine):
-    """scene_images 테이블 + 정책 + provenance 컬럼(멱등). deploy_bootstrap·image service 전제."""
+    """scene_images 테이블 + 정책 + provenance 컬럼 + 히스토리 테이블(멱등). deploy_bootstrap·image service 전제."""
     with owner_engine.begin() as cn:
         cn.execute(text(DDL))
         for s in _PROVENANCE:
             cn.execute(text(s))
+        cn.execute(text(_HISTORY_DDL))
         for s in _policies():
+            cn.execute(text(s))
+        for s in _history_policies():
             cn.execute(text(s))
 
 def _policies():

@@ -107,18 +107,22 @@ def images_panel(blocks, img_keys, is_current, img_status, urls, csrf, version_i
         key = b["stable_block_key"]
         if key not in img_keys:
             continue
+        stx = (img_status or {}).get(key) or {}
         regen = (f'<form method=post action="{escape(urls.regen(version_id, key))}" '
                  f'style="display:flex;gap:6px;margin-top:6px">{csrf_field(csrf)}'
                  f'<input name=feedback placeholder="어떻게 바꿀까? (비우면 새 버전으로 재생성)" '
                  f'style="flex:1;font-size:12px;padding:7px;margin:0"><button class="btn g" '
                  f'style="padding:7px 12px;font-size:12px" onclick="this.innerHTML=\'생성중…\'">🎨 다시</button></form>') if is_current else ""
-        stx = (img_status or {}).get(key) or {}
+        # 이전 이미지 보존됨 → 되돌리기(둘 다 남으므로 앞뒤 전환 가능)
+        revert = (f'<form method=post action="{escape(urls.revert(version_id, key))}" style="margin-top:4px">{csrf_field(csrf)}'
+                  f'<button class="btn g" style="padding:5px 10px;font-size:12px">↩ 이전 사진으로</button></form>'
+                  ) if is_current and stx.get("has_prev") else ""
         badge = ('<span class="badge stale" style="font-size:11px">⚠ 대본 변경됨 — 재생성 권장</span>' if stx.get("stale") and stx.get("reason") == "source_scene_changed"
                  else '<span class="badge stale" style="font-size:11px">⚠ 출처 미결착(수동 확인)</span>' if stx.get("stale")
                  else "")
         cells.append(
             f'<div class=blk id="img_{escape(key)}"><div class=key>{escape(key)} · {escape((b["block_type"] or "")[:20])} {badge}</div>'
-            f'<img class=thumb src="{escape(urls.img(key))}" alt="scene" onclick="LB(this)">{regen}</div>')
+            f'<img class=thumb src="{escape(urls.img(key))}" alt="scene" onclick="LB(this)">{regen}{revert}</div>')
     note = ('<p><small>영상용 <b>개념 B롤</b>(AI 생성)입니다. 실제 환자사진·논문 그림이 아니며, '
             '사용 전 저작권·의학표현은 원장 확인. 마음에 안 들면 아래에 적고 “다시”.</small></p>')
     return f'<div class=card><h2>장면 이미지 — 클릭하면 크게, ←→ 넘김</h2>{note}{"".join(cells)}</div>' + _LIGHTBOX
@@ -134,7 +138,8 @@ VERSION_MESSAGES = {
     "conflict": '<div class="msg e">현재 버전이 바뀌었거나 승인된 버전이라 반영하지 못했습니다.</div>',
     "rejected": '<div class="msg s">반려되었습니다.</div>',
     "revoked": '<div class="msg s">승인이 철회되었습니다.</div>',
-    "regen": '<div class="msg s">이미지를 다시 생성했습니다.</div>',
+    "regen": '<div class="msg s">이미지를 다시 생성했습니다(이전 이미지도 보존됨).</div>',
+    "reverted": '<div class="msg s">이전 이미지로 되돌렸습니다(방금 것도 보존됨).</div>',
     "regenfail": '<div class="msg e">이미지 재생성 실패(OpenAI 키/네트워크 확인).</div>',
 }
 

@@ -6,7 +6,7 @@ boncure-pipeline 로컬 웹앱 — 터미널·yaml 없이 브라우저로 쓴다
 엔진(run.py)을 그대로 호출하므로 파이프라인 로직은 재사용.
 """
 import os, sys, glob, subprocess, threading, re, io, secrets, sqlite3, datetime, unicodedata, hmac, time
-from flask import Flask, request, redirect, send_file, abort, render_template_string, jsonify, url_for, session, g
+from flask import Flask, request, redirect, send_file, abort, render_template_string, jsonify, url_for, session, g, Response
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
@@ -578,6 +578,173 @@ def scripts_edit(h, version_id, section="edit"):
         abort(e.http_status)
     return _render.version_page(ws, DashboardUrls(h), session.get("_csrf", ""),
                                 msg_code=request.args.get("m"))
+
+
+# ── Step 9(선반영): 편집·검수·승인·이미지 쓰기를 대시보드가 직접 소유(studio 미경유) ──
+#   라우트=파싱+ctx resolve+공통 service+예외매핑만. CSRF는 _guard(POST)가 검증. redirect는 대시보드로.
+def _dash_ctx(h):
+    from services.context import ActorContext
+    from store.db import make_engine
+    return ActorContext.resolve(make_engine(), session.get("user_id"), h, getattr(g, "request_id", None))
+
+
+@app.post("/scripts/<h>/<script_id>/edit")
+def d_edit(h, script_id):
+    import uuid as _uuid
+    from services import scripts as _svc
+    from services.exceptions import ServiceError
+    from store.db import make_engine
+    expected = request.form.get("expected")
+    try:
+        _uuid.UUID(expected); _uuid.UUID(script_id)
+    except (TypeError, ValueError):
+        abort(400)
+    edits = {k[6:]: v for k, v in request.form.items() if k.startswith("edit__")}
+    try:
+        res = _svc.edit_blocks(make_engine(), _dash_ctx(h), script_id, expected, edits)
+        if res.get("no_change"):
+            return redirect(f"/scripts/{h}/{expected}")
+        return redirect(f"/scripts/{h}/{res['version_id']}?m=edited")
+    except ServiceError as e:
+        if e.http_status == 401:
+            return redirect("/login")
+        if e.http_status == 409:
+            return redirect(f"/scripts/{h}/{expected}?m=conflict")
+        abort(e.http_status)
+
+
+def _dash_approval(h, version_id, fn, ok_msg):
+    import uuid as _uuid
+    from services.exceptions import ServiceError
+    try:
+        _uuid.UUID(version_id)
+    except (TypeError, ValueError):
+        abort(400)
+    try:
+        fn(_dash_ctx(h))
+        return redirect(f"/scripts/{h}/{version_id}?m={ok_msg}")
+    except ServiceError as e:
+        m = {403: "e403", 422: "e422", 409: "conflict"}.get(e.http_status)
+        if m is None:
+            if e.http_status == 401:
+                return redirect("/login")
+            abort(e.http_status)
+        return redirect(f"/scripts/{h}/{version_id}?m={m}")
+
+
+@app.post("/scripts/<h>/versions/<version_id>/approve")
+def d_approve(h, version_id):
+    from services import approvals as _svc
+    from store.db import make_engine
+    return _dash_approval(h, version_id, lambda ctx: _svc.approve(make_engine(), ctx, version_id), "approved")
+
+
+@app.post("/scripts/<h>/versions/<version_id>/reject")
+def d_reject(h, version_id):
+    from services import approvals as _svc
+    from store.db import make_engine
+    reason = (request.form.get("reason") or "").strip()
+    return _dash_approval(h, version_id, lambda ctx: _svc.reject(make_engine(), ctx, version_id, reason), "rejected")
+
+
+@app.post("/scripts/<h>/versions/<version_id>/revoke")
+def d_revoke(h, version_id):
+    from services import approvals as _svc
+    from store.db import make_engine
+    reason = (request.form.get("reason") or "").strip()
+    return _dash_approval(h, version_id, lambda ctx: _svc.revoke(make_engine(), ctx, version_id, reason), "revoked")
+
+
+@app.post("/scripts/<h>/versions/<version_id>/self-approve")
+def d_self_approve(h, version_id):
+    from services import approvals as _svc
+    from store.db import make_engine
+    reason = (request.form.get("reason") or "").strip()
+    return _dash_approval(h, version_id, lambda ctx: _svc.self_approve(make_engine(), ctx, version_id, reason), "approved")
+
+
+@app.post("/scripts/<h>/claims/<claim_id>/review")
+def d_review(h, claim_id):
+    import uuid as _uuid
+    from services import evidence as _svc
+    from services.exceptions import ServiceError
+    from store.db import make_engine
+    version_id = request.form.get("version_id"); script_id = request.form.get("script_id")
+    decision = request.form.get("decision")
+    try:
+        _uuid.UUID(claim_id); _uuid.UUID(version_id); _uuid.UUID(script_id)
+    except (TypeError, ValueError):
+        abort(400)
+    try:
+        _svc.assess_claim(make_engine(), _dash_ctx(h), script_id, version_id, claim_id, decision)
+        return redirect(f"/scripts/{h}/{version_id}?m=reviewed")
+    except ServiceError as e:
+        if e.http_status == 409:
+            return redirect(f"/scripts/{h}/{version_id}?m=conflict")
+        if e.http_status == 401:
+            return redirect("/login")
+        abort(e.http_status)
+
+
+@app.post("/scripts/<h>/versions/<version_id>/blocks/<block_key>/regen-image")
+def d_regen(h, version_id, block_key):
+    from services import images as _svc
+    from services.exceptions import ServiceError
+    from store.db import make_engine
+    feedback = (request.form.get("feedback") or "").strip()
+    try:
+        _svc.regenerate_scene(make_engine(), _dash_ctx(h), block_key, feedback, version_id=version_id)
+        return redirect(f"/scripts/{h}/{version_id}?m=regen#img_{block_key}")
+    except ServiceError as e:
+        if e.http_status == 401:
+            return redirect("/login")
+        return redirect(f"/scripts/{h}/{version_id}?m=regenfail")
+    except Exception:
+        return redirect(f"/scripts/{h}/{version_id}?m=regenfail")
+
+
+@app.post("/scripts/<h>/versions/<version_id>/blocks/<block_key>/revert-image")
+def d_revert(h, version_id, block_key):
+    from services import images as _svc
+    from services.exceptions import ServiceError
+    from store.db import make_engine
+    try:
+        _svc.revert_scene(make_engine(), _dash_ctx(h), block_key)
+        return redirect(f"/scripts/{h}/{version_id}?m=reverted#img_{block_key}")
+    except ServiceError as e:
+        if e.http_status == 401:
+            return redirect("/login")
+        return redirect(f"/scripts/{h}/{version_id}?m=regenfail")
+    except Exception:
+        return redirect(f"/scripts/{h}/{version_id}?m=regenfail")
+
+
+@app.get("/scripts/<h>/img/<block_key>")
+def d_img(h, block_key):
+    from sqlalchemy import text as _t
+    from store.repositories import tenant_conn
+    from store.db import make_engine
+    try:
+        ctx = _dash_ctx(h)
+    except Exception:
+        abort(403)
+    with tenant_conn(make_engine(), ctx.hospital_id, membership_id=ctx.membership_id) as cn:
+        row = cn.execute(_t("select mime, data from scene_images where hospital_id=:h and block_key=:k limit 1"),
+                         {"h": ctx.hospital_id, "k": block_key}).first()
+    if not row:
+        abort(404)
+    return Response(bytes(row.data), mimetype=row.mime or "image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/scripts/<h>/<script_id>/versions/<version_id>/export")
+def d_export(h, script_id, version_id):
+    from services import exports as _svc
+    from services.exceptions import ServiceError
+    from store.db import make_engine
+    try:
+        return jsonify(_svc.prepare_export(make_engine(), _dash_ctx(h), script_id, version_id)), 200
+    except ServiceError as e:
+        return jsonify(error=e.code, detail=str(e)), e.http_status
 
 def _run_pipeline(h, topic, evidence=True, request_key=None, membership_id=None):
     """GPT P0 반영: run.py '전에' PG generation_job(pending) 생성 → generating → generated →

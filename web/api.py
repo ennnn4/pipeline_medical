@@ -351,4 +351,17 @@ def create_app(engine=None):
         except Exception:
             return redirect(_u(f"/ui/h/{slug}/versions/{version_id}?m=regenfail"))
 
+    @app.post("/ui/h/<slug>/versions/<version_id>/blocks/<block_key>/revert-image")
+    def revert_image(slug, version_id, block_key):
+        try:      # 이전 이미지로 되돌리기(비파괴, 둘 다 보존)
+            ctx = ActorContext.resolve(app.config["ENGINE"], session.get("user_id"), slug, g.request_id)
+            images_service.revert_scene(app.config["ENGINE"], ctx, block_key)
+            return redirect(_u(f"/ui/h/{slug}/versions/{version_id}?m=reverted#{block_key}"))
+        except ServiceError as e:
+            if e.http_status == 401:
+                return redirect(_u("/login"))
+            return redirect(_u(f"/ui/h/{slug}/versions/{version_id}?m=regenfail"))
+        except Exception:
+            return redirect(_u(f"/ui/h/{slug}/versions/{version_id}?m=regenfail"))
+
     return app

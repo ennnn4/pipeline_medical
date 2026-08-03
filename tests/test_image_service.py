@@ -50,6 +50,38 @@ def test_regen_missing_scene(owner, rw, tenant):
         im.regenerate_scene(rw, _ctx(tenant, {"editor"}), "nope", generator=lambda p: b"X")
 
 
+def test_regen_keeps_previous_image(owner, rw, tenant):
+    # 비파괴: 재생성해도 이전 이미지가 히스토리에 보존(둘 다 남음).
+    h = tenant["hospital_id"]; _seed_image(owner, h)          # 현재=b"OLD"
+    im.regenerate_scene(rw, _ctx(tenant, {"editor"}), "blk_1", generator=lambda p: b"NEW1")
+    from store.repositories import tenant_conn
+    with tenant_conn(rw, h) as cn:
+        cur = cn.execute(text("select data from scene_images where hospital_id=:h and block_key='blk_1'"), {"h": h}).scalar()
+        hist = [bytes(r[0]) for r in cn.execute(text("select data from scene_image_versions "
+                "where hospital_id=:h and block_key='blk_1' order by seq"), {"h": h}).all()]
+    assert bytes(cur) == b"NEW1" and hist == [b"OLD"]          # 현재=새것, 이전=보존됨
+
+
+def test_revert_restores_previous_keeps_both(owner, rw, tenant):
+    # 되돌리기: 이전 이미지로 복원하되 방금 것도 보존(앞뒤 전환 가능).
+    h = tenant["hospital_id"]; _seed_image(owner, h)          # OLD
+    ctx = _ctx(tenant, {"editor"})
+    im.regenerate_scene(rw, ctx, "blk_1", generator=lambda p: b"NEW1")   # 현재 NEW1, 히스토리[OLD]
+    im.revert_scene(rw, ctx, "blk_1")                                     # 현재 OLD, 히스토리[OLD, NEW1]
+    from store.repositories import tenant_conn
+    with tenant_conn(rw, h) as cn:
+        cur = cn.execute(text("select data from scene_images where hospital_id=:h and block_key='blk_1'"), {"h": h}).scalar()
+        hist = [bytes(r[0]) for r in cn.execute(text("select data from scene_image_versions "
+                "where hospital_id=:h and block_key='blk_1' order by seq"), {"h": h}).all()]
+    assert bytes(cur) == b"OLD" and hist == [b"OLD", b"NEW1"]  # 되돌림 + 둘 다 보존
+
+
+def test_revert_without_history_notfound(owner, rw, tenant):
+    h = tenant["hospital_id"]; _seed_image(owner, h)
+    with pytest.raises(NotFound):
+        im.revert_scene(rw, _ctx(tenant, {"editor"}), "blk_1")   # 이전 없음
+
+
 def test_image_stale_on_scene_change(owner, rw, tenant):
     """이미지를 version v 장면으로 생성 후 대본 장면이 바뀌면 stale 파생 판정."""
     from store.testkit import new_version, new_block

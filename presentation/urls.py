@@ -45,6 +45,9 @@ class StudioUrls:
     def regen(self, version_id, block_key):
         return self._u(f"/ui/h/{self.slug}/versions/{version_id}/blocks/{block_key}/regen-image")
 
+    def revert(self, version_id, block_key):
+        return self._u(f"/ui/h/{self.slug}/versions/{version_id}/blocks/{block_key}/revert-image")
+
     def logout(self):
         return self._u("/logout")
 
@@ -61,7 +64,7 @@ class DashboardUrls:
 
     def __init__(self, slug):
         self.slug = slug
-        self._studio = StudioUrls(lambda p: "/studio" + p, slug)   # 쓰기·자산 compat
+        self._studio = StudioUrls(lambda p: "/studio" + p, slug)   # diff(디버그 JSON)만 잔여 compat
 
     # 읽기·nav — 대시보드 canonical
     def version(self, version_id):
@@ -73,33 +76,36 @@ class DashboardUrls:
     def logout(self):
         return "/logout"
 
-    # 쓰기·자산 — /studio compat(전환기)
+    # 쓰기·자산 — 대시보드가 직접 소유(studio 미경유, Step 9 선반영)
     def edit(self, script_id):
-        return self._studio.edit(script_id)
+        return f"/scripts/{self.slug}/{script_id}/edit"
 
     def approve(self, version_id):
-        return self._studio.approve(version_id)
+        return f"/scripts/{self.slug}/versions/{version_id}/approve"
 
     def reject(self, version_id):
-        return self._studio.reject(version_id)
+        return f"/scripts/{self.slug}/versions/{version_id}/reject"
 
     def revoke(self, version_id):
-        return self._studio.revoke(version_id)
+        return f"/scripts/{self.slug}/versions/{version_id}/revoke"
 
     def self_approve(self, version_id):
-        return self._studio.self_approve(version_id)
+        return f"/scripts/{self.slug}/versions/{version_id}/self-approve"
 
     def export(self, script_id, version_id):
-        return self._studio.export(script_id, version_id)
-
-    def diff(self, version_id, from_version_id):
-        return self._studio.diff(version_id, from_version_id)
+        return f"/scripts/{self.slug}/{script_id}/versions/{version_id}/export"
 
     def review(self, claim_id):
-        return self._studio.review(claim_id)
+        return f"/scripts/{self.slug}/claims/{claim_id}/review"
 
     def img(self, block_key):
-        return self._studio.img(block_key)
+        return f"/scripts/{self.slug}/img/{block_key}"
 
     def regen(self, version_id, block_key):
-        return self._studio.regen(version_id, block_key)
+        return f"/scripts/{self.slug}/versions/{version_id}/blocks/{block_key}/regen-image"
+
+    def revert(self, version_id, block_key):
+        return f"/scripts/{self.slug}/versions/{version_id}/blocks/{block_key}/revert-image"
+
+    def diff(self, version_id, from_version_id):
+        return self._studio.diff(version_id, from_version_id)   # 디버그 JSON — 잔여 compat
