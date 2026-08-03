@@ -83,3 +83,26 @@ def test_images_panel_stale_badge():
 def test_page_shell_has_dashboard_nav():
     html = render.page("제목", "<p>본문</p>")
     assert "← 대시보드" in html and "<title>제목" in html and "<p>본문</p>" in html
+
+
+def test_version_page_xss_escaping():
+    # GPT A유지 조건: f-string 렌더링은 자동 escaping이 없으므로 XSS 회귀 관문 필수.
+    # DB/사용자값(블록 key·본문·block_type·claim·source·식별자)이 본문·속성 어디서도 살아있는 태그로 새면 안 됨.
+    X = '"><script>alert(1)</script>'
+    ws = dict(version_id=X, script_id=X, version_no=1, parent_version_id=None,
+              is_current=True, stale=False, approval_status="none",
+              blocks=[{"stable_block_key": X, "block_type": X,
+                       "text": "</textarea><script>alert(2)</script>"}],
+              claims=[{"id": X, "claim_text": "<img src=x onerror=alert(3)>",
+                       "verification_status": "verified", "support_level": "direct",
+                       "assessment_kind": "automated", "source_title": '"><script>alert(4)</script>',
+                       "source_quote": "q", "rationale": "r"}],
+              img_keys={X}, images_status={},
+              available_actions={"can_edit": True, "can_approve": True, "can_revoke": True, "can_export": True})
+    html = render.version_page(ws, _urls(), "TOK")
+    assert "<script>alert" not in html                    # 주입 script 태그 없음
+    assert "</textarea><script>" not in html               # textarea 본문 breakout 없음
+    assert '"><script>' not in html                        # 속성 breakout 없음(key·식별자)
+    assert "onerror=alert(3)>" not in html                 # 살아있는 img 이벤트 핸들러 없음
+    assert "&lt;script&gt;" in html                        # escape가 실제로 적용됨
+    assert "&lt;img src=x onerror=alert(3)&gt;" in html    # claim은 텍스트로만 렌더

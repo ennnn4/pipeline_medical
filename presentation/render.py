@@ -45,7 +45,7 @@ def page(title, body, dashboard_href="/"):
     logo = (f"<img src='{LOGO_URI}' alt='Medical Pipeline' style='height:34px'>" if LOGO_URI
             else "<b style='font-size:17px'>Medical Pipeline</b>")
     nav = (f"<div style='display:flex;align-items:center;gap:12px;padding:16px 0 12px'>{logo}"
-           f"<a class='btn g' href='{dashboard_href}' style='margin-left:auto;padding:8px 14px;font-size:13px'>← 대시보드</a></div>")
+           f"<a class='btn g' href='{escape(dashboard_href)}' style='margin-left:auto;padding:8px 14px;font-size:13px'>← 대시보드</a></div>")
     return (f"<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
             f"<title>{escape(title)}</title>{fav}<style>{CSS}</style><div class=wrap>{nav}{body}</div>")
 
@@ -55,9 +55,9 @@ def _review_buttons(claim_id, is_current, urls, csrf, version_id, script_id):
     version_id·script_id 명시 전송 → service가 current 재검사·소속 검증(지연 저장 차단)."""
     if not is_current:
         return ""
-    act = urls.review(claim_id)
-    hidden = (f'{csrf_field(csrf)}<input type=hidden name=version_id value="{version_id}">'
-              f'<input type=hidden name=script_id value="{script_id}">')
+    act = escape(urls.review(claim_id))     # 속성 삽입 → escape(식별자 방어심층)
+    hidden = (f'{csrf_field(csrf)}<input type=hidden name=version_id value="{escape(version_id)}">'
+              f'<input type=hidden name=script_id value="{escape(script_id)}">')
     return (f'<div style="margin-top:6px;display:flex;gap:6px">'
             f'<form method=post action="{act}" style="margin:0">{hidden}<input type=hidden name=decision value=confirm>'
             f'<button class=btn style="padding:4px 12px;font-size:13px;background:#12b886">확정</button></form>'
@@ -107,7 +107,7 @@ def images_panel(blocks, img_keys, is_current, img_status, urls, csrf, version_i
         key = b["stable_block_key"]
         if key not in img_keys:
             continue
-        regen = (f'<form method=post action="{urls.regen(version_id, key)}" '
+        regen = (f'<form method=post action="{escape(urls.regen(version_id, key))}" '
                  f'style="display:flex;gap:6px;margin-top:6px">{csrf_field(csrf)}'
                  f'<input name=feedback placeholder="어떻게 바꿀까? (비우면 새 버전으로 재생성)" '
                  f'style="flex:1;font-size:12px;padding:7px;margin:0"><button class="btn g" '
@@ -118,7 +118,7 @@ def images_panel(blocks, img_keys, is_current, img_status, urls, csrf, version_i
                  else "")
         cells.append(
             f'<div class=blk id="img_{escape(key)}"><div class=key>{escape(key)} · {escape((b["block_type"] or "")[:20])} {badge}</div>'
-            f'<img class=thumb src="{urls.img(key)}" alt="scene" onclick="LB(this)">{regen}</div>')
+            f'<img class=thumb src="{escape(urls.img(key))}" alt="scene" onclick="LB(this)">{regen}</div>')
     note = ('<p><small>영상용 <b>개념 B롤</b>(AI 생성)입니다. 실제 환자사진·논문 그림이 아니며, '
             '사용 전 저작권·의학표현은 원장 확인. 마음에 안 들면 아래에 적고 “다시”.</small></p>')
     return f'<div class=card><h2>장면 이미지 — 클릭하면 크게, ←→ 넘김</h2>{note}{"".join(cells)}</div>' + _LIGHTBOX
@@ -149,28 +149,28 @@ def version_page(ws, urls, csrf, msg_code=None):
     rows = "".join(
         f'<div class=blk><div class=key>{escape(b["stable_block_key"])} · {escape(b["block_type"])}</div>'
         f'<textarea name="edit__{escape(b["stable_block_key"])}">{escape(b["text"])}</textarea></div>' for b in blocks)
-    editform = ((f'<form method=post action="{urls.edit(script_id)}">{csrf_field(csrf)}'
-                 f'<input type=hidden name=expected value="{version_id}">{rows}'
+    editform = ((f'<form method=post action="{escape(urls.edit(script_id))}">{csrf_field(csrf)}'
+                 f'<input type=hidden name=expected value="{escape(version_id)}">{rows}'
                  f'<button class=btn type=submit>💾 편집 저장(새 버전 생성)</button></form>') if is_current
                 else f'<p><small>이 버전은 현재 버전이 아니라 편집할 수 없습니다(불변).</small></p>{rows}')
     act = ws["available_actions"]
     approve = reject = revoke = export = ""
     if act["can_approve"]:
-        approve = (f'<form method=post action="{urls.approve(version_id)}" style="display:inline-block;margin-top:12px">{csrf_field(csrf)}'
+        approve = (f'<form method=post action="{escape(urls.approve(version_id))}" style="display:inline-block;margin-top:12px">{csrf_field(csrf)}'
                    f'<button class=btn type=submit>✅ 승인</button></form>')
-        reject = (f'<form method=post action="{urls.reject(version_id)}" style="display:inline-block;margin-top:12px;margin-left:6px">{csrf_field(csrf)}'
+        reject = (f'<form method=post action="{escape(urls.reject(version_id))}" style="display:inline-block;margin-top:12px;margin-left:6px">{csrf_field(csrf)}'
                   f'<input name=reason placeholder="반려 사유" style="padding:6px 8px;font-size:13px">'
                   f'<button class=btn type=submit style="background:#f04452">반려</button></form>')
     if act["can_revoke"]:
-        export = f'<a class="btn g" style="margin-left:6px" href="{urls.export(script_id, version_id)}">⬇ export(JSON)</a>'
-        revoke = (f'<form method=post action="{urls.revoke(version_id)}" style="display:inline-block;margin-top:12px;margin-left:6px">{csrf_field(csrf)}'
+        export = f'<a class="btn g" style="margin-left:6px" href="{escape(urls.export(script_id, version_id))}">⬇ export(JSON)</a>'
+        revoke = (f'<form method=post action="{escape(urls.revoke(version_id))}" style="display:inline-block;margin-top:12px;margin-left:6px">{csrf_field(csrf)}'
                   f'<input name=reason placeholder="철회 사유" style="padding:6px 8px;font-size:13px">'
                   f'<button class=btn type=submit style="background:#f04452">승인 철회</button></form>')
-    diff = (f'<a class="btn g" href="{urls.diff(version_id, ws["parent_version_id"])}">diff(JSON)</a>'
+    diff = (f'<a class="btn g" href="{escape(urls.diff(version_id, ws["parent_version_id"]))}">diff(JSON)</a>'
             if ws["parent_version_id"] else "")
     evidence = evidence_panel(claims, is_current, urls, csrf, version_id, script_id)
     images = images_panel(blocks, ws["img_keys"], is_current, ws["images_status"], urls, csrf, version_id)
     body = (f'<div class=card><h1>버전 v{ws["version_no"]} {badge}</h1>{msg}'
             f'<h2>블록 (편집 → 새 immutable 버전)</h2>{editform}{approve}{reject}{revoke}{export} {diff} '
-            f'<a class="btn g" href="{urls.logout()}">로그아웃</a></div>{images}{evidence}')
+            f'<a class="btn g" href="{escape(urls.logout())}">로그아웃</a></div>{images}{evidence}')
     return page(f"버전 {ws['version_no']}", body, dashboard_href=urls.dashboard())
