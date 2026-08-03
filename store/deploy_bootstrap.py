@@ -145,7 +145,9 @@ ensure_approval_foundation(eng)    # 작성자·superseded·자기승인·waived
 ensure_approval_fns(eng)           # 승인 core+wrappers(fn_approve_version을 core 위임형으로 교체)
 from store.seed_images import ensure_scene_images
 ensure_scene_images(eng)           # scene_images + provenance(이미지 stale 판정)
-print("[schema] 생성job·자료버전·승인함수·provisioning·이미지 적용(reseed 안전)")
+from store.artifacts import ensure_artifacts_schema
+ensure_artifacts_schema(eng)       # script_artifacts(생성 결과물 html·패키지 영속 → 재배포에도 목록·미리보기 유지)
+print("[schema] 생성job·자료버전·승인함수·provisioning·이미지·결과물 적용(reseed 안전)")
 
 # ── 3.6) platform operator(대행사 전 병원 접근) 계정 시딩 — 안전(GPT) ──
 #   SEED_PLATFORM_EMAIL + SEED_PLATFORM_PW 둘 다 있어야 시딩(비번 자동생성·로그출력 금지).

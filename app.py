@@ -375,14 +375,19 @@ def hospital(h):
         misswarn += '<div class=note style="border-color:var(--warn,#e0a800);color:var(--warn,#b8860b)">ℹ️ 40MB 넘는 파일은 이번 생성엔 쓰이지만 영구저장은 안 돼요(재시작 시 소실). 나머지는 영구 저장됩니다.</div>'
     if request.args.get("err") == "nopg":
         misswarn += '<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 이 병원은 영구저장(PostgreSQL)에 등록되지 않아 업로드를 막았어요(임시저장 방지). 관리자에게 병원 재등록을 요청하세요.</div>'
-    # ③ 결과물: 목록만. '✏️ 편집' = 예쁜 스토리보드를 그대로 두고 대사 편집·AI사진 얹은 편집 페이지.
+    # ③ 결과물: 목록. disk .html ∪ PG(script_artifacts) → 재배포로 디스크가 비어도 목록 유지.
     def _topic_of(fn):
         b = os.path.basename(fn)
         return b[:-len("_package.html")] if b.endswith("_package.html") else b[:-5]
-    outlist = ("".join(f'<div class=out><span>{os.path.basename(o)[:-5]}</span>'
-                       f'<a class=btn href="/h/{h}/edit/{_topic_of(o)}">✏️ 편집(대사·사진)</a>'
-                       f'<a class="btn g" href="/h/{h}/view/{os.path.basename(o)}" target=_blank>편집 완료된 최종본 미리보기</a></div>'
-                       for o in outs) or '<div class=muted>아직 만든 대본이 없어요.</div>')
+    _seen = set(); _topics = []
+    for _t in [_topic_of(o) for o in outs] + _pg_result_topics(h):
+        if _t and _t not in _seen:
+            _seen.add(_t); _topics.append(_t)
+    def _esc_t(t): return t.replace("&", "&amp;").replace("<", "&lt;").replace('"', "&quot;")
+    outlist = ("".join(f'<div class=out><span>{_esc_t(t)}</span>'
+                       f'<a class=btn href="/h/{h}/edit/{_esc_t(t)}">✏️ 편집(대사·사진)</a>'
+                       f'<a class="btn g" href="/h/{h}/view/{_esc_t(t)}_package.html" target=_blank>편집 완료된 최종본 미리보기</a></div>'
+                       for t in _topics) or '<div class=muted>아직 만든 대본이 없어요.</div>')
     dz_opts = "".join(f'<button type=button class="btn dz" onclick="setTopic(this)">{d}</button>' for d in diseases)
     job = job_get(h)
     running = job.get("running")
@@ -616,6 +621,30 @@ def _zip_inner_names(h, name):
         except Exception:
             return []
     return []
+
+def _pg_result_topics(h):
+    """PG(script_artifacts)에 결과물이 있는 topic 목록 — 재배포로 disk가 비어도 ③ 결과물에 표시."""
+    hid = _pg_hospital_id(h)
+    if not hid:
+        return []
+    try:
+        from store.db import make_engine
+        from store.artifacts import list_topics
+        return list_topics(make_engine(), hid)
+    except Exception:
+        return []
+
+def _restore_out_artifacts(h, topic):
+    """디스크에 결과물(html·패키지)이 없을 때 PG에서 out/로 복원 — 미리보기·편집용. 복원 파일 수 반환."""
+    hid = _pg_hospital_id(h)
+    if not hid:
+        return 0
+    try:
+        from store.db import make_engine
+        from store.artifacts import restore_to_out_dir
+        return restore_to_out_dir(make_engine(), hid, os.path.basename(topic), data_dir(h, "out"))
+    except Exception:
+        return 0
 
 def _pg_script_id_for_topic(hid, topic):
     """이 병원에서 해당 topic의 기존 대본 script_id(있으면) → 재생성 시 그 대본의 새 버전으로 이어짐(topic은 표시용)."""
@@ -1025,6 +1054,13 @@ def _run_pipeline(h, topic, evidence=True, request_key=None, membership_id=None)
             res = _ing.ingest_content(make_engine(), hid, job_id, pkg.get("script") or [])  # topic·script_id 모두 job에서
             log += f"\n[스튜디오] 편집·근거·이미지 준비 완료(블록 {res['blocks']}·주장 {res['claims']})."
             job_set(h, log=log)
+            try:      # 결과물(html·풀패키지) PG 영속 → 재배포로 디스크 날아가도 ③ 결과물 목록·미리보기 유지
+                from store.artifacts import save_from_out_dir
+                _sv = save_from_out_dir(make_engine(), hid, topic, data_dir(h, "out"))
+                log += f"\n[결과물 저장] {'·'.join(_sv) if _sv else '없음'} 영구 저장됨(재배포에도 유지)."
+                job_set(h, log=log)
+            except Exception as _ae:
+                log += f"\n[결과물 저장 경고] {_ae}"; job_set(h, log=log)
             try:                            # 성공 이벤트(GPT): 병원 해시·블록/주장 수만(내용 미포함)
                 from services.observability import emit, hid as _hid
                 emit("generation_completed", hospital=_hid(hid), blocks=res.get("blocks"), claims=res.get("claims"))
@@ -1070,6 +1106,10 @@ def status(h):
 @app.route("/h/<h>/view/<path:fn>")
 def view(h, fn):
     p = os.path.join(data_dir(h,"out"), os.path.basename(fn))
+    if not os.path.exists(p):      # 재배포로 디스크 비었으면 PG에서 복원 후 서빙
+        b = os.path.basename(fn)
+        topic = b[:-len("_package.html")] if b.endswith("_package.html") else os.path.splitext(b)[0]
+        _restore_out_artifacts(h, topic)
     if not os.path.exists(p): abort(404)
     return send_file(p)
 
@@ -1085,6 +1125,8 @@ def edit_story(h, topic):
     from store.repositories import tenant_conn
     from sqlalchemy import text as _t
     base = os.path.join(data_dir(h, "out"), f"{os.path.basename(topic)}_package")
+    if not os.path.exists(base + ".json"):
+        _restore_out_artifacts(h, topic)      # 재배포로 디스크 비었으면 PG에서 복원
     if not os.path.exists(base + ".json"):
         abort(404)
     pkg = _json.load(open(base + ".json", encoding="utf-8"))
