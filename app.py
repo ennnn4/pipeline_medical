@@ -368,9 +368,9 @@ def hospital(h):
         misswarn += '<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 40MB 넘는 파일은 제외됐어요(영구저장 한도). 나눠서 올려주세요.</div>'
     if request.args.get("err") == "nopg":
         misswarn += '<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 이 병원은 영구저장(PostgreSQL)에 등록되지 않아 업로드를 막았어요(임시저장 방지). 관리자에게 병원 재등록을 요청하세요.</div>'
-    studio_url = _pg_studio_url(h)
+    studio_url = _pg_studio_url(h)   # 이제 대시보드 canonical(/scripts/...) — 대시보드가 직접 렌더
     studio_cta = (f'<a class="btn pri" href="{studio_url}" style="display:block;text-align:center;margin-bottom:12px">'
-                  f'✏️ 스튜디오에서 편집 · 근거검증 · 장면이미지 · 승인 →</a>') if studio_url else ''
+                  f'✏️ 편집 · 근거검증 · 장면이미지 · 승인 →</a>') if studio_url else ''
     outlist = studio_cta + ("".join(f'<div class=out><span>{os.path.basename(o)[:-5]}</span><a class=btn href="/h/{h}/view/{os.path.basename(o)}" target=_blank>대시보드 열기</a></div>' for o in outs) or '<div class=muted>아직 만든 대본이 없어요.</div>')
     dz_opts = "".join(f'<button type=button class="btn dz" onclick="setTopic(this)">{d}</button>' for d in diseases)
     job = job_get(h)
