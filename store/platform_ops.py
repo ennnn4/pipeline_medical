@@ -52,13 +52,17 @@ _DDL = [
 _FN_ENSURE = """
 CREATE OR REPLACE FUNCTION public.fn_ensure_platform_operator_membership(p_hospital uuid)
 RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
-DECLARE v_user uuid; v_grant uuid; v_mid uuid; v_active boolean;
+DECLARE v_user uuid; v_grant uuid; v_scope text; v_mid uuid; v_active boolean;
 BEGIN
   v_user := NULLIF(current_setting('app.user_id', true), '')::uuid;    -- 서버가 세션에서 설정(SDR)
   IF v_user IS NULL THEN RAISE EXCEPTION 'no user context' USING ERRCODE = '42501'; END IF;
-  SELECT id INTO v_grant FROM public.platform_access_grants
+  SELECT id, scope INTO v_grant, v_scope FROM public.platform_access_grants
     WHERE user_id = v_user AND status = 'active' LIMIT 1;             -- 활성 platform grant 필수
   IF v_grant IS NULL THEN RAISE EXCEPTION 'no active platform grant' USING ERRCODE = '42501'; END IF;
+  -- scope 검사(향후 제한 scope 도입 시 대상 병원 포함 여부까지 확인). 현재는 전 활성병원.
+  IF v_scope IS DISTINCT FROM 'all_active_hospitals' THEN
+    RAISE EXCEPTION 'hospital not in grant scope' USING ERRCODE = '42501';
+  END IF;
   SELECT (status = 'active') INTO v_active FROM public.hospitals WHERE id = p_hospital;
   IF NOT COALESCE(v_active, false) THEN RAISE EXCEPTION 'hospital not active' USING ERRCODE = 'P0002'; END IF;
   -- 기존 membership 재사용(병원이 직접 준 역할 보존). 없으면 생성(동시성: unique(hospital,user) 재조회).
@@ -180,11 +184,28 @@ def revoke_platform_operator(owner_engine, user_id, reason=""):
                           {"u": str(user_id), "r": reason}).scalar()
 
 
+def seed_platform_operator(owner_engine, email, password, name=None):
+    """배포 시딩 전용(멱등·안전, GPT). '없을 때만 최초 생성' — 이미 존재하면 아무것도 하지 않는다:
+    비밀번호를 덮어쓰지 않고, 철회된 grant를 자동 재활성화하지 않는다(운영자의 의도적 철회 존중).
+    반환 (user_id, created). 재활성화·비번변경은 명시적 ensure_platform_admin_user로만."""
+    with owner_engine.begin() as cn:
+        uid = cn.execute(text("select id from users where email=:e"), {"e": email}).scalar()
+        if uid:
+            return uid, False               # 존재 → 무변경(비번·grant 유지, 철회 존중)
+        from werkzeug.security import generate_password_hash
+        uid = cn.execute(text("insert into users(id,email,name,pw_hash) "
+                              "values(gen_random_uuid(),:e,:n,:p) returning id"),
+                         {"e": email, "n": name or email, "p": generate_password_hash(password)}).scalar()
+        cn.execute(text("select public.fn_grant_platform_operator(:u, NULL)"), {"u": str(uid)})
+    return uid, True
+
+
 def ensure_platform_admin_user(owner_engine, email, password, name=None):
-    """platform operator 계정(admin@ourmarketing.com 등) 생성/비번갱신 + active grant 부여(owner 실행).
+    """명시적 프로비저닝(관리자 실행). 계정 생성/비번갱신 + active grant 보장(철회됐으면 재부여).
+    provision_platform_operator.py가 사용. 시딩(자동)에는 seed_platform_operator를 쓸 것.
 
     이메일 기반 PG 로그인(_pg_login)으로 대시보드+스튜디오 단일 로그인. 반환 user_id.
-    개별 운영자별 계정 권장(GPT) — 공유 계정은 감사 추적이 약함. reseed 후 재실행 필요(데이터)."""
+    개별 운영자별 계정 권장(GPT) — 공유 계정은 감사 추적이 약함."""
     from werkzeug.security import generate_password_hash
     pwh = generate_password_hash(password)
     with owner_engine.begin() as cn:

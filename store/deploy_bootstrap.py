@@ -147,16 +147,18 @@ from store.seed_images import ensure_scene_images
 ensure_scene_images(eng)           # scene_images + provenance(이미지 stale 판정)
 print("[schema] 생성job·자료버전·승인함수·provisioning·이미지 적용(reseed 안전)")
 
-# ── 3.6) platform operator(대행사 전 병원 접근) 계정 시딩 — reseed 후에도 유지 ──
-#   SEED_PLATFORM_EMAIL(+SEED_PLATFORM_PW) 지정 시 생성. 미지정이면 건너뜀.
+# ── 3.6) platform operator(대행사 전 병원 접근) 계정 시딩 — 안전(GPT) ──
+#   SEED_PLATFORM_EMAIL + SEED_PLATFORM_PW 둘 다 있어야 시딩(비번 자동생성·로그출력 금지).
+#   '없을 때만 최초 생성' — 기존 계정 비번 미변경, 철회된 grant 자동 재활성화 안 함.
 _pf_email = os.environ.get("SEED_PLATFORM_EMAIL")
-if _pf_email:
-    from store.platform_ops import ensure_platform_admin_user
-    _pf_pw = os.environ.get("SEED_PLATFORM_PW") or __import__("secrets").token_urlsafe(12)
-    _pf_uid = ensure_platform_admin_user(eng, _pf_email, _pf_pw, name=os.environ.get("SEED_PLATFORM_NAME"))
-    print(f"[platform] operator 계정 시딩: {_pf_email} (user_id={_pf_uid})")
-    if not os.environ.get("SEED_PLATFORM_PW"):
-        print(f"[platform] 임시 비밀번호: {_pf_pw}")
+_pf_pw = os.environ.get("SEED_PLATFORM_PW")
+if _pf_email and _pf_pw:
+    from store.platform_ops import seed_platform_operator
+    _pf_uid, _pf_created = seed_platform_operator(eng, _pf_email, _pf_pw, name=os.environ.get("SEED_PLATFORM_NAME"))
+    print(f"[platform] operator 시딩: {_pf_email} ({'생성됨' if _pf_created else '기존 유지 — 무변경'})")
+elif _pf_email:
+    print("[platform] SEED_PLATFORM_PW 미지정 → 시딩 건너뜀(비번 자동생성/로그출력 금지). "
+          "provision_platform_operator.py로 명시 생성하세요.")
 
 # ── 4) app_rw 실제 비밀번호 설정 ──────────────────────────
 _pw_lit = APP_RW_PASSWORD.replace("'", "''")   # ALTER ROLE는 유틸리티문(파라미터 바인딩 불가) → 안전 이스케이프 후 인라인
