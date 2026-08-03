@@ -365,7 +365,7 @@ def hospital(h):
     elif _ok == "0":
         misswarn += '<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 업로드된 파일이 없어요. 파일이 선택됐는지, 허용 형식(pdf·docx·txt·zip 등)인지 확인해 주세요.</div>'
     if request.args.get("big") == "1":
-        misswarn += '<div class=note style="border-color:var(--warn,#e0a800);color:var(--warn,#b8860b)">ℹ️ 200MB 넘는 파일은 이번 생성엔 쓰이지만 영구저장은 안 돼요(재시작 시 소실). 나머지는 영구 저장됩니다.</div>'
+        misswarn += '<div class=note style="border-color:var(--warn,#e0a800);color:var(--warn,#b8860b)">ℹ️ 40MB 넘는 파일은 이번 생성엔 쓰이지만 영구저장은 안 돼요(재시작 시 소실). 나머지는 영구 저장됩니다.</div>'
     if request.args.get("err") == "nopg":
         misswarn += '<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 이 병원은 영구저장(PostgreSQL)에 등록되지 않아 업로드를 막았어요(임시저장 방지). 관리자에게 병원 재등록을 요청하세요.</div>'
     # ③ 결과물: 목록만. '✏️ 편집' = 예쁜 스토리보드를 그대로 두고 대사 편집·AI사진 얹은 편집 페이지.
@@ -426,14 +426,21 @@ def hospital(h):
     </div>"""
     script = """<script>
     var drop=document.getElementById('drop'),fin=document.getElementById('fin');
-    drop.onclick=function(){fin.click()};
-    fin.onchange=function(){var n=fin.files.length;
+    var BAG=new DataTransfer();   // 여러 번 나눠 골라도 계속 누적(input은 원래 덮어써서)
+    function render(){var n=BAG.files.length;
       document.getElementById('drophint').textContent=n?(n+'개 선택됨 — 업로드를 누르세요'):'파일을 여기로 끌어다 놓거나 클릭 (pdf·docx·txt·zip)';
-      var names=[].map.call(fin.files,function(f){return '📎 '+f.name;}).join('<br>');
-      document.getElementById('fsel').innerHTML=n?('선택된 파일:<br>'+names):'';};
+      var names=[].map.call(BAG.files,function(f){return '📎 '+f.name;}).join('<br>');
+      document.getElementById('fsel').innerHTML=n?('선택된 파일 '+n+'개:<br>'+names+'<br><a href="#" id=fclr style="font-size:12px">전체 지우기</a>'):'';
+      if(n){document.getElementById('fclr').onclick=function(e){e.preventDefault();BAG=new DataTransfer();fin.files=BAG.files;render();};}}
+    function addFiles(list){for(var i=0;i<list.length;i++){BAG.items.add(list[i]);}fin.files=BAG.files;render();}
+    drop.onclick=function(){fin.click()};
+    fin.onchange=function(){ // 이번에 새로 고른 것만 누적에 추가(중복 이름은 제외)
+      var have={};for(var j=0;j<BAG.files.length;j++)have[BAG.files[j].name]=1;
+      var add=[];for(var i=0;i<fin.files.length;i++){if(!have[fin.files[i].name])add.push(fin.files[i]);}
+      if(add.length)addFiles(add);else render();};
     ['dragover','dragenter'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('over')}));
     ['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('over')}));
-    drop.addEventListener('drop',ev=>{fin.files=ev.dataTransfer.files;fin.onchange()});
+    drop.addEventListener('drop',ev=>{addFiles(ev.dataTransfer.files)});
     window.setTopic=function(b){document.getElementById('topic').value=b.textContent};
     // 생성 상태 폴링
     var HID=%HID%;

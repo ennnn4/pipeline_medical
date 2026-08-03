@@ -12,7 +12,7 @@ from sqlalchemy import text
 from store.repositories import tenant_conn
 
 _TENANT_SET = "NULLIF(current_setting('app.hospital_id', true), '')::uuid"
-MAX_BYTES = 200 * 1024 * 1024   # 파일당 PG 영구저장 상한. 초과는 disk 임시저장(생성엔 사용, 재시작 시 소실).
+MAX_BYTES = 40 * 1024 * 1024   # 파일당 PG 영구저장 상한(메모리 안전 — 무료 512MB RAM OOM 방지). 초과는 disk 임시저장.
 
 class MaterialTooLarge(ValueError):
     """파일이 영속 저장 한도(MAX_BYTES) 초과 — 임시 disk fallback 금지, 명시적 실패."""
