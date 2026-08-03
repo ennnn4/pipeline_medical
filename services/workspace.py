@@ -17,7 +17,7 @@ def _as_uuid(v):
 
 def get_version_workspace(engine, ctx, version_id, policy="policy-1"):
     """버전 편집·근거·승인·이미지 렌더에 필요한 데이터 한 번에.
-    반환: {script_id, version_no, parent_version_id, is_current, approval_status, stale,
+    반환: {version_id, script_id, version_no, parent_version_id, is_current, approval_status, stale,
            blocks[], claims[], img_keys(set), images_status{}, available_actions{}}."""
     vid = _as_uuid(version_id)
     with tenant_conn(engine, ctx.hospital_id, membership_id=ctx.membership_id,
@@ -62,7 +62,7 @@ def get_version_workspace(engine, ctx, version_id, policy="policy-1"):
         "can_revoke": appr_status == "approved",
         "can_export": appr_status == "approved",
     }
-    return {"script_id": str(sc.script_id), "version_no": sc.version_no,
+    return {"version_id": str(vid), "script_id": str(sc.script_id), "version_no": sc.version_no,
             "parent_version_id": str(sc.parent_version_id) if sc.parent_version_id else None,
             "is_current": is_current, "approval_status": appr_status, "stale": stale,
             "blocks": blocks, "claims": claims, "img_keys": img_keys,

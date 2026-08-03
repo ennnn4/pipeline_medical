@@ -5,8 +5,8 @@ boncure-pipeline 로컬 웹앱 — 터미널·yaml 없이 브라우저로 쓴다
 기능: 병원 만들기(폼) · 자료 업로드(끌어놓기) · 대본 생성(버튼) · 대시보드 보기.
 엔진(run.py)을 그대로 호출하므로 파이프라인 로직은 재사용.
 """
-import os, sys, glob, subprocess, threading, re, io, secrets, sqlite3, datetime, unicodedata, hmac
-from flask import Flask, request, redirect, send_file, abort, render_template_string, jsonify, url_for, session
+import os, sys, glob, subprocess, threading, re, io, secrets, sqlite3, datetime, unicodedata, hmac, time
+from flask import Flask, request, redirect, send_file, abort, render_template_string, jsonify, url_for, session, g
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
@@ -89,6 +89,7 @@ app.jinja_env.globals["csrf"] = lambda: session.get("_csrf", "")
 
 @app.before_request
 def _guard():
+    g._t0 = time.perf_counter(); g.request_id = secrets.token_hex(16)   # 관측(latency·상관)
     if "_csrf" not in session:
         session["_csrf"] = secrets.token_urlsafe(24)   # 세션당 CSRF 토큰
     if request.endpoint in ("login","static"): return   # 공개 회원가입 없음(로그인 POST는 세션전이라 면제)
@@ -98,6 +99,29 @@ def _guard():
         good = session.get("_csrf") or ""
         if not (sent and good and hmac.compare_digest(str(sent), str(good))):
             abort(400)
+
+
+@app.after_request
+def _obs_dashboard(resp):
+    # 대시보드 http 관측 — 신규 canonical route(/scripts=dashboard_canonical) vs 기타 대시보드.
+    # /studio(studio_legacy, compat)와 surface로 대비해 cutover·제거 판단(GPT).
+    try:
+        from services.observability import emit, mask_ids
+        st = resp.status_code
+        lat = round((time.perf_counter() - g._t0) * 1000, 1) if getattr(g, "_t0", None) is not None else None
+        canonical = request.endpoint == "scripts_edit"
+        loc = resp.headers.get("Location") if 300 <= st < 400 else None
+        emit("http", app="dashboard",
+             surface=("dashboard_canonical" if canonical else "dashboard"), compat=False,
+             method=request.method,
+             rule=(request.url_rule.rule if request.url_rule else mask_ids(request.path)),
+             endpoint=request.endpoint, status=st,
+             redirect=(300 <= st < 400) or None,
+             redirect_target=(mask_ids(loc) if loc else None),
+             request_id=getattr(g, "request_id", None), latency_ms=lat)
+    except Exception:
+        pass
+    return resp
 
 def _yaml():
     import yaml; return yaml
@@ -505,7 +529,7 @@ def _pg_script_id_for_topic(hid, topic):
         return None
 
 def _pg_studio_url(h):
-    """이 병원의 최신 PG 버전 편집 URL(스튜디오). 없으면 None."""
+    """이 병원의 최신 PG 버전 편집 URL(대시보드 canonical /scripts, Step 7B부터 대시보드가 직접 렌더). 없으면 None."""
     try:
         from store.db import make_engine
         from sqlalchemy import text
@@ -524,12 +548,25 @@ def _pg_studio_url(h):
 @app.route("/scripts/<h>/<version_id>")
 @app.route("/scripts/<h>/<version_id>/<section>")
 def scripts_edit(h, version_id, section="edit"):
-    """P1#5: script-centric 편집 진입점을 대시보드 소유로. 현재는 스튜디오 렌더러로
-    전이 리다이렉트(로직 공통화·/studio 은퇴는 후속 단계). 로그인·CSRF·역할은 스튜디오가 강제."""
-    # 인증은 _guard(before_request)가 이미 강제(session["user"]) → 여기선 라우팅만.
-    anchor = {"evidence": "#evidence", "images": "#images",
-              "approval": "#approval", "versions": "#versions"}.get(section, "")
-    return redirect(f"/studio/ui/h/{h}/versions/{version_id}{anchor}")
+    """Step 7B: 버전페이지를 대시보드가 canonical로 '직접 렌더'(workspace service + 공유 presentation).
+    쓰기·자산 액션은 전환기 동안 /studio compat 엔드포인트로(세션·CSRF 공유). Step 9에서 대시보드로 이전.
+    인증은 _guard(before_request)가 session['user'] 강제 + 여기서 user_id로 ActorContext 해석."""
+    from services.context import ActorContext
+    from services import workspace as workspace_service
+    from services.exceptions import ServiceError
+    from presentation import render as _render
+    from presentation.urls import DashboardUrls
+    from store.db import make_engine
+    eng = make_engine()
+    try:
+        ctx = ActorContext.resolve(eng, session.get("user_id"), h, getattr(g, "request_id", None))
+        ws = workspace_service.get_version_workspace(eng, ctx, version_id)
+    except ServiceError as e:
+        if e.http_status == 401:
+            return redirect("/login?next=" + f"/scripts/{h}/{version_id}")
+        abort(e.http_status)
+    return _render.version_page(ws, DashboardUrls(h), session.get("_csrf", ""),
+                                msg_code=request.args.get("m"))
 
 def _run_pipeline(h, topic, evidence=True, request_key=None, membership_id=None):
     """GPT P0 반영: run.py '전에' PG generation_job(pending) 생성 → generating → generated →
