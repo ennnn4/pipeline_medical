@@ -1,15 +1,27 @@
 """
 LLM 러너 — Anthropic SDK 래퍼. 분류·KB·대본 단계가 공용으로 쓴다.
-모델 claude-opus-5, adaptive thinking, effort high, 긴 출력은 streaming.
+
+모델 티어링(비용·속도): 대본(director)=최고품질 MODEL, KB/구조적 단계=저렴·빠른 MODEL_KB.
+안전장치: 명시적 timeout(조용한 연결끊김 → 무한대기 대신 재시도)·max_retries·토큰 단위 스트리밍
+          진행표시(부모의 heartbeat가 stdout에 의존하므로, 긴 호출 중에도 주기적으로 한 줄 찍음).
 키: ANTHROPIC_API_KEY 또는 `ant auth login` 프로파일.
 """
-import os, json, re
+import os, json, re, sys, time
 
-MODEL = os.environ.get("BONCURE_MODEL", "claude-opus-5")
+MODEL    = os.environ.get("BONCURE_MODEL",    "claude-opus-5")     # 대본(최고품질)
+MODEL_KB = os.environ.get("BONCURE_MODEL_KB", "claude-sonnet-5")   # KB·구조적 단계(저렴·빠름)
+
+# Claude 5 계열만 thinking/effort 지원. 그 외(예: haiku 4.5)는 단순 호출로.
+_THINKING_MODELS = ("claude-opus-5", "claude-sonnet-5", "claude-fable-5")
 
 def _client():
-    import anthropic
-    return anthropic.Anthropic()
+    """명시적 타임아웃·재시도. read=180s: 스트림이 조용히 끊기면 무한대기 대신 3분 뒤 에러→재시도.
+    정상 생성 중엔 API가 ping/delta를 계속 보내서 이 타임아웃에 안 걸린다."""
+    import anthropic, httpx
+    return anthropic.Anthropic(
+        timeout=httpx.Timeout(connect=15.0, read=180.0, write=30.0, pool=15.0),
+        max_retries=int(os.environ.get("BONCURE_LLM_RETRIES", "2")),
+    )
 
 def _extract_json(text):
     """```json 펜스/앞뒤 잡소리를 걷어내고 첫 {...} 블록을 파싱. 후행 콤마 등 흔한 오류 보정."""
@@ -30,32 +42,54 @@ def _extract_json(text):
         except json.JSONDecodeError as err:
             raise ValueError(f"LLM 응답을 JSON으로 파싱하지 못했습니다: {err}. 앞부분: {t[:200]}")
 
-def generate(system, user, parse_json=False, max_tokens=32000, effort="high"):
+def _kwargs(model, system, user, max_tokens, effort, cache):
+    content = [{"type": "text", "text": user}]
+    if cache:
+        # 큰 입력을 캐시 프리픽스로 → 같은 자료로 다른 주제 재생성 시 입력 토큰 대폭 절감.
+        content[0]["cache_control"] = {"type": "ephemeral"}
+    kw = dict(model=model, max_tokens=max_tokens, system=system,
+              messages=[{"role": "user", "content": content}])
+    if model in _THINKING_MODELS:
+        kw["thinking"] = {"type": "adaptive"}
+        kw["output_config"] = {"effort": effort}
+    return kw
+
+def generate(system, user, parse_json=False, max_tokens=32000, effort="high",
+             model=None, label=None, cache=False):
     """
-    system/user 프롬프트로 1회 생성. parse_json=True 면 응답 텍스트를 JSON으로 파싱(dict), 아니면 텍스트.
-    긴 출력 대비 streaming. (구조화 출력 대신 프롬프트-지시 JSON + 견고 파싱 방식 — SDK 호환성 우선)
+    system/user 프롬프트로 1회 생성. parse_json=True 면 JSON dict, 아니면 텍스트.
+    - model: None이면 MODEL(대본). KB 단계는 MODEL_KB를 넘긴다.
+    - label: 진행 로그 태그(예: "KB profile", "대본").
+    - cache: 큰 입력을 프롬프트 캐싱(반복 생성 비용↓).
+    토큰 단위 스트리밍으로 진행상황을 주기적으로 stdout에 찍는다 → 부모의 heartbeat가 살아있음을 안다.
     """
     client = _client()
+    mdl = model or MODEL
     if parse_json:
         user = user + "\n\n반드시 유효한 JSON 하나만 출력. 코드펜스·설명 없이 { 로 시작해 } 로 끝낼 것."
-    kwargs = dict(
-        model=MODEL,
-        max_tokens=max_tokens,
-        thinking={"type": "adaptive"},
-        output_config={"effort": effort},
-        system=system,
-        messages=[{"role": "user", "content": user}],
-    )
-    with client.messages.stream(**kwargs) as stream:
+    kw = _kwargs(mdl, system, user, max_tokens, effort, cache)
+    tag = f"[{label}] " if label else ""
+    parts, chars = [], 0
+    t0 = time.monotonic(); last = t0
+    print(f"  ▷ {tag}{mdl} 생성 시작 (입력 {len(user):,}자)", flush=True)
+    with client.messages.stream(**kw) as stream:
+        for chunk in stream.text_stream:
+            parts.append(chunk); chars += len(chunk)
+            now = time.monotonic()
+            if now - last >= 10:                      # 10초마다 진행 한 줄(= heartbeat 갱신 신호)
+                print(f"  … {tag}생성 중 {chars:,}자 · {int(now - t0)}s", flush=True)
+                last = now
         msg = stream.get_final_message()
+    dt = int(time.monotonic() - t0)
+    text = "".join(parts) or "".join(b.text for b in msg.content if getattr(b, "type", None) == "text")
     try:
         from llm.cost import record
         u = msg.usage
-        record("claude", MODEL, in_tok=getattr(u, "input_tokens", 0), out_tok=getattr(u, "output_tokens", 0),
-               note=(system or "")[:40])
+        record("claude", mdl, in_tok=getattr(u, "input_tokens", 0), out_tok=getattr(u, "output_tokens", 0),
+               note=(label or system or "")[:40])
     except Exception:
         pass
-    text = "".join(b.text for b in msg.content if b.type == "text")
+    print(f"  ✓ {tag}완료 {chars:,}자 · {dt}s", flush=True)
     return _extract_json(text) if parse_json else text
 
 def load_prompt(name):

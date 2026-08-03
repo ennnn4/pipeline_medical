@@ -10,11 +10,21 @@ import os, io, json, time, datetime
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 COSTS = os.path.join(_ROOT, "data", "costs.jsonl")
 
-# 요금(1M 토큰당 USD) — 실제 요금제에 맞게 조정
+# 요금(1M 토큰당 USD) — 실제 요금제에 맞게 조정. 모델명으로 티어 선택(모르면 opus급으로 보수적 가정).
 RATES = {
-    "claude": {"in": 15.0, "out": 75.0},              # Opus급 가정(입력/출력)
-    "gpt-image-1": {"in": 5.0, "img": 40.0},          # 텍스트 입력 / 이미지 출력 토큰
+    "claude":        {"in": 15.0, "out": 75.0},   # 기본/opus급(모델 매칭 실패 시)
+    "opus":          {"in": 15.0, "out": 75.0},
+    "sonnet":        {"in": 3.0,  "out": 15.0},
+    "haiku":         {"in": 1.0,  "out": 5.0},
+    "gpt-image-1":   {"in": 5.0,  "img": 40.0},    # 텍스트 입력 / 이미지 출력 토큰
 }
+
+def _claude_rate(model):
+    m = (model or "").lower()
+    if "opus" in m:   return RATES["opus"]
+    if "sonnet" in m: return RATES["sonnet"]
+    if "haiku" in m:  return RATES["haiku"]
+    return RATES["claude"]
 
 def record(source, model, in_tok=0, out_tok=0, img_tok=0, note="", flat_usd=None):
     if flat_usd is not None:
@@ -22,7 +32,8 @@ def record(source, model, in_tok=0, out_tok=0, img_tok=0, note="", flat_usd=None
     elif "image" in model:
         usd = in_tok / 1e6 * RATES["gpt-image-1"]["in"] + img_tok / 1e6 * RATES["gpt-image-1"]["img"]
     else:
-        usd = in_tok / 1e6 * RATES["claude"]["in"] + out_tok / 1e6 * RATES["claude"]["out"]
+        r = _claude_rate(model)
+        usd = in_tok / 1e6 * r["in"] + out_tok / 1e6 * r["out"]
     rec = {"ts": datetime.datetime.now().isoformat(timespec="seconds"), "source": source, "model": model,
            "in": in_tok, "out": out_tok, "img": img_tok, "usd": round(usd, 4), "note": note[:80]}
     try:

@@ -52,12 +52,14 @@ def cmd_classify(a):
     print(f"분류 완료 → data/{h}/kb/classify.json")
 
 def _gen_kb(kb, name, prompt, user, force):
-    """KB 파일 하나 생성. 이미 있으면 건너뜀(force면 재생성). — 전체 재생성 방지."""
-    from llm.runner import generate, load_prompt
+    """KB 파일 하나 생성. 이미 있으면 건너뜀(force면 재생성). — 전체 재생성 방지.
+    KB는 구조적 추출·정리라 저렴·빠른 MODEL_KB + effort medium + 큰 입력 캐싱으로 비용/시간 절감."""
+    from llm.runner import generate, load_prompt, MODEL_KB
     p = os.path.join(kb, name)
     if os.path.exists(p) and not force:
         print(f"  · {name} 이미 있음 — 건너뜀"); return
-    res = generate(load_prompt(prompt), user, parse_json=True)
+    res = generate(load_prompt(prompt), user, parse_json=True,
+                   model=MODEL_KB, effort="medium", cache=True, label="KB " + name.replace(".json", ""))
     json.dump(res, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     print(f"  · {name} 생성")
 
@@ -80,7 +82,8 @@ def cmd_episode(a):
         p=os.path.join(kb,n); return open(p,encoding="utf-8").read() if os.path.exists(p) else "{}"
     kb_blob = ("[원장프로파일]\n"+rd("profile.json")+"\n[논문근거]\n"+rd("evidence.json")
                +"\n[경쟁분석]\n"+rd("competitor.json")+f"\n[질환KB]\n"+rd(f"disease_{a.topic}.json"))
-    pkg = generate(load_prompt("director.md"), f"주제: {a.topic}\nKB:\n"+kb_blob, parse_json=True, max_tokens=55000)
+    pkg = generate(load_prompt("director.md"), f"주제: {a.topic}\nKB:\n"+kb_blob, parse_json=True,
+                   max_tokens=55000, effort="high", label="대본 director")   # 대본은 최고품질 MODEL(opus) 유지
     out = os.path.join(_outdir(a.hospital), f"{a.topic}_package.json")
     json.dump(pkg, open(out,"w",encoding="utf-8"), ensure_ascii=False, indent=1)
     # 분량 자가검산 (발화 글자수 ÷ 450 ≈ 분)

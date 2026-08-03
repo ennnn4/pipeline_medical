@@ -35,7 +35,8 @@ def _pg_latest_job(h):
         from store.repositories import tenant_conn
         with tenant_conn(make_engine(), hid) as cn:
             return cn.execute(text(
-                "select status, phase, topic, version_id, error_message from generation_jobs "
+                "select status, phase, topic, version_id, error_message, "
+                "extract(epoch from (now()-created_at)) as elapsed from generation_jobs "
                 "where hospital_id=:h order by created_at desc limit 1"), {"h": hid}).mappings().first()
     except Exception:
         return None
@@ -46,6 +47,7 @@ def job_get(h):
     if j is not None:      # PG 병원 → generation_jobs가 상태의 단일 원본
         return {"hospital": h, "topic": j["topic"], "status": j["status"], "phase": j["phase"],
                 "ok": (j["status"] == "completed"), "running": j["status"] in _RUNNING_STATES, "log": log,
+                "elapsed": (int(j["elapsed"]) if j["elapsed"] is not None else 0),
                 "version_id": (str(j["version_id"]) if j["version_id"] else None), "error": j["error_message"]}
     m = _MEMJOB.get(h, {})     # 비-PG 병원(전이)
     return {"hospital": h, "topic": m.get("topic", ""), "status": m.get("status", "idle"),
@@ -349,6 +351,11 @@ def hospital(h):
     counts = {}
     for fn in raw:
         k = categorize(fn, checklist); counts[k] = counts.get(k, 0) + 1
+        if fn.lower().endswith(".zip"):      # zip 안 자료도 카테고리 인식(예: 유튜브참고자료.zip 안 원장인터뷰)
+            for inner in _zip_inner_names(h, fn):
+                ik = categorize(inner, checklist)
+                if ik != "기타":
+                    counts[ik] = counts.get(ik, 0) + 1
     chk = ""; miss = []
     for it in checklist:
         k = it["key"]; req = it.get("required"); n = counts.get(k, 0)
@@ -374,11 +381,13 @@ def hospital(h):
         return b[:-len("_package.html")] if b.endswith("_package.html") else b[:-5]
     outlist = ("".join(f'<div class=out><span>{os.path.basename(o)[:-5]}</span>'
                        f'<a class=btn href="/h/{h}/edit/{_topic_of(o)}">✏️ 편집(대사·사진)</a>'
-                       f'<a class="btn g" href="/h/{h}/view/{os.path.basename(o)}" target=_blank>미리보기</a></div>'
+                       f'<a class="btn g" href="/h/{h}/view/{os.path.basename(o)}" target=_blank>편집 완료된 최종본 미리보기</a></div>'
                        for o in outs) or '<div class=muted>아직 만든 대본이 없어요.</div>')
     dz_opts = "".join(f'<button type=button class="btn dz" onclick="setTopic(this)">{d}</button>' for d in diseases)
     job = job_get(h)
     running = job.get("running")
+    # 생성 눌러도 주제가 리셋된 것처럼 보이지 않게 — 직전/현재 job의 주제를 입력칸에 유지
+    topic_val = (job.get("topic") or "").replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;")
     body = f"""
     <div class=row style="justify-content:space-between">
       <div><h1>{name}</h1><p class=sub>{h}</p></div><a href="/" class=btn>← 병원 목록</a>
@@ -389,12 +398,14 @@ def hospital(h):
       <div class=note>이런 자료를 넣어주세요 — <b>✓</b>=받음 · <b>없음</b>=필수인데 안 들어옴 · 회색=선택</div>
       <div class=chk style="margin:11px 0 6px">{chk}</div>
       {misswarn}
-      <form id=upf method=post action="/h/{h}/upload" enctype=multipart/form-data><input type=hidden name=_csrf value="{_csrf}">
+      <form id=upf method=post action="/h/{h}/upload" enctype=multipart/form-data
+            onsubmit="var b=document.getElementById('upbtn');if(b){{b.disabled=true;b.textContent='⏳ 업로드 중…';}}var m=document.getElementById('upmsg');if(m)m.style.display='inline';"><input type=hidden name=_csrf value="{_csrf}">
         <div class=drop id=drop><span id=drophint>파일을 여기로 끌어다 놓거나 클릭 (pdf·docx·txt·zip)</span>
           <input id=fin type=file name=files multiple style="display:none">
         </div>
         <div id=fsel class=muted style="margin-top:8px;font-size:13px;line-height:1.7"></div>
-        <div class=row style="margin-top:12px"><button class="btn pri" type=submit>업로드</button>
+        <div class=row style="margin-top:12px"><button class="btn pri" id=upbtn type=submit>업로드</button>
+        <span id=upmsg class=muted style="display:none;color:var(--accent);font-weight:700">⏳ 파일 올리는 중이에요 — 창을 닫지 마세요(용량 크면 시간이 걸려요).</span>
         <span class=muted>설문지·인터뷰·논문·강의자료·기존 대본 등. zip 통째로도 OK</span></div>
       </form>
       <ul class=files>{filelist}</ul>
@@ -406,7 +417,7 @@ def hospital(h):
       <div class=chk style="margin:10px 0">{dz_opts}</div>
       <form id=runf method=post action="/h/{h}/run" onsubmit="var r=document.getElementById('reqkey');r.value=(window.crypto&&crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random());document.getElementById('runbtn').disabled=true;">
         <input type=hidden name=reqkey id=reqkey><input type=hidden name=_csrf value="{_csrf}">
-        <label>주제</label><input type=text id=topic name=topic placeholder="예: 오십견" required>
+        <label>주제</label><input type=text id=topic name=topic value="{topic_val}" placeholder="예: 오십견" required>
         <label class=opt style="display:flex;gap:9px;align-items:flex-start;margin-top:14px;padding:12px 14px;background:var(--surface);border:1px solid var(--border);border-radius:10px;cursor:pointer;font-weight:600">
           <input type=checkbox name=evidence value=1 checked style="margin-top:3px;width:17px;height:17px;accent-color:var(--accent)">
           <span>📄 의학 논문으로 근거 강화 <span class=muted style="font-weight:500">(선택)</span><br>
@@ -423,6 +434,21 @@ def hospital(h):
     <div class=card>
       <h2 style="margin-top:0">③ 결과물</h2>
       {outlist}
+    </div>
+
+    <div id=genmodal style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(12,17,28,.6);backdrop-filter:blur(4px);align-items:center;justify-content:center">
+      <div style="background:var(--card,#fff);border-radius:20px;max-width:460px;width:90%;padding:32px 30px;box-shadow:0 24px 70px rgba(0,0,0,.35);text-align:center">
+        <div style="font-size:44px;margin-bottom:2px">✍️</div>
+        <div style="font-size:20px;font-weight:800;margin-bottom:2px">대본을 만들고 있어요</div>
+        <div id=gmtopic class=muted style="font-size:13px;margin-bottom:10px"></div>
+        <div id=gmelapsed style="font-size:38px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:1px;margin:4px 0;color:var(--accent)">0:00</div>
+        <div style="height:8px;border-radius:6px;background:var(--surface,#eee);overflow:hidden;margin:10px 0 4px">
+          <div id=gmbar style="height:100%;width:0%;background:var(--accent);transition:width .8s ease"></div>
+        </div>
+        <div id=gmstage style="font-size:12.5px;font-weight:700;min-height:16px;margin:6px 0"></div>
+        <div class=muted style="font-size:12.5px;line-height:1.65;margin:10px 0 6px">최상의 대본을 만들기 위해 시간이 <b>15~20분</b> 소요됩니다.<br>이 페이지를 나가도 생성은 <b>계속</b>돼요 — 나중에 다시 들어와 결과를 확인하면 됩니다.</div>
+        <div id=gmlog style="text-align:left;margin-top:10px;max-height:120px;overflow:auto;font-size:10.5px;font-family:monospace;color:var(--muted,#888);background:var(--surface,#f5f5f5);border-radius:9px;padding:9px;white-space:pre-wrap;line-height:1.5"></div>
+      </div>
     </div>"""
     script = """<script>
     var drop=document.getElementById('drop'),fin=document.getElementById('fin');
@@ -442,21 +468,46 @@ def hospital(h):
     ['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('over')}));
     drop.addEventListener('drop',ev=>{addFiles(ev.dataTransfer.files)});
     window.setTopic=function(b){document.getElementById('topic').value=b.textContent};
-    // 생성 상태 폴링
+    // 생성 상태 폴링 + 로딩 모달(가운데 팝업 · 경과시간 · 진행바)
     var HID=%HID%;
+    var EST=1080;                 // 예상 총 소요(초) ≈ 18분 — 진행바 추정용
+    var srvEl=0, anchor=Date.now(), tick=null;
+    var modal=document.getElementById('genmodal');
+    function fmt(t){t=Math.max(0,Math.floor(t));var m=Math.floor(t/60),s=t%60;return m+':'+(s<10?'0':'')+s;}
+    function stageText(j){
+      if(j.phase==='ingest'||j.status==='ingesting')return '거의 다 됐어요 — 편집·근거·이미지 정리 중';
+      if(j.phase==='parsed'||j.status==='generated')return '대본 정리 중';
+      if(j.status==='pending')return '준비 중 — 자료 봉인';
+      return '자료 수집 → 지식정리(KB) → 대본 집필 중';
+    }
+    function showModal(j){
+      modal.style.display='flex';
+      document.getElementById('gmtopic').textContent=(j.topic?('주제: '+j.topic):'');
+      document.getElementById('gmstage').textContent=stageText(j);
+      var gl=document.getElementById('gmlog');gl.textContent=(j.log||'시작하는 중…');gl.scrollTop=gl.scrollHeight;
+      srvEl=(j.elapsed||0);anchor=Date.now();
+      if(!tick){tick=setInterval(function(){
+        var e=srvEl+(Date.now()-anchor)/1000;
+        document.getElementById('gmelapsed').textContent=fmt(e);
+        document.getElementById('gmbar').style.width=Math.min(97,Math.round(e/EST*100))+'%';
+      },1000);}
+    }
+    function hideModal(){modal.style.display='none';if(tick){clearInterval(tick);tick=null;}}
     function poll(){fetch('/h/'+HID+'/status').then(r=>r.json()).then(j=>{
       var s=document.getElementById('status'),btn=document.getElementById('runbtn');
-      if(j.status==='running'){btn.disabled=true;btn.textContent='생성 중…';
-        s.innerHTML='<div class=log>'+ (j.log||'시작하는 중…') +'</div>';setTimeout(poll,1500);}
-      else if(j.status==='done'){
+      if(j.running){btn.disabled=true;btn.textContent='생성 중…';showModal(j);
+        s.innerHTML='<div class=log>'+(j.log||'시작하는 중…')+'</div>';setTimeout(poll,2500);}
+      else{hideModal();
         var msg = j.ok
           ? '<p style="color:var(--good);font-weight:800;margin-top:10px">✅ 완료 — 아래 결과물에서 확인하세요.</p>'
-          : '<p style="color:var(--danger);font-weight:800;margin-top:10px">⛔ 실패 — 의료광고 검수 불통과 또는 오류입니다. 로그를 확인하세요. (검수 통과 전엔 결과가 게시되지 않습니다)</p>';
-        s.innerHTML='<div class=log>'+(j.log||'')+'</div>'+msg;
+          : ((j.status==='failed'||j.error) ? '<p style="color:var(--danger);font-weight:800;margin-top:10px">⛔ 실패 — '+(j.error||'의료광고 검수 불통과 또는 오류')+' (검수 통과 전엔 게시되지 않아요)</p>' : '');
+        s.innerHTML=(j.log?'<div class=log>'+j.log+'</div>':'')+msg;
         btn.disabled=false;btn.textContent='대본 만들기';
-        if(j.ok)setTimeout(()=>location.reload(),1500);}
-    })}
-    document.getElementById('runf').addEventListener('submit',function(){setTimeout(poll,1500)});
+        if(j.ok)setTimeout(()=>location.reload(),1600);}
+    }).catch(function(){setTimeout(poll,4000);})}   // 폴링 실패해도 멈추지 않고 재시도(생성은 서버에서 계속)
+    document.getElementById('runf').addEventListener('submit',function(){
+      modal.style.display='flex';document.getElementById('gmstage').textContent='생성을 시작하고 있어요…';
+      setTimeout(poll,1200);});
     if(%RUNNING%)poll();
     </script>""".replace("%HID%", '"'+h+'"').replace("%RUNNING%", "true" if running else "false")
     return page(name, body, script)
@@ -531,6 +582,40 @@ def _material_names(h):
         except Exception:
             pass
     return sorted(names)
+
+def _decode_zipname(zi):
+    """zip 내부 파일명 디코딩 — Windows에서 만든 zip은 한글이 cp437로 저장돼 mojibake가 됨. 복원 시도."""
+    if zi.flag_bits & 0x800:        # UTF-8 플래그면 그대로
+        return zi.filename
+    for enc in ("cp949", "euc-kr", "utf-8"):
+        try:
+            return zi.filename.encode("cp437").decode(enc)
+        except Exception:
+            continue
+    return zi.filename
+
+def _zip_inner_names(h, name):
+    """zip 자료의 내부 파일명들(체크리스트가 zip '안' 자료도 인식하게). disk 우선→PG. 실패 시 []."""
+    import io as _io, zipfile as _zip
+    p = os.path.join(data_dir(h, "raw"), name)
+    try:
+        if os.path.isfile(p):
+            with _zip.ZipFile(p) as zf:
+                return [_decode_zipname(zi) for zi in zf.infolist() if not zi.is_dir()]
+    except Exception:
+        return []
+    hid = _pg_hospital_id(h)
+    if hid:
+        try:
+            from store.db import make_engine
+            from store.materials import get_material
+            _, data = get_material(make_engine(), hid, name)
+            if data:
+                with _zip.ZipFile(_io.BytesIO(data)) as zf:
+                    return [_decode_zipname(zi) for zi in zf.infolist() if not zi.is_dir()]
+        except Exception:
+            return []
+    return []
 
 def _pg_script_id_for_topic(hid, topic):
     """이 병원에서 해당 topic의 기존 대본 script_id(있으면) → 재생성 시 그 대본의 새 버전으로 이어짐(topic은 표시용)."""
@@ -891,23 +976,38 @@ def _run_pipeline(h, topic, evidence=True, request_key=None, membership_id=None)
                                    error_message=str(e), finished=True)
                 except Exception: pass
                 job_set(h, status="done", ok=False, log=log); return
+    _hb_stop = threading.Event()
     try:
         cmd = [PY, "run.py", "all", "--hospital", h, "--topic", topic]
         if evidence: cmd.append("--evidence")   # 논문 근거 대조 + 시각자료 추출
+        # PYTHONUNBUFFERED: run.py의 print가 버퍼에 갇히지 않고 즉시 흘러나옴(진행 로그·heartbeat 실시간)
         proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                env={**os.environ, "PYTHONUTF8": "1"})
-        import time as _t
-        _last_hb = _t.monotonic()
+                                env={**os.environ, "PYTHONUTF8": "1", "PYTHONUNBUFFERED": "1"})
+        # 타이머 heartbeat — stdout이 없어도(긴 LLM 호출) 25초마다 살아있음 표시 → reap 오판·'멈춘 것처럼 보임' 방지
+        # + 자가 킵얼라이브: 생성 도는 동안 ~4분마다 자기 URL을 쳐서 Render 무료 idle sleep을 막음(누구 생성이든 자동).
+        _self_url = (os.environ.get("SELF_URL") or os.environ.get("RENDER_EXTERNAL_URL") or "").rstrip("/")
+        def _hb_loop():
+            i = 0
+            while not _hb_stop.wait(25):
+                i += 1
+                if hid and job_id:
+                    try: _ing.heartbeat_job(make_engine(), hid, job_id, worker_token)
+                    except Exception: pass
+                if _self_url and i % 10 == 0:      # ~250초마다 자가 핑
+                    try:
+                        import urllib.request as _u
+                        _u.urlopen(_self_url + "/login", timeout=10).read(1)
+                    except Exception: pass
+        if hid and job_id:
+            threading.Thread(target=_hb_loop, daemon=True).start()
         for line in io.TextIOWrapper(proc.stdout, encoding="utf-8", errors="ignore"):
             log += line
             job_set(h, log=log)
-            if hid and job_id and _t.monotonic() - _last_hb > 30:   # 살아있음 표시(reap 오판 방지)
-                try: _ing.heartbeat_job(make_engine(), hid, job_id, worker_token)
-                except Exception: pass
-                _last_hb = _t.monotonic()
         proc.wait()
         ok = (proc.returncode == 0)   # run.py all 이 검수 실패/오류 시 non-zero 반환
+        _hb_stop.set()
     except Exception as e:
+        _hb_stop.set()
         log += f"\n[오류] {e}"
         if hid and job_id:
             try: _ing.mark_job(make_engine(), hid, job_id, "failed", allowed_from={"pending","generating","generated","ingesting"},
