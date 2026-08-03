@@ -129,9 +129,11 @@ def _emph(text):
 
 # ── 편집 오버레이(대사 ✏️수정 + 장면 AI사진 다시/이전/업로드) — 예쁜 스토리보드는 그대로, 편집만 얹음 ──
 _ED_CSS = """
+.scene.talk{display:block}
+.scene.talk .lab{display:block;margin-bottom:5px}
 .ed-btn{font-size:11px;padding:2px 9px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--acci);cursor:pointer;margin-left:8px;vertical-align:middle;font-weight:700}
-.ed-f{margin-top:8px}
-.ed-f textarea{width:100%;min-height:96px;font-family:inherit;font-size:14px;line-height:1.6;padding:10px 12px;border:1px solid var(--border);border-radius:9px;background:var(--card);color:var(--ink);box-sizing:border-box}
+.ed-f{margin-top:8px;width:100%}
+.ed-f textarea{display:block;width:100%;min-height:110px;font-family:inherit;font-size:14.5px;line-height:1.7;padding:11px 13px;border:1px solid var(--border);border-radius:9px;background:var(--card);color:var(--ink);box-sizing:border-box;resize:vertical}
 .eb{font-size:12px;font-weight:700;padding:6px 12px;border-radius:8px;border:1px solid transparent;background:#3182f6;color:#fff;cursor:pointer}
 .eb.g{background:var(--card);color:var(--ink);border:1px solid var(--border)}
 .ai-box{border:1px solid var(--border);border-radius:12px;padding:12px 13px;background:var(--surface)}
