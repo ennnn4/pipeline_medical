@@ -365,7 +365,7 @@ def hospital(h):
     elif _ok == "0":
         misswarn += '<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 업로드된 파일이 없어요. 파일이 선택됐는지, 허용 형식(pdf·docx·txt·zip 등)인지 확인해 주세요.</div>'
     if request.args.get("big") == "1":
-        misswarn += '<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 40MB 넘는 파일은 제외됐어요(영구저장 한도). 나눠서 올려주세요.</div>'
+        misswarn += '<div class=note style="border-color:var(--warn,#e0a800);color:var(--warn,#b8860b)">ℹ️ 200MB 넘는 파일은 이번 생성엔 쓰이지만 영구저장은 안 돼요(재시작 시 소실). 나머지는 영구 저장됩니다.</div>'
     if request.args.get("err") == "nopg":
         misswarn += '<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 이 병원은 영구저장(PostgreSQL)에 등록되지 않아 업로드를 막았어요(임시저장 방지). 관리자에게 병원 재등록을 요청하세요.</div>'
     # ③ 결과물: 목록만. '✏️ 편집' = 예쁜 스토리보드를 그대로 두고 대사 편집·AI사진 얹은 편집 페이지.
@@ -481,24 +481,25 @@ def upload(h):
             eng = make_engine()
         except Exception:
             eng = None
-    saved = 0; rejected = []
+    saved = 0; toobig = []
     for f in request.files.getlist("files"):
         if not f or not f.filename: continue
         name = safe_filename(f.filename)     # 한글 유지 + 경로탈출 방지
         if not name: continue
         if os.path.splitext(name)[1].lower() not in ALLOWED_EXT: continue  # 허용 확장자만
-        raw = f.read()
-        if eng and len(raw) > _MAT_MAX:      # PG 영속 불가 크기 → 명시적 거부(임시디스크 fallback 안 함)
-            rejected.append(name); continue
-        with open(os.path.join(dest, name), "wb") as out:   # 즉시 사용용 disk 캐시
-            out.write(raw)
-        if eng:
+        path = os.path.join(dest, name)
+        f.save(path)                         # 스트리밍 저장(대용량도 메모리 부담↓). 이번 생성에 즉시 사용.
+        sz = os.path.getsize(path)
+        if eng and sz <= _MAT_MAX:           # 한도 이하 → PG 영구 저장(재시작에도 유지)
             try:
-                save_material(eng, hid, name, raw, created_by=session.get("user_id"))  # 영속 저장(PG bytea, 새 immutable 버전)
+                with open(path, "rb") as fh:
+                    save_material(eng, hid, name, fh.read(), created_by=session.get("user_id"))
             except Exception:
                 pass
+        elif eng:                            # 한도 초과 → 임시(disk)로만. 막지 않고 이번 생성엔 사용.
+            toobig.append(name)
         saved += 1
-    q = f"?ok={saved}" + ("&big=1" if rejected else "")
+    q = f"?ok={saved}" + ("&big=1" if toobig else "")
     return redirect(f"/h/{h}{q}")
 
 def _pg_hospital_id(slug):
