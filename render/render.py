@@ -391,7 +391,7 @@ def render(pkg, meta=None, evidence=None, images=None, edit=None):
 
     return f"""<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{esc(title)} · 본큐어 유튜브</title><style>{CSS}{_ED_CSS if edit else ''}</style></head><body>
-<nav class="nav"><div class="nav-in"><div class="brand">{('<img src="'+LOGO_URI+'" alt="Medical Pipeline" style="height:28px">') if LOGO_URI else '<span class="dot">OM</span>아워마케팅'}</div>
+<nav class="nav"><div class="nav-in"><a class="brand" href="/" onclick="if(history.length>1){{history.back();return false;}}" style="text-decoration:none;cursor:pointer" title="이전 페이지로">{('<img src="'+LOGO_URI+'" alt="Medical Pipeline" style="height:40px">') if LOGO_URI else '<span class="dot">OM</span>아워마케팅'}</a>
 <div class="nav-links"><a href="#hook">기획</a><a href="#script">대본</a><a href="#deliverables">산출물</a>{'<a href="#evidence-check">근거 검수</a>' if evidence else ''}<a href="#review">원장 검수</a></div>
 <button class="toggle" id="tg" aria-label="테마 전환">◐</button></div></nav>
 <header class="hero wrap"><span class="eyebrow">Episode Package · 콘텐츠 디렉터 시스템</span>
