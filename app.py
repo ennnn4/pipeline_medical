@@ -971,7 +971,7 @@ def d_regen(h, version_id, block_key):
     from store.db import make_engine
     feedback = (request.form.get("feedback") or "").strip()
     try:
-        _svc.regenerate_scene(make_engine(), _dash_ctx(h), block_key, feedback, version_id=version_id)
+        _svc.regenerate_scene(make_engine(), _dash_ctx(h), block_key, feedback, version_id=version_id, topic=request.args.get("topic"))
         return redirect(_ret(f"/scripts/{h}/{version_id}", "regen", f"#img_{block_key}"))
     except ServiceError as e:
         if e.http_status == 401:
@@ -992,7 +992,7 @@ def d_revert(h, version_id, block_key):
     except (TypeError, ValueError):
         seq = None
     try:
-        _svc.revert_scene(make_engine(), _dash_ctx(h), block_key, seq=seq)   # 지정 seq(그 사진으로) 또는 최신
+        _svc.revert_scene(make_engine(), _dash_ctx(h), block_key, seq=seq, version_id=version_id, topic=request.args.get("topic"))   # topic 스코프
         return redirect(_ret(f"/scripts/{h}/{version_id}", "reverted", f"#img_{block_key}"))
     except ServiceError as e:
         if e.http_status == 401:
@@ -1010,7 +1010,7 @@ def d_upload(h, version_id, block_key):
     f = request.files.get("photo")
     raw = f.read() if f else b""
     try:
-        _svc.upload_scene(make_engine(), _dash_ctx(h), block_key, raw, version_id=version_id)
+        _svc.upload_scene(make_engine(), _dash_ctx(h), block_key, raw, version_id=version_id, topic=request.args.get("topic"))
         return redirect(_ret(f"/scripts/{h}/{version_id}", "uploaded", f"#img_{block_key}"))
     except ServiceError as e:
         if e.http_status == 401:
@@ -1030,10 +1030,11 @@ def d_imgv(h, block_key, seq):
         ctx = _dash_ctx(h)
     except Exception:
         abort(403)
+    topic = request.args.get("topic")
     with tenant_conn(make_engine(), ctx.hospital_id, membership_id=ctx.membership_id) as cn:
         row = cn.execute(_t("select mime, data from scene_image_versions "
-                            "where hospital_id=:h and block_key=:k and seq=:s limit 1"),
-                         {"h": ctx.hospital_id, "k": block_key, "s": seq}).first()
+                            "where hospital_id=:h and block_key=:k and seq=:s and (:t is null or topic=:t) limit 1"),
+                         {"h": ctx.hospital_id, "k": block_key, "s": seq, "t": topic}).first()
     if not row:
         abort(404)
     return Response(bytes(row.data), mimetype=row.mime or "image/jpeg", headers={"Cache-Control": "no-store"})
@@ -1048,9 +1049,11 @@ def d_img(h, block_key):
         ctx = _dash_ctx(h)
     except Exception:
         abort(403)
+    topic = request.args.get("topic")
     with tenant_conn(make_engine(), ctx.hospital_id, membership_id=ctx.membership_id) as cn:
-        row = cn.execute(_t("select mime, data from scene_images where hospital_id=:h and block_key=:k limit 1"),
-                         {"h": ctx.hospital_id, "k": block_key}).first()
+        row = cn.execute(_t("select mime, data from scene_images "
+                            "where hospital_id=:h and block_key=:k and (:t is null or topic=:t) limit 1"),
+                         {"h": ctx.hospital_id, "k": block_key, "t": topic}).first()
     if not row:
         abort(404)
     return Response(bytes(row.data), mimetype=row.mime or "image/jpeg", headers={"Cache-Control": "no-store"})
@@ -1252,34 +1255,40 @@ def edit_story(h, topic):
     except ServiceError:
         # 편집 권한(PG 계정) 없어도 '결과 보기'는 항상 예쁜 스토리보드로 보이게(정적 렌더). 편집 컨트롤만 빠짐.
         return _render(pkg, _meta(h), evidence=evidence, images=images)
+    _topic = os.path.basename(topic)      # 이 페이지가 편집하는 '주제' — 이미지·버전을 이 주제로 스코프
+    from urllib.parse import quote as _q
+    _tq = _q(_topic)
     with tenant_conn(eng, ctx.hospital_id) as cn:
+        # 이 '주제'의 현재 버전(다른 주제 최신본이 섞이지 않게 topic 필터)
         row = cn.execute(_t("select sv.id vid, sv.script_id sid from script_versions sv join scripts s "
-                            "on s.id=sv.script_id where sv.hospital_id=:h and s.current_version_id=sv.id "
-                            "order by sv.created_at desc limit 1"), {"h": ctx.hospital_id}).first()
+                            "on s.id=sv.script_id where sv.hospital_id=:h and s.topic=:tp and s.current_version_id=sv.id "
+                            "order by sv.created_at desc limit 1"), {"h": ctx.hospital_id, "tp": _topic}).first()
         if not row:
             return _render(pkg, _meta(h), evidence=evidence, images=images)
         vid, sid = row.vid, row.sid
         blocks = cn.execute(_t("select order_index, stable_block_key, text from script_blocks "
                                "where hospital_id=:h and version_id=:v order by order_index"),
                             {"h": ctx.hospital_id, "v": vid}).all()
-        imgkeys = {r[0] for r in cn.execute(_t("select block_key from scene_images where hospital_id=:h"), {"h": ctx.hospital_id})}
-        # 갤러리: 블록별 이전 이미지 seq 목록(오래된→최신). 현재본 + 이 히스토리를 나란히 보여준다.
+        imgkeys = {r[0] for r in cn.execute(_t("select block_key from scene_images where hospital_id=:h and topic=:tp"),
+                                            {"h": ctx.hospital_id, "tp": _topic})}
+        # 갤러리: 블록별 이전 이미지 seq 목록(오래된→최신). 이 주제의 이력만.
         hist_by_key = {}
-        for r in cn.execute(_t("select block_key, seq from scene_image_versions where hospital_id=:h order by block_key, seq"), {"h": ctx.hospital_id}):
+        for r in cn.execute(_t("select block_key, seq from scene_image_versions where hospital_id=:h and topic=:tp order by block_key, seq"),
+                            {"h": ctx.hospital_id, "tp": _topic}):
             hist_by_key.setdefault(r[0], []).append(r[1])
     csrf = f'<input type="hidden" name="_csrf" value="{session.get("_csrf","")}">'
-    rt = f'<input type="hidden" name="return_to" value="/h/{h}/edit/{os.path.basename(topic)}">'
+    rt = f'<input type="hidden" name="return_to" value="/h/{h}/edit/{_tq}">'
     vid_s = str(vid)
     edit = {"by_idx": {b.order_index: {"key": b.stable_block_key, "text": b.text} for b in blocks},
             "csrf": csrf, "rt": rt, "version_id": vid_s,
             "edit_url": f"/scripts/{h}/{sid}/edit",
-            "img_url": (lambda k: f"/scripts/{h}/img/{k}"),
+            "img_url": (lambda k: f"/scripts/{h}/img/{k}?topic={_tq}"),
             "has_img": (lambda k: k in imgkeys),
             "hist": (lambda k: hist_by_key.get(k, [])),   # 이전 이미지 seq 목록(갤러리)
-            "imgv_url": (lambda k, s: f"/scripts/{h}/imgv/{k}/{s}"),
-            "regen_url": (lambda k: f"/scripts/{h}/versions/{vid_s}/blocks/{k}/regen-image"),
-            "revert_url": (lambda k: f"/scripts/{h}/versions/{vid_s}/blocks/{k}/revert-image"),
-            "upload_url": (lambda k: f"/scripts/{h}/versions/{vid_s}/blocks/{k}/upload-image")}
+            "imgv_url": (lambda k, s: f"/scripts/{h}/imgv/{k}/{s}?topic={_tq}"),
+            "regen_url": (lambda k: f"/scripts/{h}/versions/{vid_s}/blocks/{k}/regen-image?topic={_tq}"),
+            "revert_url": (lambda k: f"/scripts/{h}/versions/{vid_s}/blocks/{k}/revert-image?topic={_tq}"),
+            "upload_url": (lambda k: f"/scripts/{h}/versions/{vid_s}/blocks/{k}/upload-image?topic={_tq}")}
     return _render(pkg, _meta(h), evidence=evidence, images=images, edit=edit)
 
 LOGIN = """<!doctype html><html lang=ko><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">

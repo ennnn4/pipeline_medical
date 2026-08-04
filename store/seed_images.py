@@ -42,6 +42,7 @@ _HISTORY_DDL = """
 CREATE TABLE IF NOT EXISTS scene_image_versions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   hospital_id uuid NOT NULL REFERENCES hospitals(id),
+  topic text,
   block_key text NOT NULL,
   seq int NOT NULL,
   mime text NOT NULL DEFAULT 'image/jpeg',
@@ -53,9 +54,21 @@ CREATE TABLE IF NOT EXISTS scene_image_versions (
   source_prompt_hash text,
   generated_by_membership_id uuid,
   archived_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (hospital_id, block_key, seq)
+  UNIQUE (hospital_id, topic, block_key, seq)
 );
 """
+
+# 기존(topic 없던) scene_image_versions → topic 컬럼 추가·백필·unique 교체(멱등). 이미지 이력이 주제별로 독립되게.
+_HISTORY_MIGRATE = [
+    "ALTER TABLE scene_image_versions ADD COLUMN IF NOT EXISTS topic text;",
+    # 백필: 현재 scene_images에서 같은 block_key의 topic을 가져옴(과거 이력은 이명뿐이라 정확)
+    "UPDATE scene_image_versions v SET topic = (select s.topic from scene_images s "
+    "where s.hospital_id=v.hospital_id and s.block_key=v.block_key limit 1) WHERE v.topic IS NULL;",
+    "ALTER TABLE scene_image_versions DROP CONSTRAINT IF EXISTS scene_image_versions_hospital_id_block_key_seq_key;",
+    "DO $$ BEGIN IF NOT EXISTS (select 1 from pg_constraint where conname='uq_siv_hosp_topic_block_seq') THEN "
+    "ALTER TABLE scene_image_versions ADD CONSTRAINT uq_siv_hosp_topic_block_seq "
+    "UNIQUE (hospital_id, topic, block_key, seq); END IF; END $$;",
+]
 
 def _history_policies():
     return [
@@ -77,6 +90,8 @@ def ensure_scene_images(owner_engine):
         for s in _PROVENANCE:
             cn.execute(text(s))
         cn.execute(text(_HISTORY_DDL))
+        for s in _HISTORY_MIGRATE:       # 기존 이력 topic 컬럼·백필·unique 교체(멱등)
+            cn.execute(text(s))
         for s in _policies():
             cn.execute(text(s))
         for s in _history_policies():

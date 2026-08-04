@@ -32,29 +32,54 @@ def _block_scene_hash(conn, hospital_id, version_id, block_key):
     return scene_hash(block_key, r.block_type, r.scene, r.text)
 
 
-def _archive_current(conn, hospital_id, block_key):
-    """현재 scene_images 이미지를 히스토리로 보존(비파괴). 다음 seq 부여. 현재 이미지 없으면 no-op."""
+def _topic_of_version(conn, hospital_id, version_id):
+    """version_id → 그 대본(script)의 topic. topic이 명시되지 않은 호출(스튜디오 compat)의 폴백."""
+    if not version_id:
+        return None
+    return conn.execute(text("select s.topic from script_versions v join scripts s on s.id=v.script_id "
+                             "where v.hospital_id=:h and v.id=:vid"),
+                        {"h": hospital_id, "vid": version_id}).scalar()
+
+
+def _resolve_topic(conn, hospital_id, topic, version_id, block_key):
+    """이미지 스코프 topic 결정: 명시 > version 파생 > 기존 이미지 행의 topic(단일주제 레거시/테스트)."""
+    if topic:
+        return topic
+    t = _topic_of_version(conn, hospital_id, version_id)
+    if t:
+        return t
+    return conn.execute(text("select topic from scene_images where hospital_id=:h and block_key=:k limit 1"),
+                        {"h": hospital_id, "k": block_key}).scalar()
+
+
+def _archive_current(conn, hospital_id, topic, block_key):
+    """현재 scene_images 이미지를 히스토리로 보존(비파괴). 다음 seq 부여. 현재 이미지 없으면 no-op.
+    topic으로 스코프 — 주제마다 독립된 이미지·이력(blk_1이 주제별로 다름)."""
     seq = conn.execute(text("select coalesce(max(seq),0)+1 from scene_image_versions "
-                            "where hospital_id=:h and block_key=:k"), {"h": hospital_id, "k": block_key}).scalar()
+                            "where hospital_id=:h and topic=:t and block_key=:k"),
+                       {"h": hospital_id, "t": topic, "k": block_key}).scalar()
     n = conn.execute(text(
-        "insert into scene_image_versions(hospital_id, block_key, seq, mime, data, prompt, model, "
+        "insert into scene_image_versions(hospital_id, topic, block_key, seq, mime, data, prompt, model, "
         "source_version_id, source_scene_hash, source_prompt_hash, generated_by_membership_id) "
-        "select hospital_id, block_key, :seq, mime, data, prompt, model, source_version_id, source_scene_hash, "
-        "source_prompt_hash, generated_by_membership_id from scene_images where hospital_id=:h and block_key=:k"),
-        {"seq": seq, "h": hospital_id, "k": block_key}).rowcount
+        "select hospital_id, topic, block_key, :seq, mime, data, prompt, model, source_version_id, source_scene_hash, "
+        "source_prompt_hash, generated_by_membership_id from scene_images where hospital_id=:h and topic=:t and block_key=:k"),
+        {"seq": seq, "h": hospital_id, "t": topic, "k": block_key}).rowcount
     return seq if n else None
 
 
-def regenerate_scene(engine, ctx, block_key, feedback="", version_id=None, generator=None):
-    """장면 이미지 재생성 → scene_images 갱신(영속) + provenance 기록. editor/approver/admin만.
-    version_id를 주면 그 version 장면 입력의 source_scene_hash를 결착(대본 변경 시 stale 판정).
-    generator(prompt)->jpeg bytes 주입 가능(기본=OpenAI). 반환: {block_key}."""
+def regenerate_scene(engine, ctx, block_key, feedback="", version_id=None, topic=None, generator=None):
+    """장면 이미지 재생성 → scene_images upsert(주제별 독립·영속) + provenance. editor/approver/admin만.
+    topic으로 스코프 — 주제마다 blk_1이 다름. 이미지 없던 (주제,블록)이면 새로 INSERT(=AI 새로 만들기).
+    version_id를 주면 source_scene_hash 결착(대본 변경 시 stale 판정)·topic 폴백. 반환: {block_key}."""
     permissions.require(ctx, permissions.IMAGE_ROLES)
     generator = generator or _default_generator
     vid = (version_id if isinstance(version_id, uuid.UUID) else uuid.UUID(str(version_id))) if version_id else None
     with tenant_conn(engine, ctx.hospital_id, membership_id=ctx.membership_id) as conn:
-        row = conn.execute(text("select prompt from scene_images where hospital_id=:h and block_key=:k limit 1"),
-                           {"h": ctx.hospital_id, "k": block_key}).first()
+        topic = _resolve_topic(conn, ctx.hospital_id, topic, vid, block_key)
+        if not topic:
+            raise NotFound("주제를 확인할 수 없습니다(topic 없음)")
+        row = conn.execute(text("select prompt from scene_images where hospital_id=:h and topic=:t and block_key=:k limit 1"),
+                           {"h": ctx.hospital_id, "t": topic, "k": block_key}).first()
         sh = _block_scene_hash(conn, ctx.hospital_id, vid, block_key) if vid else None
     base = (row.prompt if row else None) or f"clean medical educational illustration for scene {block_key}"
     prompt = base + (f" Reviewer adjustment: {feedback}." if feedback else " Provide a fresh alternative composition.")
@@ -62,15 +87,17 @@ def regenerate_scene(engine, ctx, block_key, feedback="", version_id=None, gener
     jpg = generator(prompt)                                   # 외부 호출은 트랜잭션 밖
     with tenant_conn(engine, ctx.hospital_id, membership_id=ctx.membership_id,
                      request_id=ctx.request_id) as conn:
-        _archive_current(conn, ctx.hospital_id, block_key)   # 비파괴: 현재(이전) 이미지 보존 후 새 것으로
-        r = conn.execute(text(
-            "update scene_images set data=:d, prompt=:p, source_version_id=:vid, source_scene_hash=:sh, "
-            "source_prompt_hash=:ph, generated_by_membership_id="
-            "NULLIF(current_setting('app.membership_id', true), '')::uuid, updated_at=now() "
-            "where hospital_id=:h and block_key=:k"),
-            {"d": jpg, "p": prompt, "vid": vid, "sh": sh, "ph": ph, "h": ctx.hospital_id, "k": block_key})
-        if r.rowcount == 0:
-            raise NotFound("해당 장면 이미지가 없습니다")
+        _archive_current(conn, ctx.hospital_id, topic, block_key)   # 비파괴: 현재(이전) 이미지 보존 후 새 것으로
+        conn.execute(text(
+            "insert into scene_images(id,hospital_id,topic,block_key,mime,data,prompt,source_version_id,"
+            "source_scene_hash,source_prompt_hash,generated_by_membership_id) "
+            "values(gen_random_uuid(),:h,:t,:k,'image/jpeg',:d,:p,:vid,:sh,:ph,"
+            "NULLIF(current_setting('app.membership_id', true), '')::uuid) "
+            "on conflict (hospital_id,topic,block_key) do update set data=excluded.data, prompt=excluded.prompt, "
+            "source_version_id=excluded.source_version_id, source_scene_hash=excluded.source_scene_hash, "
+            "source_prompt_hash=excluded.source_prompt_hash, "
+            "generated_by_membership_id=excluded.generated_by_membership_id, updated_at=now()"),
+            {"h": ctx.hospital_id, "t": topic, "k": block_key, "d": jpg, "p": prompt, "vid": vid, "sh": sh, "ph": ph})
     try:                                    # 성공 이벤트(GPT): prompt·block_key 내용 미포함, 병원 해시
         from services.observability import emit, hid
         emit("image_regenerated", hospital=hid(ctx.hospital_id),
@@ -94,52 +121,52 @@ def upload_scene(engine, ctx, block_key, raw_bytes, version_id=None, topic=None)
     vid = (version_id if isinstance(version_id, uuid.UUID) else uuid.UUID(str(version_id))) if version_id else None
     sh = None
     with tenant_conn(engine, ctx.hospital_id, membership_id=ctx.membership_id) as conn:
-        exists = conn.execute(text("select topic from scene_images where hospital_id=:h and block_key=:k limit 1"),
-                              {"h": ctx.hospital_id, "k": block_key}).first()
+        topic = _resolve_topic(conn, ctx.hospital_id, topic, vid, block_key)
+        if not topic:
+            raise NotFound("주제를 확인할 수 없습니다(topic 없음)")
         if vid:
             sh = _block_scene_hash(conn, ctx.hospital_id, vid, block_key)
     with tenant_conn(engine, ctx.hospital_id, membership_id=ctx.membership_id,
                      request_id=ctx.request_id) as conn:
-        _archive_current(conn, ctx.hospital_id, block_key)   # 비파괴: 현재 이미지 보존
-        if exists:
-            conn.execute(text(
-                "update scene_images set data=:d, mime='image/jpeg', prompt=coalesce(prompt,'[업로드]'), "
-                "source_version_id=:vid, source_scene_hash=:sh, generated_by_membership_id="
-                "NULLIF(current_setting('app.membership_id', true), '')::uuid, updated_at=now() "
-                "where hospital_id=:h and block_key=:k"),
-                {"d": jpg, "vid": vid, "sh": sh, "h": ctx.hospital_id, "k": block_key})
-        else:
-            tp = topic or (exists.topic if exists else None) or "업로드"
-            conn.execute(text(
-                "insert into scene_images(id,hospital_id,topic,block_key,mime,data,prompt,source_version_id,source_scene_hash,"
-                "generated_by_membership_id) values(gen_random_uuid(),:h,:tp,:k,'image/jpeg',:d,'[업로드]',:vid,:sh,"
-                "NULLIF(current_setting('app.membership_id', true), '')::uuid)"),
-                {"h": ctx.hospital_id, "tp": tp, "k": block_key, "d": jpg, "vid": vid, "sh": sh})
+        _archive_current(conn, ctx.hospital_id, topic, block_key)   # 비파괴: 현재 이미지 보존
+        conn.execute(text(
+            "insert into scene_images(id,hospital_id,topic,block_key,mime,data,prompt,source_version_id,source_scene_hash,"
+            "generated_by_membership_id) values(gen_random_uuid(),:h,:t,:k,'image/jpeg',:d,'[업로드]',:vid,:sh,"
+            "NULLIF(current_setting('app.membership_id', true), '')::uuid) "
+            "on conflict (hospital_id,topic,block_key) do update set data=excluded.data, mime='image/jpeg', "
+            "prompt=coalesce(scene_images.prompt,'[업로드]'), source_version_id=excluded.source_version_id, "
+            "source_scene_hash=excluded.source_scene_hash, "
+            "generated_by_membership_id=excluded.generated_by_membership_id, updated_at=now()"),
+            {"h": ctx.hospital_id, "t": topic, "k": block_key, "d": jpg, "vid": vid, "sh": sh})
     return {"block_key": block_key, "uploaded": True}
 
 
-def revert_scene(engine, ctx, block_key, seq=None):
+def revert_scene(engine, ctx, block_key, seq=None, version_id=None, topic=None):
     """이전 이미지로 되돌리기(비파괴) — 현재 것도 히스토리에 보존한 뒤 지정(또는 가장 최근) 아카이브를 현재로.
-    둘 다 남으므로 다시 앞뒤로 전환 가능. editor/approver/admin(+platform_operator)만."""
+    둘 다 남으므로 다시 앞뒤로 전환 가능. topic으로 스코프. editor/approver/admin(+platform_operator)만."""
     permissions.require(ctx, permissions.IMAGE_ROLES)
+    vid = (version_id if isinstance(version_id, uuid.UUID) else uuid.UUID(str(version_id))) if version_id else None
     with tenant_conn(engine, ctx.hospital_id, membership_id=ctx.membership_id,
                      request_id=ctx.request_id) as conn:
+        topic = _resolve_topic(conn, ctx.hospital_id, topic, vid, block_key)
+        if not topic:
+            raise NotFound("주제를 확인할 수 없습니다(topic 없음)")
         q = ("select seq, mime, data, prompt, model, source_version_id, source_scene_hash, source_prompt_hash "
-             "from scene_image_versions where hospital_id=:h and block_key=:k "
+             "from scene_image_versions where hospital_id=:h and topic=:t and block_key=:k "
              + ("and seq=:s " if seq is not None else "") + "order by seq desc limit 1")
-        p = {"h": ctx.hospital_id, "k": block_key}
+        p = {"h": ctx.hospital_id, "t": topic, "k": block_key}
         if seq is not None:
             p["s"] = seq
         t = conn.execute(text(q), p).first()
         if t is None:
             raise NotFound("되돌릴 이전 이미지가 없습니다")
-        _archive_current(conn, ctx.hospital_id, block_key)   # 현재(새) 것도 보존 → 앞뒤 전환 가능
+        _archive_current(conn, ctx.hospital_id, topic, block_key)   # 현재(새) 것도 보존 → 앞뒤 전환 가능
         r = conn.execute(text(
             "update scene_images set data=:d, prompt=:p, mime=:m, source_version_id=:vid, "
             "source_scene_hash=:sh, source_prompt_hash=:ph, updated_at=now() "
-            "where hospital_id=:h and block_key=:k"),
+            "where hospital_id=:h and topic=:t and block_key=:k"),
             {"d": t.data, "p": t.prompt, "m": t.mime, "vid": t.source_version_id, "sh": t.source_scene_hash,
-             "ph": t.source_prompt_hash, "h": ctx.hospital_id, "k": block_key})
+             "ph": t.source_prompt_hash, "h": ctx.hospital_id, "t": topic, "k": block_key})
         if r.rowcount == 0:
             raise NotFound("해당 장면 이미지가 없습니다")
     return {"block_key": block_key, "reverted_to_seq": t.seq}
@@ -151,13 +178,16 @@ def list_scene_status(engine, ctx, version_id):
     vid = version_id if isinstance(version_id, uuid.UUID) else uuid.UUID(str(version_id))
     out = {}
     with tenant_conn(engine, ctx.hospital_id, membership_id=ctx.membership_id) as conn:
+        topic = _topic_of_version(conn, ctx.hospital_id, vid)
         blocks = conn.execute(text("select stable_block_key, block_type, scene, text from script_blocks "
                                    "where hospital_id=:h and version_id=:v"), {"h": ctx.hospital_id, "v": vid}).all()
         imgs = {r.block_key: r for r in conn.execute(text(
-            "select block_key, source_version_id, source_scene_hash from scene_images where hospital_id=:h"),
-            {"h": ctx.hospital_id})}
+            "select block_key, source_version_id, source_scene_hash from scene_images "
+            "where hospital_id=:h and (:t is null or topic=:t)"),
+            {"h": ctx.hospital_id, "t": topic})}
         prev = {r[0] for r in conn.execute(text(   # 이전 이미지(되돌리기 가능) 존재하는 블록
-            "select distinct block_key from scene_image_versions where hospital_id=:h"), {"h": ctx.hospital_id})}
+            "select distinct block_key from scene_image_versions where hospital_id=:h and (:t is null or topic=:t)"),
+            {"h": ctx.hospital_id, "t": topic})}
     for b in blocks:
         img = imgs.get(b.stable_block_key)
         hp = b.stable_block_key in prev
