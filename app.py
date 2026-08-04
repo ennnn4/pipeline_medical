@@ -225,7 +225,10 @@ def home():
         emsg = '<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 같은 ID의 병원이 이미 있어요. 다른 이름을 써 주세요.</div>'
     elif _e == "taken":
         emsg = '<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 이미 사용 중인 병원 이름이에요(다른 사용자 소유). 다른 이름을 써 주세요.</div>'
+    _oplink = ('<div style="text-align:right;margin-bottom:8px"><a class="btn g" href="/admin/members">👥 팀·권한 관리</a></div>'
+               if _is_platform_operator(session.get("user_id")) else "")
     body = f"""
+    {_oplink}
     <div class=hero><h1>병원 유튜브를,<br>대본이 아니라 버튼으로.</h1>
       <p>자료를 올리고 버튼만 누르면 촬영용 대본 패키지가 나옵니다. 병원을 고르거나 새로 만드세요.</p></div>
     {emsg}
@@ -241,6 +244,108 @@ def home():
       </form>
     </div>"""
     return page("병원 선택", body)
+
+def _esc(s):
+    return (str(s if s is not None else "")).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+def _is_platform_operator(uid):
+    """세션 사용자가 활성 대행사 운영자(platform_access_grant)인지."""
+    if not uid:
+        return False
+    try:
+        from store.db import make_engine
+        from sqlalchemy import text
+        with make_engine().connect() as cn:
+            return cn.execute(text("select 1 from platform_access_grants where user_id=:u and status='active' limit 1"),
+                              {"u": uid}).first() is not None
+    except Exception:
+        return False
+
+@app.route("/admin/members")
+def admin_members():
+    """팀·권한 관리(대행사 전용) — 이미 있는 계정에 병원 역할(editor/approver/admin) 부여·제거."""
+    uid = session.get("user_id")
+    if not _is_platform_operator(uid):
+        return page("접근 불가", '<div class=card><h1>권한 없음</h1>'
+                    '<p class=muted>이 페이지는 대행사 운영자 계정만 사용할 수 있어요.</p>'
+                    '<a class=btn href="/">← 홈</a></div>'), 403
+    from store.db import make_engine
+    from store import member_admin as _ma
+    eng = make_engine()
+    sel = request.args.get("h", "")
+    _csrf = session.get("_csrf", "")
+    opts = "".join(f'<a class="btn dz{" pri" if h["id"]==sel else ""}" href="/admin/members?h={h["id"]}">{_esc(h["name"])}</a>'
+                   for h in hospitals())
+    body = ('<div class=row style="justify-content:space-between"><div><h1>팀 · 권한 관리</h1>'
+            '<p class=sub>대행사 전용 — 계정에 병원 역할 주기</p></div><a href="/" class=btn>← 홈</a></div>')
+    body += f'<div class=card><div class=note>병원을 고르면 그 병원의 멤버·역할을 관리해요.</div><div class=chk style="margin-top:10px">{opts or "<span class=muted>병원이 없어요.</span>"}</div></div>'
+    if sel:
+        hid = _pg_hospital_id(sel)
+        if not hid:
+            body += '<div class=card><p class=muted>이 병원은 PostgreSQL에 등록되지 않았어요.</p></div>'
+        else:
+            code = request.args.get("m"); msg = ""
+            _m = {"added": ('good', '✅ 역할이 추가됐어요.'), "removed": ('', '역할을 제거했어요.'),
+                  "nouser": ('danger', '⚠️ 그 이메일의 계정이 없어요. 계정이 먼저 있어야 역할을 줄 수 있어요.'),
+                  "err": ('danger', '⚠️ 처리 실패 — 권한·입력을 확인하세요.')}
+            if code in _m:
+                col = f"color:var(--{_m[code][0]})" if _m[code][0] else ""
+                msg = f'<div class=note style="{col}">{_m[code][1]}</div>'
+            members = _ma.list_members(eng, hid, uid)
+            ROLES = ["editor", "approver", "admin"]
+            rows = ""
+            for mb in members:
+                rl = set(mb["roles"]); tg = ""
+                for role in ROLES:
+                    has = role in rl
+                    act = "remove" if has else "add"
+                    tg += (f'<form method=post action="/admin/members/set" style="display:inline-block;margin:2px">'
+                           f'<input type=hidden name=_csrf value="{_csrf}"><input type=hidden name=h value="{_esc(sel)}">'
+                           f'<input type=hidden name=user value="{_esc(mb["user_id"])}"><input type=hidden name=role value="{role}">'
+                           f'<input type=hidden name=action value="{act}">'
+                           f'<button class="btn {"pri" if has else "g"}" style="padding:4px 11px;font-size:12px">'
+                           f'{"✓ " if has else "+ "}{role}</button></form>')
+                rows += (f'<tr><td style="padding:9px;border-top:1px solid var(--border)">{_esc(mb["email"])}'
+                         f'<br><span class=muted style="font-size:12px">{_esc(mb["name"])}</span></td>'
+                         f'<td style="padding:9px;border-top:1px solid var(--border)">{tg}</td></tr>')
+            if not members:
+                rows = '<tr><td colspan=2 class=muted style="padding:12px">아직 멤버가 없어요. 아래에서 이메일로 추가하세요.</td></tr>'
+            body += (f'<div class=card>{msg}<h2 style="margin-top:0">멤버 · 역할 <span class=muted style="font-size:13px">(역할 클릭해서 켜고 끄기)</span></h2>'
+                     f'<table style="width:100%;border-collapse:collapse"><tr style="text-align:left"><th style="padding:9px">계정</th><th style="padding:9px">역할</th></tr>{rows}</table>'
+                     f'<h3 style="margin-top:20px">+ 멤버 추가 (이메일)</h3>'
+                     f'<form method=post action="/admin/members/set"><input type=hidden name=_csrf value="{_csrf}"><input type=hidden name=h value="{_esc(sel)}"><input type=hidden name=action value="addemail">'
+                     f'<div class=row><input type=email name=email placeholder="추가할 계정 이메일" required style="flex:1;min-width:200px">'
+                     f'<select name=role style="padding:8px"><option value=editor>editor(편집)</option><option value=approver>approver(승인)</option><option value=admin>admin(관리자)</option></select>'
+                     f'<button class="btn pri" type=submit>추가</button></div>'
+                     f'<div class=muted style="font-size:12px;margin-top:7px">이미 계정이 있는 사람만 추가돼요. 계정 생성·비밀번호는 여기서 하지 않아요.</div></form></div>')
+    return page("팀·권한 관리", body)
+
+@app.route("/admin/members/set", methods=["POST"])
+def admin_members_set():
+    uid = session.get("user_id")
+    if not _is_platform_operator(uid):
+        abort(403)
+    from store.db import make_engine
+    from store import member_admin as _ma
+    eng = make_engine()
+    sel = request.form.get("h", "")
+    hid = _pg_hospital_id(sel)
+    if not hid:
+        return redirect(f"/admin/members?h={sel}&m=err")
+    action = request.form.get("action"); role = request.form.get("role", "")
+    try:
+        if action == "addemail":
+            u = _ma.find_user(eng, hid, uid, (request.form.get("email") or "").strip())
+            if not u:
+                return redirect(f"/admin/members?h={sel}&m=nouser")
+            _ma.set_member_role(eng, hid, uid, u["user_id"], role, "add")
+            return redirect(f"/admin/members?h={sel}&m=added")
+        if action in ("add", "remove"):
+            _ma.set_member_role(eng, hid, uid, request.form.get("user"), role, action)
+            return redirect(f"/admin/members?h={sel}&m={'added' if action == 'add' else 'removed'}")
+        abort(400)
+    except Exception:
+        return redirect(f"/admin/members?h={sel}&m=err")
 
 @app.route("/new", methods=["POST"])
 def new():
@@ -518,18 +623,23 @@ def hospital(h):
     var EST=1080;                 // 예상 총 소요(초) ≈ 18분 — 진행바 추정용
     var srvEl=0, anchor=Date.now(), tick=null;
     var modal=document.getElementById('genmodal');
+    var sawRunning=%RUNNING%, submitAt=(%RUNNING%?0:null);   // 완료 깜빡 방지: 방금 제출했는데 아직 running 못 봤으면 '완료' 처리 보류
     function fmt(t){t=Math.max(0,Math.floor(t));var m=Math.floor(t/60),s=t%60;return m+':'+(s<10?'0':'')+s;}
-    function stageText(j){
-      if(j.phase==='ingest'||j.status==='ingesting')return '거의 다 됐어요 — 편집·근거·이미지 정리 중';
-      if(j.phase==='parsed'||j.status==='generated')return '대본 정리 중';
-      if(j.status==='pending')return '준비 중 — 자료 봉인';
-      return '자료 수집 → 지식정리(KB) → 대본 집필 중';
+    // 원시 로그(모델명 등) 대신 친근한 단계만 뽑아 보여줌
+    function stages(log){log=log||'';
+      var S=[['자료 수집·정리',/코퍼스|정규화|추출|ingest/i],['지식 정리(KB)',/\bKB\b|profile|disease|competitor|생성 시작/i],
+             ['대본 집필',/director|대본 패키지|대본 만들|러닝타임/i],['논문 근거 대조',/근거 대조|근거 강화|시각자료/i],
+             ['편집·이미지 준비',/적재|편집·근거·이미지/i]];
+      var done=[],cur='준비 중';
+      S.forEach(function(x){if(x[1].test(log)){done.push('✓ '+x[0]);cur=x[0]+' 중…';}});
+      return {list:done.length?done.join('\n'):'시작하는 중…', cur:cur};
     }
     function showModal(j){
       modal.style.display='flex';
       document.getElementById('gmtopic').textContent=(j.topic?('주제: '+j.topic):'');
-      document.getElementById('gmstage').textContent=stageText(j);
-      var gl=document.getElementById('gmlog');gl.textContent=(j.log||'시작하는 중…');gl.scrollTop=gl.scrollHeight;
+      var st=stages(j.log);
+      document.getElementById('gmstage').textContent=st.cur;
+      var gl=document.getElementById('gmlog');gl.textContent=st.list;
       srvEl=(j.elapsed||0);anchor=Date.now();
       if(!tick){tick=setInterval(function(){
         var e=srvEl+(Date.now()-anchor)/1000;
@@ -540,17 +650,20 @@ def hospital(h):
     function hideModal(){modal.style.display='none';if(tick){clearInterval(tick);tick=null;}}
     function poll(){fetch('/h/'+HID+'/status').then(r=>r.json()).then(j=>{
       var s=document.getElementById('status'),btn=document.getElementById('runbtn');
-      if(j.running){btn.disabled=true;btn.textContent='생성 중…';showModal(j);
-        s.innerHTML='<div class=log>'+(j.log||'시작하는 중…')+'</div>';setTimeout(poll,2500);}
-      else{hideModal();
+      if(j.running){sawRunning=true;btn.disabled=true;btn.textContent='생성 중…';showModal(j);
+        s.innerHTML='<div class=log>'+stages(j.log).list+'</div>';setTimeout(poll,2500);}
+      else{
+        if(submitAt!==null && !sawRunning && (Date.now()-submitAt)<25000){setTimeout(poll,1500);return;}  // 새 job 아직 안 뜸 → 완료 오인 방지
+        hideModal();
         var msg = j.ok
           ? '<p style="color:var(--good);font-weight:800;margin-top:10px">✅ 완료 — 아래 결과물에서 확인하세요.</p>'
           : ((j.status==='failed'||j.error) ? '<p style="color:var(--danger);font-weight:800;margin-top:10px">⛔ 실패 — '+(j.error||'의료광고 검수 불통과 또는 오류')+' (검수 통과 전엔 게시되지 않아요)</p>' : '');
-        s.innerHTML=(j.log?'<div class=log>'+j.log+'</div>':'')+msg;
+        s.innerHTML=msg;
         btn.disabled=false;btn.textContent='대본 만들기';
         if(j.ok)setTimeout(()=>location.reload(),1600);}
     }).catch(function(){setTimeout(poll,4000);})}   // 폴링 실패해도 멈추지 않고 재시도(생성은 서버에서 계속)
     document.getElementById('runf').addEventListener('submit',function(){
+      submitAt=Date.now();sawRunning=false;
       modal.style.display='flex';document.getElementById('gmstage').textContent='생성을 시작하고 있어요…';
       setTimeout(poll,1200);});
     if(%RUNNING%)poll();

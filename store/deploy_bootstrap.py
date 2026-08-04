@@ -147,6 +147,8 @@ from store.seed_images import ensure_scene_images
 ensure_scene_images(eng)           # scene_images + provenance(이미지 stale 판정)
 from store.artifacts import ensure_artifacts_schema
 ensure_artifacts_schema(eng)       # script_artifacts(생성 결과물 html·패키지 영속 → 재배포에도 목록·미리보기 유지)
+from store.member_admin import ensure_member_admin
+ensure_member_admin(eng)           # 멤버 관리 definer 함수(대행사가 계정에 병원 역할 부여/제거)
 print("[schema] 생성job·자료버전·승인함수·provisioning·이미지·결과물 적용(reseed 안전)")
 
 # ── 3.6) platform operator(대행사 전 병원 접근) 계정 시딩 — 안전(GPT) ──
