@@ -51,6 +51,57 @@ def _jpg(p, q):
         try: return p.tobytes("jpeg")
         except Exception: return p.tobytes("png")
 
+def _shrunk_jpg(src_bytes, maxw, q):
+    """JPEG 바이트를 재디코드해 maxw 이하로 축소(원본 pixmap shrink가 특정 이미지서 죽는 것 회피)."""
+    import fitz
+    p = fitz.Pixmap(src_bytes)
+    while p.width > maxw:
+        p.shrink(1)
+    return _jpg(p, q)
+
+_IMG_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
+
+# 업로드 이미지 분류: 기본은 '논문 그림'(사용자가 올린 대부분이 논문 유래), 명백한 참고자료만 따로.
+_REF_KW = ("자막", "캡처", "캡쳐", "썸네일", "thumbnail", "로고", "logo", "커버", "cover",
+           "참고", "노트", "메모", "screenshot", "화면캡", "배너", "인트로", "아웃트로")
+def _img_category(label):
+    low = os.path.splitext(label)[0].lower()
+    return "📎 기존 참고자료" if any(k in low for k in _REF_KW) else "📄 논문 그림"
+
+def uploaded_figures(hospital, cap=40):
+    """업로드된 '이미지 파일'(png/jpg 등)을 논문 그림으로 직접 사용 — 사용자가 정리한 그림 그대로.
+    PDF에서 뽑은 그림과 별개로, raw/의 이미지 파일을 썸네일·중해상도로 만들어 beat 매칭에 넣는다."""
+    try:
+        import fitz
+    except ImportError:
+        return []
+    raw = os.path.join(ROOT, "data", hospital, "raw")
+    figs = []
+    for p in sorted(glob.glob(raw + "/**/*", recursive=True)):
+        if not os.path.isfile(p) or os.path.splitext(p)[1].lower() not in _IMG_EXT:
+            continue
+        label = os.path.basename(p)
+        try:
+            pix = fitz.Pixmap(p)
+            if pix.n - pix.alpha >= 4 or pix.alpha:
+                pix = fitz.Pixmap(fitz.csRGB, pix)
+            if pix.width < 80 or pix.height < 80:      # 아이콘·불릿 등 너무 작은 건 제외
+                continue
+            base_jpg = _jpg(pix, 88)
+            try: zb = _shrunk_jpg(base_jpg, 1100, 82)   # 중해상도(zip·확대용)
+            except Exception: zb = base_jpg
+            try: tb = _shrunk_jpg(zb, 500, 72)          # 썸네일
+            except Exception: tb = zb
+            figs.append({"caption": os.path.splitext(label)[0][:36], "kind": _img_category(label),
+                         "src": "data:image/jpeg;base64," + base64.b64encode(tb).decode(),
+                         "license_link": "", "_label": label, "_full": zb,
+                         "_name": f"user{len(figs)+1:02d}.jpg"})
+        except Exception:
+            continue
+        if len(figs) >= cap:
+            break
+    return figs
+
 def extract_figures(hospital, cap=24, per_paper=2):
     """논문 PDF들에서 그림 추출. 논문당 per_paper장까지만(첫 논문이 다 먹는 것 방지), 총 cap장.
     전 논문을 얕게 커버해야 대본이 참조한 논문(Zaccaro·Hansraj 등)의 그림도 잡힘."""
@@ -76,11 +127,6 @@ def extract_figures(hospital, cap=24, per_paper=2):
                     if pix.n - pix.alpha >= 4 or pix.alpha:
                         pix = fitz.Pixmap(fitz.csRGB, pix)
                     kind = _classify(pix)
-                    # shrink는 '원본' pixmap에서 특정 이미지 시 pymupdf가 죽음 → JPEG로 뽑은 뒤 재디코드해서만 축소
-                    def _shrunk_jpg(src_bytes, maxw, q):
-                        p = fitz.Pixmap(src_bytes)
-                        while p.width > maxw: p.shrink(1)
-                        return _jpg(p, q)
                     base_jpg = _jpg(pix, 85)
                     try: zb = _shrunk_jpg(base_jpg, 1000, 78)   # zip용 중해상도
                     except Exception: zb = base_jpg
@@ -106,17 +152,29 @@ def _keywords(label):
         if w not in _STOP: kws.add(w)                        # 한글 주제어(이명·난청·호흡·측만·자율신경…)
     return {k for k in kws if len(k) >= 2}
 
+def _beat_tokens(b):
+    txt = " ".join(b.get("tags", [])) + " " + (b.get("block", "") or "") + " " + (b.get("scene", "") or "")
+    toks = set(re.findall(r"[A-Za-z]{3,}", txt))
+    for w in re.findall(r"[가-힣]{2,8}", txt):
+        if w not in _STOP:
+            toks.add(w)
+    return {t for t in toks if len(t) >= 2}
+
 def attach_beats(pkg, figs, cap=3):
     """각 그림을 가장 잘 맞는 비트에 배치. 태그>블록>화면 순 가중치로 '논문 블록' 한 곳 쏠림 방지.
-    비트당 최대 cap장, 강한 매칭부터 자리 배정(찬 비트면 차선 비트로)."""
+    비트당 최대 cap장, 강한 매칭부터 자리 배정(찬 비트면 차선 비트로).
+    양방향 매칭: 그림 파일명 키워드가 장면에 있거나(정방향), 장면 키워드가 파일명에 부분일치(역방향, 도침⊂도침치료부위)."""
     beats = pkg.get("script", [])
+    btoks = [_beat_tokens(b) for b in beats]
     ranks = {}  # fi -> [(score, beat_i), ...] 내림차순
     for fi, f in enumerate(figs):
-        kws = _keywords(f.get("_label",""))
+        lab = f.get("_label", "")
+        kws = _keywords(lab)
         rows = []
         for i, b in enumerate(beats):
             tags = " ".join(b.get("tags", [])); block = b.get("block",""); scene = b.get("scene","")
             s = sum((3 if k in tags else 2 if k in block else 1 if k in scene else 0) for k in kws)
+            s += sum(1 for t in btoks[i] if t in lab)   # 역방향(장면 키워드가 파일명에 들어감)
             if s: rows.append((s, i))
         rows.sort(reverse=True)
         ranks[fi] = rows
@@ -171,7 +229,10 @@ def build_zip(pkg_path, figs, plans):
 def run(hospital, pkg_path):
     pkg = json.load(io.open(pkg_path, encoding="utf-8"))
     print("시각자료 추출 중…")
-    figs = extract_figures(hospital)
+    figs_up = uploaded_figures(hospital)          # 사용자가 올린 이미지 = 논문 그림(우선)
+    figs_pdf = extract_figures(hospital)          # 논문 PDF에서 자동 추출
+    figs = figs_up + figs_pdf                     # 업로드 큐레이션 그림을 앞에(beat 자리 우선 배정)
+    print(f"  · 그림 소스: 업로드 {len(figs_up)}장 + PDF추출 {len(figs_pdf)}장")
     plans = visual_plans(pkg)
     beat_figures = attach_beats(pkg, figs)           # 비트별로 관련 논문 그림 배치
     zipname, zip_datauri = None, None

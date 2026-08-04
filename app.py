@@ -344,7 +344,12 @@ def hospital(h):
     _csrf = session.get("_csrf", "")
     raw = _material_names(h)     # 영속(PG) 우선, 없으면 disk
     outs = sorted(glob.glob(os.path.join(data_dir(h,"out"),"*.html")))
-    filelist = "".join(f"<li>{f}</li>" for f in raw) or "<li class=muted>아직 업로드된 자료가 없어요.</li>"
+    _files_li = "".join(f"<li>{f}</li>" for f in raw)
+    if _files_li:      # 자료 많으면 접어두기(기본 접힘) — 개수만 보이고 펼치면 목록
+        filelist = (f'<details style="margin-top:6px"><summary style="cursor:pointer;font-weight:700;color:var(--accent)">'
+                    f'📎 업로드된 자료 {len(raw)}개 · 펼쳐 보기</summary><ul class=files style="margin-top:8px">{_files_li}</ul></details>')
+    else:
+        filelist = '<p class=muted style="margin-top:6px">아직 업로드된 자료가 없어요.</p>'
     # 필요 자료 체크리스트 (config의 input_checklist 기준, 파일명 매칭)
     from ingest.extract import categorize
     checklist = cfg.get("input_checklist", [])
@@ -367,8 +372,8 @@ def hospital(h):
     misswarn = (f'<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 필수 자료가 빠졌어요: {", ".join(miss)} — 넣을수록 대본 품질이 올라가요.</div>' if miss else "")
     _ok = request.args.get("ok")
     if _ok and _ok.isdigit() and int(_ok) > 0:
-        _persist = "(영구 저장됨)" if _pg_hospital_id(h) else "(임시 저장 — 이 병원은 영구저장 미연결)"
-        misswarn += f'<div class=note style="border-color:var(--good);color:var(--good)">✅ {_ok}개 자료가 업로드됐어요 {_persist}.</div>'
+        # 여기 도달 = upload가 PG(hid) 확보 후 저장 성공분. (미연결이면 애초에 ?err=nopg로 빠짐)
+        misswarn += f'<div class=note style="border-color:var(--good);color:var(--good)">✅ {_ok}개 자료가 영구 저장됐어요(재시작·재배포에도 유지).</div>'
     elif _ok == "0":
         misswarn += '<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 업로드된 파일이 없어요. 파일이 선택됐는지, 허용 형식(pdf·docx·txt·zip 등)인지 확인해 주세요.</div>'
     if request.args.get("big") == "1":
@@ -416,7 +421,7 @@ def hospital(h):
       <div class=chk style="margin:11px 0 6px">{chk}</div>
       {misswarn}
       <form id=upf method=post action="/h/{h}/upload" enctype=multipart/form-data
-            onsubmit="var b=document.getElementById('upbtn');if(b){{b.disabled=true;b.textContent='⏳ 업로드 중…';}}var m=document.getElementById('upmsg');if(m)m.style.display='inline';"><input type=hidden name=_csrf value="{_csrf}">
+            onsubmit="return showUp();"><input type=hidden name=_csrf value="{_csrf}">
         <div class=drop id=drop><span id=drophint>파일을 여기로 끌어다 놓거나 클릭 (pdf·docx·txt·zip)</span>
           <input id=fin type=file name=files multiple style="display:none">
         </div>
@@ -425,7 +430,7 @@ def hospital(h):
         <span id=upmsg class=muted style="display:none;color:var(--accent);font-weight:700">⏳ 파일 올리는 중이에요 — 창을 닫지 마세요(용량 크면 시간이 걸려요).</span>
         <span class=muted>설문지·인터뷰·논문·강의자료·기존 대본 등. zip 통째로도 OK</span></div>
       </form>
-      <ul class=files>{filelist}</ul>
+      {filelist}
     </div>
 
     <div class=card>
@@ -462,11 +467,24 @@ def hospital(h):
         <div style="height:8px;border-radius:6px;background:var(--surface,#eee);overflow:hidden;margin:10px 0 4px">
           <div id=gmbar style="height:100%;width:0%;background:var(--accent);transition:width .8s ease"></div>
         </div>
-        <div id=gmstage style="font-size:12.5px;font-weight:700;min-height:16px;margin:6px 0"></div>
+        <div id=gmstage style="font-size:15px;font-weight:800;min-height:20px;margin:8px 0;color:var(--ink,#222)"></div>
         <div class=muted style="font-size:12.5px;line-height:1.65;margin:10px 0 6px">최상의 대본을 만들기 위해 시간이 <b>15~20분</b> 소요됩니다.<br>이 페이지를 나가도 생성은 <b>계속</b>돼요 — 나중에 다시 들어와 결과를 확인하면 됩니다.</div>
-        <div id=gmlog style="text-align:left;margin-top:10px;max-height:120px;overflow:auto;font-size:10.5px;font-family:monospace;color:var(--muted,#888);background:var(--surface,#f5f5f5);border-radius:9px;padding:9px;white-space:pre-wrap;line-height:1.5"></div>
+        <details style="margin-top:8px;text-align:left"><summary class=muted style="cursor:pointer;font-size:11.5px">자세한 로그 보기</summary>
+          <div id=gmlog style="margin-top:6px;max-height:120px;overflow:auto;font-size:10.5px;font-family:monospace;color:var(--muted,#888);background:var(--surface,#f5f5f5);border-radius:9px;padding:9px;white-space:pre-wrap;line-height:1.5"></div>
+        </details>
       </div>
-    </div>"""
+    </div>
+
+    <div id=upmodal style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(12,17,28,.6);backdrop-filter:blur(4px);align-items:center;justify-content:center">
+      <div style="background:var(--card,#fff);border-radius:20px;max-width:440px;width:90%;padding:32px 30px;box-shadow:0 24px 70px rgba(0,0,0,.35);text-align:center">
+        <div style="font-size:44px;margin-bottom:2px">📦</div>
+        <div style="font-size:19px;font-weight:800;margin-bottom:6px">자료를 올리고 있어요</div>
+        <div id=upel style="font-size:34px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--accent);margin:4px 0">0:00</div>
+        <div class=spin style="width:34px;height:34px;border:3px solid var(--border,#ddd);border-top-color:var(--accent);border-radius:50%;margin:8px auto;animation:sp 0.9s linear infinite"></div>
+        <div class=muted style="font-size:12.5px;line-height:1.65;margin:8px 0">zip은 <b>풀어서 안의 파일을 하나하나 분석·저장</b>하느라 시간이 좀 걸려요.<br>파일이 많거나 크면 <b>1~3분, 더 걸릴 수도</b> 있어요.<br><b>창을 닫지 마세요</b> — 끝나면 결과가 자동으로 떠요.</div>
+      </div>
+    </div>
+    <style>@keyframes sp{{to{{transform:rotate(360deg)}}}}</style>"""
     script = """<script>
     var drop=document.getElementById('drop'),fin=document.getElementById('fin');
     var BAG=new DataTransfer();   // 여러 번 나눠 골라도 계속 누적(input은 원래 덮어써서)
@@ -485,6 +503,16 @@ def hospital(h):
     ['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('over')}));
     drop.addEventListener('drop',ev=>{addFiles(ev.dataTransfer.files)});
     window.setTopic=function(b){document.getElementById('topic').value=b.textContent};
+    // 업로드 팝업(가운데) + 경과시간 — zip은 서버가 풀어서 분석하느라 오래 걸릴 수 있음을 안내
+    window.showUp=function(){
+      if(!BAG.files.length){return true;}   // 파일 없으면 그냥 진행(서버가 처리)
+      var m=document.getElementById('upmodal'); if(m) m.style.display='flex';
+      var b=document.getElementById('upbtn'); if(b){b.disabled=true;b.textContent='⏳ 업로드 중…';}
+      var t0=Date.now();
+      setInterval(function(){var e=Math.floor((Date.now()-t0)/1000);
+        var el=document.getElementById('upel'); if(el) el.textContent=Math.floor(e/60)+':'+('0'+(e%60)).slice(-2);},1000);
+      return true;
+    };
     // 생성 상태 폴링 + 로딩 모달(가운데 팝업 · 경과시간 · 진행바)
     var HID=%HID%;
     var EST=1080;                 // 예상 총 소요(초) ≈ 18분 — 진행바 추정용
@@ -529,7 +557,8 @@ def hospital(h):
     </script>""".replace("%HID%", '"'+h+'"').replace("%RUNNING%", "true" if running else "false")
     return page(name, body, script)
 
-ALLOWED_EXT = {".pdf", ".docx", ".txt", ".md", ".csv", ".hwp", ".pptx", ".zip"}
+IMG_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}   # 이미지=논문 그림으로 직접 사용(장면에 붙임)
+ALLOWED_EXT = {".pdf", ".docx", ".txt", ".md", ".csv", ".hwp", ".pptx", ".zip"} | IMG_EXT
 
 def safe_filename(fn):
     """한글 보존 안전 파일명. werkzeug secure_filename은 비ASCII를 통째로 날려
@@ -557,7 +586,7 @@ def upload(h):
         except Exception:
             eng = None
     import zipfile as _zip
-    _INNER_OK = ALLOWED_EXT - {".zip"}       # zip 안 파일은 중첩 zip 제외
+    _INNER_OK = ALLOWED_EXT - {".zip"}       # zip 안 leaf(문서·이미지). zip은 재귀로 따로 처리.
     saved = 0; toobig = []; report = []      # report: (표시명, 상태, 상세) — 사용자에게 투명 공개
     _uid = session.get("user_id")
 
@@ -575,6 +604,40 @@ def upload(h):
         except Exception as e:
             report.append((tag + nm, "fail", f"PG 저장 실패: {type(e).__name__}: {e}")); return False
 
+    def _walk_zipfile(zf, prefix, depth):
+        """열린 zip의 leaf 파일을 각각 _persist. 중첩 zip(논문그림_전후사진.zip 등)은 depth까지 재귀."""
+        members = [zi for zi in zf.infolist() if not zi.is_dir()]
+        if not members:
+            report.append((prefix + "(빈 zip)", "skip", "내용 없음")); return
+        for zi in members:
+            raw_nm = _decode_zipname(zi)
+            inner = safe_filename(os.path.basename(raw_nm.replace("\\", "/")))
+            if not inner or inner.startswith(".") or "__MACOSX" in raw_nm:
+                continue
+            iext = os.path.splitext(inner)[1].lower()
+            if iext == ".zip":                       # 중첩 zip → 한 겹 더 풀기
+                if depth <= 0:
+                    report.append((prefix + inner, "skip", "중첩이 너무 깊어요")); continue
+                if zi.file_size > 300 * 1024 * 1024:
+                    report.append((prefix + inner, "skip", "중첩 zip이 너무 큼")); continue
+                try:
+                    with _zip.ZipFile(io.BytesIO(zf.read(zi))) as zf2:
+                        _walk_zipfile(zf2, prefix + inner + " ▸ ", depth - 1)
+                except _zip.BadZipFile:
+                    report.append((prefix + inner, "fail", "손상된 중첩 zip"))
+                except Exception as e:
+                    report.append((prefix + inner, "fail", f"중첩 zip 오류: {e}"))
+                continue
+            if iext not in _INNER_OK:
+                report.append((prefix + inner, "skip", f"형식({iext or '없음'})")); continue
+            if zi.file_size > _MAT_MAX:              # 읽기 전에 크기로 걸러 메모리 폭증 방지
+                toobig.append(inner); report.append((prefix + inner, "big", f"{zi.file_size//(1024*1024)}MB(40MB 초과)")); continue
+            try:
+                data = zf.read(zi)
+            except Exception as e:
+                report.append((prefix + inner, "fail", f"압축해제 실패: {e}")); continue
+            _persist(inner, data, tag=prefix)
+
     for f in request.files.getlist("files"):
         if not f or not f.filename: continue
         name = safe_filename(f.filename)     # 한글 유지 + 경로탈출 방지
@@ -588,28 +651,11 @@ def upload(h):
         except Exception as e:
             report.append((name, "fail", f"디스크 저장 실패: {e}")); continue
         if ext == ".zip":
-            # zip은 통째로 PG에 넣지 않고(대개 40MB↑ → 저장·생성 제외됨) '안의 파일들'을 각각 영구저장
-            # → 무료 티어에서도 저장되고 생성 스냅샷에 포함됨. 디스크에서 lazy 읽어 메모리 절약.
+            # zip은 통째로 PG에 넣지 않고(대개 40MB↑) '안의 파일들'을 각각 영구저장(중첩 zip도 재귀).
+            # 이미지(png/jpg 등)도 leaf로 저장 → 생성 때 '논문 그림'으로 장면에 붙음. disk lazy 읽기로 메모리 절약.
             try:
                 with _zip.ZipFile(path) as zf:
-                    members = [zi for zi in zf.infolist() if not zi.is_dir()]
-                    if not members:
-                        report.append((name, "skip", "빈 zip"))
-                    for zi in members:
-                        raw_nm = _decode_zipname(zi)
-                        inner = safe_filename(os.path.basename(raw_nm.replace("\\", "/")))
-                        if not inner or inner.startswith(".") or "__MACOSX" in raw_nm:
-                            continue
-                        iext = os.path.splitext(inner)[1].lower()
-                        if iext not in _INNER_OK:
-                            report.append((name + " ▸ " + inner, "skip", f"형식({iext or '없음'})")); continue
-                        if zi.file_size > _MAT_MAX:     # 읽기 전에 크기로 걸러 메모리 폭증 방지
-                            toobig.append(inner); report.append((name + " ▸ " + inner, "big", f"{zi.file_size//(1024*1024)}MB(40MB 초과)")); continue
-                        try:
-                            data = zf.read(zi)
-                        except Exception as e:
-                            report.append((name + " ▸ " + inner, "fail", f"압축해제 실패: {e}")); continue
-                        _persist(inner, data, tag=name + " ▸ ")
+                    _walk_zipfile(zf, name + " ▸ ", 2)
             except _zip.BadZipFile:
                 report.append((name, "fail", "손상된 zip"))
             except Exception as e:
@@ -621,7 +667,7 @@ def upload(h):
             except Exception as e:
                 report.append((name, "fail", f"읽기 실패: {e}"))
 
-    session["_upreport"] = report[:60]       # 병원 페이지에서 파일별 결과 공개
+    session["_upreport"] = report[:120]      # 병원 페이지에서 파일별 결과 공개(이미지 많을 수 있어 넉넉히)
     q = f"?ok={saved}" + ("&big=1" if toobig else "") + ("&uperr=1" if any(r[1] == "fail" for r in report) else "")
     return redirect(f"/h/{h}{q}")
 

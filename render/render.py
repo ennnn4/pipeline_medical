@@ -216,13 +216,16 @@ def render(pkg, meta=None, evidence=None, images=None, edit=None):
         crit = " crit" if any(w in (b.get("block","")) for w in crit_words) else ""
         tags = "".join(f'<span class="tag{" bad" if "0" in t or "없음" in t else ""}">{esc(t)}</span>' for t in b.get("tags",[]))
         # 이 장면에 매칭된 논문 그림 → 작은 썸네일 줄(클릭 시 라이트박스 확대·넘기기)
-        thumbs = ""
+        thumbs = ""; kinds = {}
         for g in beat_figs.get(str(idx), []):
             gi = len(gallery)
-            gallery.append({"src": g.get("src",""), "cap": g.get("caption","")})
-            thumbs += f'<img class="rth" src="{esc(g.get("src",""))}" data-i="{gi}" loading="lazy" alt="논문 그림" title="{esc(g.get("caption",""))}">'
+            knd = g.get("kind", "") or "그림"
+            kinds[knd] = kinds.get(knd, 0) + 1
+            gallery.append({"src": g.get("src",""), "cap": (knd + " · " + g.get("caption","")).strip(" ·")})
+            thumbs += f'<img class="rth" src="{esc(g.get("src",""))}" data-i="{gi}" loading="lazy" alt="{esc(knd)}" title="{esc(knd)} · {esc(g.get("caption",""))}">'
         n = len(beat_figs.get(str(idx), []))
-        refwrap = f'<div class="refthumbs"><div class="rth-row">{thumbs}</div><div class="rth-lab">📄 논문 그림 {n}장 · 클릭해 확대</div></div>' if thumbs else ""
+        lab = " · ".join(f"{esc(k)} {v}장" for k, v in kinds.items()) or f"그림 {n}장"
+        refwrap = f'<div class="refthumbs"><div class="rth-row">{thumbs}</div><div class="rth-lab">{lab} · 클릭해 확대</div></div>' if thumbs else ""
         # (제거 요청) '이 장면 이미지/AI 생성 프롬프트' planbox 삭제 — 편집화면의 실제 AI 사진 셀로 대체.
         planbox = ""
         # 편집 오버레이: 이 비트↔PG 블록(order_index=idx) 매핑. 대사=PG 현재본, AI 사진 셀 추가.
