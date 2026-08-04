@@ -1033,7 +1033,7 @@ def d_imgv(h, block_key, seq):
     topic = request.args.get("topic")
     with tenant_conn(make_engine(), ctx.hospital_id, membership_id=ctx.membership_id) as cn:
         row = cn.execute(_t("select mime, data from scene_image_versions "
-                            "where hospital_id=:h and block_key=:k and seq=:s and (:t is null or topic=:t) limit 1"),
+                            "where hospital_id=:h and block_key=:k and seq=:s and (cast(:t as text) is null or topic=cast(:t as text)) limit 1"),
                          {"h": ctx.hospital_id, "k": block_key, "s": seq, "t": topic}).first()
     if not row:
         abort(404)
@@ -1052,7 +1052,7 @@ def d_img(h, block_key):
     topic = request.args.get("topic")
     with tenant_conn(make_engine(), ctx.hospital_id, membership_id=ctx.membership_id) as cn:
         row = cn.execute(_t("select mime, data from scene_images "
-                            "where hospital_id=:h and block_key=:k and (:t is null or topic=:t) limit 1"),
+                            "where hospital_id=:h and block_key=:k and (cast(:t as text) is null or topic=cast(:t as text)) limit 1"),
                          {"h": ctx.hospital_id, "k": block_key, "t": topic}).first()
     if not row:
         abort(404)

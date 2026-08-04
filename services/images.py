@@ -183,10 +183,10 @@ def list_scene_status(engine, ctx, version_id):
                                    "where hospital_id=:h and version_id=:v"), {"h": ctx.hospital_id, "v": vid}).all()
         imgs = {r.block_key: r for r in conn.execute(text(
             "select block_key, source_version_id, source_scene_hash from scene_images "
-            "where hospital_id=:h and (:t is null or topic=:t)"),
+            "where hospital_id=:h and (cast(:t as text) is null or topic=cast(:t as text))"),
             {"h": ctx.hospital_id, "t": topic})}
         prev = {r[0] for r in conn.execute(text(   # 이전 이미지(되돌리기 가능) 존재하는 블록
-            "select distinct block_key from scene_image_versions where hospital_id=:h and (:t is null or topic=:t)"),
+            "select distinct block_key from scene_image_versions where hospital_id=:h and (cast(:t as text) is null or topic=cast(:t as text))"),
             {"h": ctx.hospital_id, "t": topic})}
     for b in blocks:
         img = imgs.get(b.stable_block_key)
