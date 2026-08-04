@@ -1478,6 +1478,33 @@ try:
 except Exception as _e:  # pragma: no cover - 배포 안전장치
     print(f"[studio] 마운트 실패(기존 대시보드는 정상 동작): {_e!r}")
 
+# ── 죽은 생성 job 자동 정리(배포·재시작·hung으로 죽은 subprocess가 'generating'으로 방치되는 것 방지) ──
+#   타이머 heartbeat(25s)가 있어 'heartbeat 멈춤=서버/워커 죽음'이 확실 → 부팅 즉시 + 주기적으로 stale 회수.
+#   회수 시 error_message를 남겨 화면(poll)이 '중단됨, 다시 생성'을 보여준다.
+def _reaper_loop():
+    import time as _t
+    from store.db import make_engine
+    from store.ingest import reap_stale_all
+    try:
+        n = reap_stale_all(make_engine(), 10)     # 부팅 직후: 재시작으로 죽은(orphan) active job 즉시 정리
+        if n: print(f"[reaper] 부팅 정리: 중단된 생성 {n}건 정리")
+    except Exception:
+        pass
+    while True:
+        _t.sleep(90)
+        try:
+            reap_stale_all(make_engine(), 240)    # 주기: heartbeat 4분↑ 멈춘 job = 죽음
+        except Exception:
+            pass
+
+import sys as _sys
+if "pytest" not in _sys.modules:                  # 테스트 중엔 미실행(테스트 job 오정리 방지)
+    try:
+        threading.Thread(target=_reaper_loop, daemon=True).start()
+        print("[reaper] 죽은 생성 job 자동 정리 스레드 시작(부팅 즉시+주기)")
+    except Exception as _e:
+        print(f"[reaper] 시작 실패(무시): {_e!r}")
+
 if __name__ == "__main__":
     load_users()  # 기본 계정 보장 + 콘솔 안내
     port = int(os.environ.get("PORT", 5000))   # 배포 환경은 PORT 주입, 로컬은 5000

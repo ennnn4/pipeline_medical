@@ -225,9 +225,13 @@ def heartbeat_job(engine, hospital_id, job_id, worker_token):
 
 def reap_stale(engine, hospital_id, older_than_sec=1800):
     """heartbeat가 오래 멈춘 active(generating/generated/ingesting) job → stale.
-    worker_token을 무효화(NULL)해 늦은 워커가 뒤늦게 상태전이/적재하지 못하게 함(GPT)."""
+    worker_token을 무효화(NULL)해 늦은 워커가 뒤늦게 상태전이/적재하지 못하게 함(GPT).
+    error_message를 남겨 화면(poll)이 '중단됨, 다시 생성'을 보여주게 함. 타이머 heartbeat(25s)가 있어
+    heartbeat 멈춤=서버 죽음이 확실하므로 older_than_sec를 짧게 잡아도 안전(배포로 죽은 생성 빠른 감지)."""
     with tenant_conn(engine, hospital_id) as cn:
-        r = cn.execute(text("update generation_jobs set status='stale', worker_token=null, updated_at=now() "
+        r = cn.execute(text("update generation_jobs set status='stale', worker_token=null, updated_at=now(), "
+                        "error_message=coalesce(error_message,'생성이 중단됐어요(서버 재시작/오류). 다시 생성해 주세요.'), "
+                        "finished_at=coalesce(finished_at, now()) "
                         "where hospital_id=:h and status in ('generating','generated','ingesting') "
                         "and coalesce(heartbeat_at, started_at, created_at) < now() - (:s || ' seconds')::interval"),
                    {"h": hospital_id, "s": str(older_than_sec)})
@@ -237,6 +241,24 @@ def reap_stale(engine, hospital_id, older_than_sec=1800):
             emit("reap_stale", reaped=r.rowcount)
         except Exception:
             pass
+    return r.rowcount
+
+
+def reap_stale_all(engine, older_than_sec=240):
+    """모든 병원의 멈춘 active job을 정리 — 서버 부팅 직후 + 주기 실행용(배포로 죽은 생성 자동 감지).
+    app_rw는 hospitals 읽고 병원별 tenant_conn으로 reap. 실패는 건너뜀(다음 주기에 재시도)."""
+    total = 0
+    try:
+        with engine.connect() as cn:
+            hids = [row[0] for row in cn.execute(text("select id from hospitals"))]
+    except Exception:
+        return 0
+    for hid in hids:
+        try:
+            total += (reap_stale(engine, hid, older_than_sec) or 0)
+        except Exception:
+            pass
+    return total
 
 # ── 콘텐츠 적재 (별도 트랜잭션, job 잠금 + job.script_id 기준) ──
 def ingest_content(engine, hospital_id, job_id, script_list, membership_id=None):
