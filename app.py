@@ -880,9 +880,10 @@ def d_edit(h, script_id):
     edits = {k[6:]: v for k, v in request.form.items() if k.startswith("edit__")}
     try:
         res = _svc.edit_blocks(make_engine(), _dash_ctx(h), script_id, expected, edits)
+        _frag = f"#say_{next(iter(edits))}" if edits else ""   # 저장 후 그 대사 위치로(맨 위 스크롤 방지)
         if res.get("no_change"):
-            return redirect(_ret(f"/scripts/{h}/{expected}"))
-        return redirect(_ret(f"/scripts/{h}/{res['version_id']}", "edited"))
+            return redirect(_ret(f"/scripts/{h}/{expected}", None, _frag))
+        return redirect(_ret(f"/scripts/{h}/{res['version_id']}", "edited", _frag))
     except ServiceError as e:
         if e.http_status == 401:
             return redirect("/login")

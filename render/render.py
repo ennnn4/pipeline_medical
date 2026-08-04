@@ -234,7 +234,7 @@ def render(pkg, meta=None, evidence=None, images=None, edit=None):
         if edit:
             bi = edit["by_idx"].get(idx)
             if bi:
-                ekey = bi["key"]; say = bi.get("text") or say
+                ekey = bi["key"]; say = bi.get("text", say)   # PG 현재본 그대로(비웠으면 빈 채로 — 원본 폴백 금지)
         ai_cell = _ed_img(ekey, edit) if (edit and ekey) else ""
         say_html = _ed_say(esc(say), ekey, edit) if (edit and ekey) else f'<span class="desc">{esc(say)}</span>'
         # AI 사진 먼저(왼쪽) → 논문 사진 오른쪽, 가로 병렬(요청).
