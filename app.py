@@ -401,9 +401,9 @@ def hospital(h):
         if _t and _t not in _seen:
             _seen.add(_t); _topics.append(_t)
     def _esc_t(t): return t.replace("&", "&amp;").replace("<", "&lt;").replace('"', "&quot;")
+    # 버튼 하나로: '결과 보기'가 곧 편집 화면(예쁜 스토리보드 + 대사·AI사진·논문사진 수정). 미리보기 분리 제거.
     outlist = ("".join(f'<div class=out><span>{_esc_t(t)}</span>'
-                       f'<a class=btn href="/h/{h}/edit/{_esc_t(t)}">✏️ 편집(대사·사진)</a>'
-                       f'<a class="btn g" href="/h/{h}/view/{_esc_t(t)}_package.html" target=_blank>편집 완료된 최종본 미리보기</a></div>'
+                       f'<a class="btn pri" href="/h/{h}/edit/{_esc_t(t)}">📄 결과 보기 · 수정</a></div>'
                        for t in _topics) or '<div class=muted>아직 만든 대본이 없어요.</div>')
     dz_opts = "".join(f'<button type=button class="btn dz" onclick="setTopic(this)">{d}</button>' for d in diseases)
     job = job_get(h)
@@ -1250,13 +1250,14 @@ def edit_story(h, topic):
         eng = make_engine()
         ctx = ActorContext.resolve(eng, session.get("user_id"), h, getattr(g, "request_id", None))
     except ServiceError:
-        return redirect(f"/h/{h}/view/{os.path.basename(topic)}_package.html")
+        # 편집 권한(PG 계정) 없어도 '결과 보기'는 항상 예쁜 스토리보드로 보이게(정적 렌더). 편집 컨트롤만 빠짐.
+        return _render(pkg, _meta(h), evidence=evidence, images=images)
     with tenant_conn(eng, ctx.hospital_id) as cn:
         row = cn.execute(_t("select sv.id vid, sv.script_id sid from script_versions sv join scripts s "
                             "on s.id=sv.script_id where sv.hospital_id=:h and s.current_version_id=sv.id "
                             "order by sv.created_at desc limit 1"), {"h": ctx.hospital_id}).first()
         if not row:
-            return redirect(f"/h/{h}/view/{os.path.basename(topic)}_package.html")
+            return _render(pkg, _meta(h), evidence=evidence, images=images)
         vid, sid = row.vid, row.sid
         blocks = cn.execute(_t("select order_index, stable_block_key, text from script_blocks "
                                "where hospital_id=:h and version_id=:v order by order_index"),
