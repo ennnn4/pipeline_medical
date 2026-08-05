@@ -1531,7 +1531,8 @@ if "pytest" not in _sys.modules:                  # 테스트 중엔 미실행(�
 # ═══════════════════════════════════════════════════════════════════
 _BM_MSG = {
     "created": "프로젝트를 만들었어요.", "video_added": "영상을 추가했어요.",
-    "meta": "메타데이터를 가져왔어요.", "no_api": "YouTube API 키가 없어 메타는 건너뛰었어요(URL만 등록됨).",
+    "meta": "메타데이터를 가져왔어요.", "no_api": "YouTube API 키가 없어 자동 검색/메타를 건너뛰었어요. URL을 직접 넣어 주세요.",
+    "found": "주제로 인기 영상을 찾아 등록했어요.", "notfound": "관련 영상을 못 찾았어요. 다른 주제어로 시도해 보세요.",
     "transcript": "자막을 저장했어요.", "manual_required": "외부 자막을 못 가져왔어요 — 자막을 직접 붙여넣어 주세요.",
     "analyzed": "영상 분석을 마쳤어요.", "synth": "교차 종합을 마쳤어요.",
     "claims": "검증 대상 주장을 정리했어요(전부 '검증 전' 상태).", "plan": "기획안 초안을 만들었어요.",
@@ -1675,11 +1676,17 @@ def bm_project(h, pid):
     <div class=hero><h1>{_esc(proj["title"])} {_bm_badge(proj["status"])}</h1></div>
     {note}
     <div class=card><h2>① 영상 등록 · 자막 · 분석</h2>
+      <form method=post action="{base}/search-videos" class=row style="margin-bottom:10px"><input type=hidden name=_csrf value="{_csrf}">
+        <input type=text name=topic placeholder="주제로 인기 영상 자동 찾기 (예: 이명 치료, 자율신경실조증)" style="flex:1" required>
+        <select name=count style="padding:8px;border-radius:9px;border:1px solid var(--border)">
+          <option value=1>1개</option><option value=2>2개</option><option value=3 selected>3개</option><option value=5>5개</option></select>
+        <button class="btn pri" type=submit>🔎 인기 영상 자동 찾기</button></form>
+      <div class=muted style="font-size:12px;margin:-4px 0 10px">주제를 넣으면 조회수 높은 관련 영상을 골라 자동 등록해요. 또는 아래에 URL을 직접 넣어도 됩니다.</div>
       <form method=post action="{base}/add-video" class=row><input type=hidden name=_csrf value="{_csrf}">
-        <input type=text name=url placeholder="유튜브 URL" style="flex:1" required>
-        <button class="btn pri" type=submit>영상 추가</button></form>
+        <input type=text name=url placeholder="유튜브 URL 직접 입력" style="flex:1" required>
+        <button class="btn ghost" type=submit>영상 추가</button></form>
       <form method=post action="{base}/metadata" style="margin-top:8px"><input type=hidden name=_csrf value="{_csrf}">
-        <button class="btn ghost" type=submit>📊 메타데이터 가져오기(API 키 필요)</button></form>
+        <button class="btn ghost" type=submit>📊 메타데이터 다시 가져오기</button></form>
       <div style="margin-top:12px">{vrows}</div></div>
     <div class=card><h2>② 교차 종합 <span class=muted>(분석 {len(analyses)}개)</span></h2>
       <form method=post action="{base}/synthesize"><input type=hidden name=_csrf value="{_csrf}">
@@ -1707,6 +1714,18 @@ def bm_add_video(h, pid):
     url = request.form.get("url", "")
     return _bm_run(h, lambda: bm.add_video(make_engine(), _dash_ctx(h), pid, url),
                    "video_added", f"/h/{h}/benchmark/{pid}")
+
+@app.post("/h/<h>/benchmark/<pid>/search-videos")
+def bm_search_videos(h, pid):
+    from services import benchmark as bm
+    from store.db import make_engine
+    topic = request.form.get("topic", ""); count = request.form.get("count", "3")
+    def _msg(r):
+        if r.get("no_api"): return "no_api"
+        return "found" if r.get("added") else "notfound"
+    return _bm_run(h, lambda: bm.add_videos_by_topic(make_engine(), _dash_ctx(h), pid, topic, count),
+                   _msg, f"/h/{h}/benchmark/{pid}") if topic.strip() \
+        else redirect(f"/h/{h}/benchmark/{pid}?m=e400")
 
 @app.post("/h/<h>/benchmark/<pid>/metadata")
 def bm_metadata(h, pid):

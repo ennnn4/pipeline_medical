@@ -23,6 +23,29 @@ def _int(v):
         return None
 
 
+def search(query, want=3, region="KR", lang="ko", pool=12):
+    """주제(query)로 인기 영상 자동 검색 → 상위 want개(조회수순). 비활성/빈쿼리면 [].
+    search.list(관련도)로 후보 뽑고 videos.list(조회수)로 정렬 → '관련성 있으면서 유명한' 것."""
+    q = (query or "").strip()
+    if not enabled() or not q:
+        return []
+    yt = _client()
+    try:
+        resp = yt.search().list(part="id", q=q, type="video", order="relevance",
+                                maxResults=min(max(pool, want), 25),
+                                regionCode=region, relevanceLanguage=lang).execute()
+    except Exception:
+        return []
+    ids = [it.get("id", {}).get("videoId") for it in resp.get("items", [])]
+    ids = [v for v in ids if v]
+    if not ids:
+        return []
+    meta = fetch(ids)
+    rows = [dict(video_id=v, url=f"https://www.youtube.com/watch?v={v}", **m) for v, m in meta.items()]
+    rows.sort(key=lambda r: (r.get("view_count") or 0), reverse=True)
+    return rows[:max(1, want)]
+
+
 def fetch(video_ids):
     """[video_id,...] → {video_id: {title,description,channel_id,channel_name,published_at,
     thumbnail_url,view_count,like_count,comment_count,duration,caption_status,subscriber_count}}.

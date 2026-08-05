@@ -197,6 +197,31 @@ def add_video(engine, ctx, project_id, url):
     return {"video_ref": str(row.id), "url": url, "video_id": row.video_id}
 
 
+def add_videos_by_topic(engine, ctx, project_id, topic, count=3, searcher=None, fetcher=None):
+    """주제 입력 → 인기 영상 자동 검색·등록(수동 URL 붙여넣기 대신). 반환: {added,titles,no_api,topic}.
+    키 없으면 added=0·no_api=True. searcher/fetcher 주입형(테스트 비용 0)."""
+    permissions.require(ctx, BENCHMARK_ROLES)
+    pid = _uuid(project_id)
+    topic = (topic or "").strip()
+    if not topic:
+        raise ServiceError("검색할 주제가 필요합니다")
+    count = max(1, min(int(count or 3), 5))
+    searcher = searcher or youtube_meta.search
+    with _conn(engine, ctx) as cn:
+        if not cn.execute(text("select 1 from benchmark_projects where id=:p and hospital_id=:h"),
+                          {"p": pid, "h": ctx.hospital_id}).first():
+            raise NotFound("벤치마킹 프로젝트를 찾을 수 없습니다")
+    results = searcher(topic, want=count) or []
+    if not results:
+        return {"added": 0, "no_api": not youtube_meta.enabled(), "topic": topic, "titles": []}
+    for r in results:
+        if r.get("url"):
+            add_video(engine, ctx, pid, r["url"])
+    fetch_metadata(engine, ctx, pid, fetcher=fetcher)      # 검색된 영상 메타 채우기
+    return {"added": len(results), "no_api": False, "topic": topic,
+            "titles": [r.get("title") for r in results]}
+
+
 def fetch_metadata(engine, ctx, project_id, fetcher=None):
     """프로젝트 영상들의 YouTube 메타 조회 후 저장. fetcher 미지정 시 youtube_meta.fetch(키 필요).
     키 없으면 skipped 반환(무영향). 반환: {updated, skipped, no_api}."""
