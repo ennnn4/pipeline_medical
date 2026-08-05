@@ -486,3 +486,65 @@ def link_script_version(engine, ctx, plan_id, script_version_id):
         cn.execute(text("update benchmark_projects set status='scripted', updated_at=now() "
                         "where id=:p and hospital_id=:h"), {"p": r.project_id, "h": ctx.hospital_id})
     return {"plan_id": str(pid), "script_version_id": str(svid), "project_status": "scripted"}
+
+
+# ── 원본 유사도(표절) 검사(C9) ──
+SIMILARITY_PROMPT_VERSION = "sr-1"
+
+def check_similarity(engine, ctx, project_id, script_text, script_version_id=None,
+                     model=None, generator=None):
+    """생성 대본 vs 프로젝트 원본 자막들. 축자(결정론) + 선택적 의미/사례/구조(LLM).
+    risk(low/medium/high) 산출 후 similarity_reports 저장. generator 없으면 축자만으로 판정."""
+    permissions.require(ctx, BENCHMARK_ROLES)
+    pid = _uuid(project_id)
+    if not (script_text or "").strip():
+        raise ServiceError("검사할 대본 텍스트가 필요합니다")
+    with _conn(engine, ctx) as cn:
+        srcs = cn.execute(text(
+            "select v.title, t.normalized_text from youtube_transcripts t "
+            "join youtube_videos v on v.id=t.video_ref "
+            "where v.project_id=:p and t.hospital_id=:h and t.status='available' "
+            "and t.normalized_text is not null"),
+            {"p": pid, "h": ctx.hospital_id}).all()
+    sources = [(r.title or "원본", r.normalized_text) for r in srcs if (r.normalized_text or "").strip()]
+    if not sources:
+        raise ServiceError("비교할 원본 자막(available)이 없습니다")
+
+    from services import similarity as sim
+    per_source, worst = [], {"verbatim_score": 0.0, "longest_run_words": 0, "shingle_jaccard": 0.0}
+    for title, txt in sources:
+        vo = sim.verbatim_overlap(script_text, txt)
+        per_source.append({"source": title, **vo})
+        if vo["verbatim_score"] > worst["verbatim_score"]:
+            worst = vo
+
+    semantic_score, example_overlaps, structure_note, flagged, llm_notes = 0.0, [], None, [], None
+    if generator:
+        from llm import runner
+        mdl = model or runner.MODEL_KB
+        system = runner.load_prompt("benchmark_similarity.md")
+        joined = "\n\n---\n\n".join(f"[원본: {t}]\n{x}" for t, x in sources)
+        user = f"[우리 대본]\n{script_text}\n\n[원본 자막들]\n{joined}"
+        res = generator(system, user, parse_json=True, model=mdl, label="유사도", max_tokens=4000)
+        if isinstance(res, dict):
+            semantic_score = float(res.get("semantic_score") or 0)
+            example_overlaps = res.get("example_overlaps") or []
+            structure_note = res.get("structure_note")
+            flagged = res.get("flagged") or []
+            llm_notes = res.get("notes")
+
+    risk = sim.risk_level(worst["verbatim_score"], worst["longest_run_words"], semantic_score)
+    report = {
+        "verbatim": {"worst": worst, "per_source": per_source},
+        "semantic_score": semantic_score, "example_overlaps": example_overlaps,
+        "structure_note": structure_note, "flagged": flagged, "notes": llm_notes,
+        "source_count": len(sources), "llm_used": bool(generator),
+    }
+    with _conn(engine, ctx) as cn:
+        rid = cn.execute(text(
+            "insert into similarity_reports(hospital_id,project_id,script_version_id,report,risk) "
+            "values(:h,:p,:v,cast(:r as jsonb),:rk) returning id"),
+            {"h": ctx.hospital_id, "p": pid,
+             "v": _uuid(script_version_id) if script_version_id else None,
+             "r": json.dumps(report, ensure_ascii=False), "rk": risk}).scalar()
+    return {"report_id": str(rid), "risk": risk, "report": report}
