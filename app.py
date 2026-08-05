@@ -1684,6 +1684,7 @@ _BM_MSG = {
     "tr_rate": "자동 자막 수집이 잠시 혼잡해요. 잠시 후 다시 시도하거나 자막을 직접 입력해 주세요.",
     "tr_config": "자동 자막 서비스 설정 오류예요. 관리자에게 문의해 주세요.",
     "tr_failed": "자동으로 자막을 가져오지 못했어요. 자막을 직접 붙여넣거나 파일을 업로드해 주세요.",
+    "admin_req": "관리자에게 자동 자막 한도 상향 문의를 접수했어요.",
     "analyzed": "영상 분석을 마쳤어요.", "synth": "교차 종합을 마쳤어요.",
     "claims": "검증 대상 주장을 정리했어요(전부 '검증 전' 상태).", "plan": "기획안 초안을 만들었어요.",
     "approved": "기획안을 승인했어요.", "rejected": "기획안을 반려했어요.",
@@ -1797,27 +1798,50 @@ def bm_project(h, pid):
     analyzed_refs = {a["video_ref"] for a in analyses}
 
     # 1) 영상들
+    _TS_KO = {"pending": "자막 대기 중", "fetching": "자막 가져오는 중", "transcribing": "음성을 글로 변환 중",
+              "available": "자막 준비 완료", "provider_failed": "자동수집 실패", "manual_required": "직접 입력 필요",
+              "quota_exhausted": "자동수집 한도 소진", "rate_limited": "잠시 후 재시도", "config_error": "설정 오류",
+              "completed": "완료"}
+    _TS_C = {"available": "#16a34a", "transcribing": "#f59e0b", "fetching": "#f59e0b", "pending": "#94a3b8",
+             "provider_failed": "#dc2626", "manual_required": "#dc2626", "quota_exhausted": "#dc2626",
+             "rate_limited": "#f59e0b", "config_error": "#dc2626", "completed": "#16a34a"}
     vrows = ""
     for v in proj["videos"]:
         ts = v["transcript_status"]; done = v["video_ref"] in analyzed_refs
-        tstat = _bm_badge(ts) if ts else '<span class=muted>자막 없음</span>'
+        vref = v["video_ref"]
+        tstat = (f'<span style="background:{_TS_C.get(ts, "#94a3b8")};color:#fff;font-size:11px;font-weight:700;'
+                 f'padding:2px 8px;border-radius:999px">{_TS_KO.get(ts, ts)}</span>' if ts
+                 else '<span class=muted>자막 없음</span>')
         meta = (f'조회수 {v["view_count"]:,}' if v["view_count"] else "메타 미수집")
-        vrows += f"""<div class=card id="v_{v["video_ref"]}" style="padding:14px">
+        is_avail = ts == "available"
+        need_manual = ts in ("provider_failed", "manual_required", "quota_exhausted", "rate_limited", "config_error")
+        auto_btn = ("" if is_avail else
+                    f'<form method=post action="{base}/video/{vref}/auto-transcript" style="display:inline">'
+                    f'<input type=hidden name=_csrf value="{_csrf}">'
+                    f'<button class="btn pri" type=submit>🎬 자막 자동 가져오기</button></form>'
+                    f'<span class=muted style="font-size:11px;margin-left:6px">누를 때만 크레딧 사용</span>')
+        admin_btn = (f'<form method=post action="{base}/quota-help" style="display:inline">'
+                     f'<input type=hidden name=_csrf value="{_csrf}"><button class="btn ghost" type=submit>관리자에게 문의</button></form>'
+                     if ts == "quota_exhausted" else "")
+        vrows += f"""<div class=card id="v_{vref}" style="padding:14px">
           <div class=row><b>{_esc(v["title"] or v["url"])}</b> {tstat} {"✅분석완료" if done else ""}</div>
-          <div class=muted style="margin:4px 0 8px">{_esc(v["url"])} · {_esc(meta)} · {_esc(v["caption_status"] or "")}</div>
-          <form method=post action="{base}/video/{v["video_ref"]}/transcript" enctype=multipart/form-data style="margin-bottom:6px">
+          <div class=muted style="margin:4px 0 8px">{_esc(v["url"])} · {_esc(meta)}</div>
+          <div class=row style="margin:6px 0">{auto_btn}{admin_btn}</div>
+          <details {"open" if need_manual else ""} style="margin:6px 0">
+            <summary class=muted style="cursor:pointer;font-size:12.5px">✍️ 자막 직접 입력 / 파일 업로드 (다글로 등)</summary>
+            <form method=post action="{base}/video/{vref}/transcript" enctype=multipart/form-data style="margin-top:8px">
+              <input type=hidden name=_csrf value="{_csrf}">
+              <textarea name=pasted rows=2 placeholder="자막 붙여넣기" style="width:100%;font-size:13px"></textarea>
+              <div class=row style="margin-top:6px">
+                <input type=file name=file accept=".srt,.vtt,.txt" style="font-size:12px">
+                <button class="btn ghost" type=submit>자막 저장</button></div>
+            </form>
+          </details>
+          <form method=post action="{base}/video/{vref}/analyze" style="display:inline">
             <input type=hidden name=_csrf value="{_csrf}">
-            <textarea name=pasted rows=2 placeholder="자막 붙여넣기(외부 수집 실패 시)" style="width:100%;font-size:13px"></textarea>
-            <div class=row style="margin-top:6px">
-              <input type=file name=file accept=".srt,.vtt,.txt" style="font-size:12px">
-              <label class=muted style="font-size:12px"><input type=checkbox name=try_external value=1> 외부 자동수집 시도</label>
-              <button class="btn ghost" type=submit>자막 저장</button></div>
+            <button class="btn" type=submit {"disabled" if not is_avail else ""}>이 영상 분석{"(자막 필요)" if not is_avail else ""}</button>
           </form>
-          <form method=post action="{base}/video/{v["video_ref"]}/analyze" style="display:inline">
-            <input type=hidden name=_csrf value="{_csrf}">
-            <button class="btn" type=submit {"disabled" if not ts=="available" else ""}>이 영상 분석{"(자막 필요)" if ts!="available" else ""}</button>
-          </form>
-          <form method=post action="{base}/video/{v["video_ref"]}/delete" style="display:inline"
+          <form method=post action="{base}/video/{vref}/delete" style="display:inline"
                 onsubmit="return confirm('이 영상을 삭제할까요? 자막·분석도 함께 지워져요.');">
             <input type=hidden name=_csrf value="{_csrf}">
             <button class="btn ghost" type=submit style="color:var(--danger)">🗑 삭제</button>
@@ -1994,6 +2018,49 @@ def bm_transcript(h, pid, vref):
                 "manual_required": "manual_required", "rate_limited": "tr_rate", "config_error": "tr_config",
                 "provider_failed": "tr_failed"}.get(r.get("status"), "manual_required")
     return _bm_run(h, _run, _msg, base, frag=frag)
+
+@app.post("/h/<h>/benchmark/<pid>/video/<vref>/auto-transcript")
+def bm_auto_transcript(h, pid, vref):
+    """명시적 '자막 자동 가져오기' 버튼 — 이 버튼 누를 때만 Supadata 호출(크레딧 소비)."""
+    from services import benchmark as bm, transcript_auto as ta
+    from store.db import make_engine
+    def _run():
+        r = ta.auto_collect(make_engine(), _dash_ctx(h), vref)
+        if r.get("status") == "disabled":   # 키 없음 → 기존 무료 폴백
+            return bm.fetch_transcript(make_engine(), _dash_ctx(h), vref, try_external=True)
+        return r
+    def _msg(r):
+        return {"available": "transcript", "transcribing": "transcribing", "quota_exhausted": "quota_exhausted",
+                "manual_required": "manual_required", "rate_limited": "tr_rate", "config_error": "tr_config",
+                "provider_failed": "tr_failed"}.get(r.get("status"), "manual_required")
+    return _bm_run(h, _run, _msg, f"/h/{h}/benchmark/{pid}", frag=f"v_{vref}")
+
+@app.post("/h/<h>/benchmark/<pid>/quota-help")
+def bm_quota_help(h, pid):
+    """자동수집 한도 소진 → 관리자 문의 생성(중복 방지)."""
+    from services.exceptions import ServiceError
+    from store.db import make_engine
+    from store.transcript_usage import create_admin_request, quota_status
+    try:
+        ctx = _dash_ctx(h); eng = make_engine()
+        from services import permissions
+        permissions.require(ctx, {"editor", "approver", "admin", "platform_operator"})
+        qs = quota_status(eng)
+        create_admin_request(eng, ctx.hospital_id, requester_membership_id=ctx.membership_id,
+                             credits_used=qs["used"])
+        try:
+            from services.observability import emit
+            import hashlib
+            emit("transcript_admin_request_created",
+                 hospital=hashlib.sha256(("h:" + str(ctx.hospital_id)).encode()).hexdigest()[:12],
+                 provider="supadata", monthly_credits_used=qs["used"], monthly_credit_limit=qs["limit"])
+        except Exception:
+            pass
+    except ServiceError as e:
+        if e.http_status == 401:
+            return redirect("/login")
+        return redirect(f"/h/{h}/benchmark/{pid}?m=e403")
+    return redirect(f"/h/{h}/benchmark/{pid}?m=admin_req")
 
 @app.post("/h/<h>/benchmark/<pid>/video/<vref>/delete")
 def bm_delete_video(h, pid, vref):
