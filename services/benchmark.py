@@ -420,3 +420,69 @@ def list_plans(engine, ctx, project_id):
     return [{"plan_id": str(r.id), "status": r.status,
              "script_version_id": str(r.script_version_id) if r.script_version_id else None,
              "created_at": r.created_at.isoformat()} for r in rows]
+
+
+# ── 대본 생성 브릿지(C8) — 기존 생성 로직 무손상 ──
+def _plan_brief_text(plan):
+    """승인된 기획안(jsonb) → 생성기(director)에 넣을 한국어 브리핑 텍스트.
+    형식(구성·각도·훅)만 지시하고, 의학 주장은 '검증 필요'로 명시(사실로 쓰지 말 것)."""
+    plan = plan or {}
+    L = []
+    L.append("[벤치마킹 기획 브리핑 — 형식 참고용]")
+    if plan.get("topic"): L.append(f"주제: {plan['topic']}")
+    if plan.get("angle"): L.append(f"차별화 각도: {plan['angle']}")
+    if plan.get("why_now"): L.append(f"기획 이유: {plan['why_now']}")
+    if plan.get("target_audience"): L.append(f"타깃: {plan['target_audience']}")
+    if plan.get("hook"): L.append(f"훅 아이디어: {plan['hook']}")
+    if plan.get("narration_style"): L.append(f"화법: {plan['narration_style']}")
+    outline = plan.get("outline") or []
+    if outline:
+        L.append("구성(형식 참고 — 우리 표현/근거로 채울 것):")
+        for i, o in enumerate(outline, 1):
+            L.append(f"  {i}. {o.get('section','')} — {o.get('beat','')}"
+                     + (f" ({o['est_ratio']})" if o.get("est_ratio") else ""))
+    if plan.get("cta"): L.append(f"마무리 CTA: {plan['cta']}")
+    uc = plan.get("unverified_claims") or []
+    if uc:
+        L.append("※ 아래는 '검증 대상' 주장 — 논문 근거 검증을 통과하기 전엔 대본에 '사실'로 쓰지 말 것:")
+        for c in uc:
+            L.append(f"  - (미검증) {c.get('claim_text','')}")
+    sg = plan.get("similarity_guard") or []
+    if sg:
+        L.append("표절 방지(원본과 겹치지 않게):")
+        for s in sg:
+            L.append(f"  - {s}")
+    L.append("※ 위 브리핑은 '구성/각도' 참고용이며, 의학 내용·표현은 우리 자료와 근거검증을 따른다.")
+    return "\n".join(L)
+
+
+def build_generation_brief(engine, ctx, plan_id):
+    """승인된 기획안 → 생성 브리핑. draft/rejected면 거부(생성 전 승인 게이트 강제).
+    반환: {plan_id, topic, brief_text}. 생성 자체는 기존 파이프라인이 수행(무손상)."""
+    permissions.require(ctx, BENCHMARK_ROLES)
+    p = get_plan(engine, ctx, plan_id)
+    if p["status"] != "approved":
+        raise InvalidStateTransition(f"승인된 기획안만 생성에 쓸 수 있습니다(현재: {p['status']})")
+    plan = p["plan"] or {}
+    return {"plan_id": p["plan_id"], "project_id": p["project_id"],
+            "topic": plan.get("topic") or "", "brief_text": _plan_brief_text(plan)}
+
+
+def link_script_version(engine, ctx, plan_id, script_version_id):
+    """생성된 대본 버전을 기획안에 역링크(브릿지) + 프로젝트 →scripted. 승인된 기획안만."""
+    permissions.require(ctx, BENCHMARK_ROLES)
+    pid = _uuid(plan_id)
+    svid = _uuid(script_version_id)
+    with _conn(engine, ctx) as cn:
+        r = cn.execute(text("select project_id, status from content_plans where id=:i and hospital_id=:h"),
+                       {"i": pid, "h": ctx.hospital_id}).first()
+        if not r:
+            raise NotFound("기획안을 찾을 수 없습니다")
+        if r.status != "approved":
+            raise InvalidStateTransition(f"승인된 기획안만 대본과 연결할 수 있습니다(현재: {r.status})")
+        cn.execute(text("update content_plans set script_version_id=:v, updated_at=now() "
+                        "where id=:i and hospital_id=:h"),
+                   {"v": svid, "i": pid, "h": ctx.hospital_id})
+        cn.execute(text("update benchmark_projects set status='scripted', updated_at=now() "
+                        "where id=:p and hospital_id=:h"), {"p": r.project_id, "h": ctx.hospital_id})
+    return {"plan_id": str(pid), "script_version_id": str(svid), "project_status": "scripted"}
