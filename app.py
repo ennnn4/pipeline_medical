@@ -128,18 +128,54 @@ def _obs_dashboard(resp):
 def _yaml():
     import yaml; return yaml
 def hospitals():
-    out = []
+    out = {}
     RESERVED = {"users", "_template"}   # 병원이 아닌 설정 파일
     for p in glob.glob(os.path.join(ROOT, "config", "*.yaml")):
         n = os.path.splitext(os.path.basename(p))[0]
         if n.startswith("_") or n in RESERVED: continue
         try:
             cfg = _yaml().safe_load(open(p, encoding="utf-8")) or {}
-            out.append({"id": n, "name": cfg.get("hospital", {}).get("name", n)})
+            out[n] = {"id": n, "name": cfg.get("hospital", {}).get("name", n)}
         except Exception:
-            out.append({"id": n, "name": n})
-    return sorted(out, key=lambda x: x["id"])
+            out[n] = {"id": n, "name": n}
+    # PG에 등록된 병원도 포함 — 재배포로 config(임시디스크)가 날아가도 목록·데이터 유지.
+    try:
+        from store.db import make_engine
+        from sqlalchemy import text as _t
+        with make_engine().connect() as cn:
+            for r in cn.execute(_t("select slug, name from hospitals")):
+                if r.slug and r.slug not in out and r.slug not in RESERVED:
+                    out[r.slug] = {"id": r.slug, "name": r.name or r.slug}
+    except Exception:
+        pass
+    return sorted(out.values(), key=lambda x: x["id"])
 def cfg_path(h): return os.path.join(ROOT, "config", f"{h}.yaml")
+
+def _ensure_cfg(slug):
+    """config/<slug>.yaml 이 없고 PG에 병원이 있으면 템플릿+PG이름으로 자동 복구(임시디스크 소실 자가치유).
+    반환: 복구 후 config 존재 여부."""
+    if os.path.exists(cfg_path(slug)):
+        return True
+    try:
+        from store.db import make_engine
+        from sqlalchemy import text as _t
+        with make_engine().connect() as cn:
+            name = cn.execute(_t("select name from hospitals where slug=:s"), {"s": slug}).scalar()
+    except Exception:
+        name = None
+    if not name:
+        return False
+    tpl = os.path.join(ROOT, "config", "_template.yaml")
+    src = (open(tpl, encoding="utf-8").read() if os.path.exists(tpl)
+           else "hospital:\n  id: __HOSPITAL_ID__\n  name: \"\"\n  host: \"원장\"\n  tagline: \"\"\ndiseases: []\n")
+    src = src.replace("__HOSPITAL_ID__", slug)
+    src = re.sub(r'(\n\s*name:\s*).*', rf'\g<1>"{name}"', src, count=1)
+    try:
+        open(cfg_path(slug), "w", encoding="utf-8").write(src)
+        for s in ("raw", "corpus", "kb", "out"): data_dir(slug, s)
+        return True
+    except Exception:
+        return False
 def data_dir(h, sub):
     d = os.path.join(ROOT, "data", h, sub); os.makedirs(d, exist_ok=True); return d
 def safe_id(s): return re.sub(r"[^a-zA-Z0-9_-]", "-", (s or "").strip()) or "hospital"
@@ -352,12 +388,23 @@ def admin_members_set():
 def new():
     name = request.form.get("name","").strip()
     hid = safe_id(name if re.match(r"^[a-zA-Z0-9_-]+$", name or "") else None)
-    # 한글 병원명이면 id는 자동 생성(hosp-N)
+    # 이미 쓰는 slug(디스크 config ∪ PG 병원) — config가 임시디스크라 소실돼도 PG 기준으로 충돌 방지
+    def _taken(slug):
+        if os.path.exists(cfg_path(slug)):
+            return True
+        try:
+            from store.db import make_engine
+            from sqlalchemy import text as _t
+            with make_engine().connect() as cn:
+                return cn.execute(_t("select 1 from hospitals where slug=:s"), {"s": slug}).first() is not None
+        except Exception:
+            return False
+    # 한글 병원명이면 id는 자동 생성(hosp-N) — 디스크·PG 둘 다 안 쓰는 번호로
     if not re.match(r"^[a-zA-Z0-9_-]+$", name or ""):
         n = 1
-        while os.path.exists(cfg_path(f"hosp-{n}")): n += 1
+        while _taken(f"hosp-{n}"): n += 1
         hid = f"hosp-{n}"
-    elif os.path.exists(cfg_path(hid)):
+    elif _taken(hid):
         return redirect(f"/?err=exists")   # 기존 병원 ID 덮어쓰기 금지(데이터 손실·탈취 방지)
     # PG 먼저 provisioning → 충돌(다른 사람 소유 slug)이면 로컬 config 만들기 전에 차단
     try:
@@ -443,7 +490,7 @@ def _require_pg(h):
 
 @app.route("/h/<h>")
 def hospital(h):
-    if not os.path.exists(cfg_path(h)): abort(404)
+    if not _ensure_cfg(h): abort(404)   # config 소실돼도 PG에 병원 있으면 자동 복구
     cfg = _yaml().safe_load(open(cfg_path(h), encoding="utf-8")) or {}
     name = cfg.get("hospital",{}).get("name", h)
     diseases = cfg.get("diseases") or []
