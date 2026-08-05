@@ -5,7 +5,9 @@
  - 메타/자막 수집은 provider(youtube_meta·transcripts) 주입 → 테스트에서 mock 가능.
  - 원본 자막 ≠ 분석결과: 여기선 수집/저장까지(분석은 C4~).
 """
+import json
 import uuid
+import hashlib
 from sqlalchemy import text
 from store.repositories import tenant_conn
 from services import permissions
@@ -14,6 +16,7 @@ from services import transcripts as tx
 from services import youtube_meta
 
 BENCHMARK_ROLES = {"editor", "approver", "admin", "platform_operator"}
+ANALYZE_PROMPT_VERSION = "ba-1"
 
 
 def _uuid(v):
@@ -164,3 +167,62 @@ def fetch_transcript(engine, ctx, video_ref, *, pasted_text=None, file_bytes=Non
              "cc": len(res.text or "")})
     return {"status": res.status, "provider": provider, "char_count": len(res.text or ""),
             "source_note": res.source_note}
+
+
+# ── 영상별 벤치마크 분석(C4) ──
+def analyze_video(engine, ctx, video_ref, model=None, generator=None):
+    """자막(available) + 메타 → 구조화 분석(jsonb) 저장. 의학주장은 '관찰'로만 기록(승격 금지).
+    generator 주입 시 테스트에서 LLM 없이 검증(기본 runner.generate, 저렴 모델 MODEL_KB)."""
+    permissions.require(ctx, BENCHMARK_ROLES)
+    ref = _uuid(video_ref)
+    with _conn(engine, ctx) as cn:
+        v = cn.execute(text(
+            "select id, project_id, url, title, channel_name, view_count, like_count, "
+            "  comment_count, subscriber_count, duration, published_at "
+            "from youtube_videos where id=:r and hospital_id=:h"),
+            {"r": ref, "h": ctx.hospital_id}).first()
+        if not v:
+            raise NotFound("영상을 찾을 수 없습니다")
+        tr = cn.execute(text(
+            "select normalized_text from youtube_transcripts "
+            "where video_ref=:r and status='available' and normalized_text is not null "
+            "order by created_at desc limit 1"), {"r": ref}).first()
+    if not tr or not (tr.normalized_text or "").strip():
+        raise ServiceError("분석하려면 먼저 available 상태의 자막이 필요합니다")
+
+    from llm import runner
+    gen = generator or runner.generate
+    mdl = model or runner.MODEL_KB
+    system = runner.load_prompt("benchmark_analyze.md")
+    meta = (f"제목: {v.title or '-'} | 채널: {v.channel_name or '-'} | 조회수: {v.view_count or '-'} | "
+            f"좋아요: {v.like_count or '-'} | 구독자: {v.subscriber_count or '-'} | "
+            f"길이: {v.duration or '-'} | URL: {v.url}")
+    user = f"[영상 메타데이터]\n{meta}\n\n[자막 전문]\n{tr.normalized_text}"
+    analysis = gen(system, user, parse_json=True, model=mdl, label="벤치분석", max_tokens=8000, cache=True)
+    if not isinstance(analysis, dict):
+        raise ServiceError("분석 결과가 올바른 JSON이 아닙니다")
+    chash = hashlib.sha256((tr.normalized_text or "").encode("utf-8")).hexdigest()
+    with _conn(engine, ctx) as cn:
+        aid = cn.execute(text(
+            "insert into benchmark_analyses(hospital_id,project_id,video_ref,analysis,model,prompt_version,content_hash) "
+            "values(:h,:p,:r,cast(:a as jsonb),:m,:pv,:ch) returning id"),
+            {"h": ctx.hospital_id, "p": v.project_id, "r": ref,
+             "a": json.dumps(analysis, ensure_ascii=False), "m": mdl,
+             "pv": ANALYZE_PROMPT_VERSION, "ch": chash}).scalar()
+    return {"analysis_id": str(aid), "video_ref": str(ref), "analysis": analysis}
+
+
+def list_analyses(engine, ctx, project_id):
+    """프로젝트의 영상별 최신 분석 목록(영상당 1건, 최신)."""
+    permissions.require(ctx, BENCHMARK_ROLES)
+    pid = _uuid(project_id)
+    with _conn(engine, ctx) as cn:
+        rows = cn.execute(text(
+            "select distinct on (a.video_ref) a.id, a.video_ref, a.analysis, a.model, a.created_at, "
+            "  v.title, v.url "
+            "from benchmark_analyses a join youtube_videos v on v.id=a.video_ref "
+            "where a.project_id=:p and a.hospital_id=:h "
+            "order by a.video_ref, a.created_at desc"), {"p": pid, "h": ctx.hospital_id}).all()
+    return [{"analysis_id": str(r.id), "video_ref": str(r.video_ref), "title": r.title,
+             "url": r.url, "model": r.model, "created_at": r.created_at.isoformat(),
+             "analysis": r.analysis} for r in rows]
