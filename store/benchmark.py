@@ -57,6 +57,7 @@ _DDL = [
   channel_id text, channel_name text,
   published_at timestamptz,
   view_count bigint, like_count bigint, comment_count bigint, subscriber_count bigint,
+  duration text,                             -- ISO8601(PT8M30S) 재생시간
   caption_status text,                       -- available|none|unknown
   metadata_fetched_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -138,6 +139,11 @@ _DDL = [
 );""",
 ]
 
+# 기존 테이블에 나중에 추가된 컬럼(멱등·비파괴). C1 이후 add.
+_ALTERS = [
+    "ALTER TABLE youtube_videos ADD COLUMN IF NOT EXISTS duration text;",
+]
+
 _INDEXES = [
     "CREATE INDEX IF NOT EXISTS ix_ytv_project ON youtube_videos(project_id);",
     "CREATE INDEX IF NOT EXISTS ix_ytt_video ON youtube_transcripts(video_ref);",
@@ -158,6 +164,8 @@ def ensure_benchmark_schema(owner_engine):
     with owner_engine.begin() as cn:
         for ddl in _DDL:
             cn.execute(text(ddl))
+        for al in _ALTERS:
+            cn.execute(text(al))
         for ix in _INDEXES:
             cn.execute(text(ix))
         for tbl, prefix in _TABLES:
