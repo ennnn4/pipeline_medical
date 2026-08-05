@@ -151,6 +151,8 @@ from store.member_admin import ensure_member_admin
 ensure_member_admin(eng)           # 멤버 관리 definer 함수(대행사가 계정에 병원 역할 부여/제거)
 with eng.begin() as _cn:           # 생성 원가 계측(투명 원가 — 이번 생성 총 API 비용)
     _cn.execute(text("ALTER TABLE generation_jobs ADD COLUMN IF NOT EXISTS total_cost_usd numeric"))
+from store.object_assets import ensure_object_assets
+ensure_object_assets(eng)          # R2 오브젝트 자산 메타 인덱스(R2 키 없으면 미사용 — 스켈레톤)
 print("[schema] 생성job·자료버전·승인함수·provisioning·이미지·결과물 적용(reseed 안전)")
 
 # ── 3.6) platform operator(대행사 전 병원 접근) 계정 시딩 — 안전(GPT) ──
