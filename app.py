@@ -1679,6 +1679,11 @@ _BM_MSG = {
     "found": "주제로 인기 영상을 찾아 등록했어요.", "notfound": "관련 영상을 못 찾았어요. 다른 주제어로 시도해 보세요.",
     "removed": "영상을 삭제했어요.",
     "transcript": "자막을 저장했어요.", "manual_required": "외부 자막을 못 가져왔어요 — 자막을 직접 붙여넣어 주세요.",
+    "transcribing": "음성을 글로 변환 중이에요. 잠시 후 새로고침하면 자막이 준비됩니다.",
+    "quota_exhausted": "이번 달 자동 자막 수집 한도를 모두 사용했습니다. 직접 입력하거나 관리자에게 문의해 주세요.",
+    "tr_rate": "자동 자막 수집이 잠시 혼잡해요. 잠시 후 다시 시도하거나 자막을 직접 입력해 주세요.",
+    "tr_config": "자동 자막 서비스 설정 오류예요. 관리자에게 문의해 주세요.",
+    "tr_failed": "자동으로 자막을 가져오지 못했어요. 자막을 직접 붙여넣거나 파일을 업로드해 주세요.",
     "analyzed": "영상 분석을 마쳤어요.", "synth": "교차 종합을 마쳤어요.",
     "claims": "검증 대상 주장을 정리했어요(전부 '검증 전' 상태).", "plan": "기획안 초안을 만들었어요.",
     "approved": "기획안을 승인했어요.", "rejected": "기획안을 반려했어요.",
@@ -1960,7 +1965,7 @@ def bm_metadata(h, pid):
 
 @app.post("/h/<h>/benchmark/<pid>/video/<vref>/transcript")
 def bm_transcript(h, pid, vref):
-    from services import benchmark as bm
+    from services import benchmark as bm, transcript_auto as ta
     from store.db import make_engine
     pasted = request.form.get("pasted") or None
     try_external = bool(request.form.get("try_external"))
@@ -1968,10 +1973,27 @@ def bm_transcript(h, pid, vref):
     f = request.files.get("file")
     if f and f.filename:
         fb = f.read(); fn = f.filename
-    return _bm_run(h, lambda: bm.fetch_transcript(make_engine(), _dash_ctx(h), vref,
-                   pasted_text=pasted, file_bytes=fb, filename=fn, try_external=try_external),
-                   lambda r: "transcript" if r["status"] == "available" else "manual_required",
-                   f"/h/{h}/benchmark/{pid}", frag=f"v_{vref}")
+    frag = f"v_{vref}"; base = f"/h/{h}/benchmark/{pid}"
+
+    def _run():
+        # 1) 사용자가 직접 제공(붙여넣기/파일) → 그대로 저장(수동, 외부호출 안 함)
+        if fb or pasted:
+            return bm.fetch_transcript(make_engine(), _dash_ctx(h), vref,
+                                       pasted_text=pasted, file_bytes=fb, filename=fn, try_external=False)
+        # 2) 자동수집 요청 → Supadata 우선, 키 없으면(disabled) 기존 외부(youtube-transcript-api) 폴백
+        if try_external:
+            r = ta.auto_collect(make_engine(), _dash_ctx(h), vref)
+            if r.get("status") != "disabled":
+                return r
+            return bm.fetch_transcript(make_engine(), _dash_ctx(h), vref, try_external=True)
+        # 3) 아무것도 없음 → 수동 필요
+        return bm.fetch_transcript(make_engine(), _dash_ctx(h), vref, try_external=False)
+
+    def _msg(r):
+        return {"available": "transcript", "transcribing": "transcribing", "quota_exhausted": "quota_exhausted",
+                "manual_required": "manual_required", "rate_limited": "tr_rate", "config_error": "tr_config",
+                "provider_failed": "tr_failed"}.get(r.get("status"), "manual_required")
+    return _bm_run(h, _run, _msg, base, frag=frag)
 
 @app.post("/h/<h>/benchmark/<pid>/video/<vref>/delete")
 def bm_delete_video(h, pid, vref):
