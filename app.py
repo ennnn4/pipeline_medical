@@ -94,7 +94,7 @@ def _guard():
     g._t0 = time.perf_counter(); g.request_id = secrets.token_hex(16)   # 관측(latency·상관)
     if "_csrf" not in session:
         session["_csrf"] = secrets.token_urlsafe(24)   # 세션당 CSRF 토큰
-    if request.endpoint in ("login","static"): return   # 공개 회원가입 없음(로그인 POST는 세션전이라 면제)
+    if request.endpoint in ("login","static","bm_guide"): return   # 로그인·정적·공개 가이드는 면제
     if not session.get("user"): return redirect("/login")
     if request.method == "POST":   # 상태변경 요청 CSRF 검증(상수시간 비교 + JSON/fetch는 헤더 토큰)
         sent = request.form.get("_csrf") or request.headers.get("X-CSRF-Token") or ""
@@ -566,7 +566,8 @@ def hospital(h):
     <div class=card>
       <h2 style="margin-top:0">🔍 유튜브 벤치마킹 <span class=muted style="font-size:13px;font-weight:500">(신규)</span></h2>
       <div class=note>잘나가는 채널을 분석해 '흥행 공식'을 뽑고 우리 기획안으로 이어가요. 자료가 부족한 신규 광고주에 특히 유용해요.</div>
-      <div class=row style="margin-top:12px"><a class="btn pri" href="/h/{h}/benchmark">벤치마킹 열기 →</a></div>
+      <div class=row style="margin-top:12px"><a class="btn pri" href="/h/{h}/benchmark">벤치마킹 열기 →</a>
+        <a class="btn g" href="/guide/benchmark" target="_blank" rel="noopener">📖 사용 가이드</a></div>
     </div>
 
     <div id=genmodal style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(12,17,28,.6);backdrop-filter:blur(4px);align-items:center;justify-content:center">
@@ -1562,6 +1563,17 @@ def _bm_badge(status):
          "manual_required": "#dc2626", "low": "#16a34a", "medium": "#f59e0b", "high": "#dc2626"}.get(status, "#94a3b8")
     return f'<span style="background:{c};color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px">{_esc(status)}</span>'
 
+try:
+    with open(os.path.join(ROOT, "web", "guide_benchmark.html"), encoding="utf-8") as _gf:
+        _BM_GUIDE_HTML = _gf.read()
+except Exception:
+    _BM_GUIDE_HTML = "<!doctype html><meta charset=utf-8><h1>가이드를 불러오지 못했습니다.</h1>"
+
+@app.get("/guide/benchmark")
+def bm_guide():
+    """유튜브 벤치마킹 사용 가이드(광고주·운영자 겸용). 로그인 없이 새 창으로 열림."""
+    return Response(_BM_GUIDE_HTML, mimetype="text/html; charset=utf-8")
+
 @app.get("/h/<h>/benchmark")
 def bm_home(h):
     from services import benchmark as bm
@@ -1614,6 +1626,8 @@ def bm_project(h, pid):
         syn = bm.get_latest_synthesis(eng, ctx, pid)
         claims = bm.list_claim_candidates(eng, ctx, pid)
         plans = bm.list_plans(eng, ctx, pid)
+        scripts = bm.list_recent_scripts(eng, ctx)
+        sim = bm.latest_similarity_report(eng, ctx, pid)
     except ServiceError as e:
         return redirect("/login") if e.http_status == 401 else abort(e.http_status)
     _csrf = session.get("_csrf", "")
@@ -1671,6 +1685,30 @@ def bm_project(h, pid):
         plan_rows += f'<div class=row style="margin:4px 0"><a href="{base}/plan/{pl["plan_id"]}">기획안</a> {_bm_badge(pl["status"])} {approve}{brief}</div>'
     plan_rows = plan_rows or '<div class=muted>아직 없음</div>'
 
+    # ④ 유사도: 최근 결과 표시 + 생성 대본 자동 선택 검사(붙여넣기 불필요)
+    _risk_ko = {"low": "낮음 · 안전", "medium": "주의", "high": "높음 · 수정 필요"}
+    if sim:
+        _rep = sim.get("report") or {}
+        _worst = (_rep.get("verbatim") or {}).get("worst") or {}
+        _fl = _rep.get("flagged") or []
+        _sem = (f' · 의미유사 {_rep.get("semantic_score")}' if _rep.get("llm_used") else '')
+        _flnote = ('<br>겹침 지적: ' + _esc("; ".join((f.get("why") or "") for f in _fl[:3]))) if _fl else ''
+        sim_html = (f'<div class=note>최근 검사 결과: {_bm_badge(sim["risk"])} <b>{_risk_ko.get(sim["risk"], sim["risk"])}</b>'
+                    f' · 최대 연속일치 {_worst.get("longest_run_words", 0)}단어 · 원본 {_rep.get("source_count", 0)}편{_sem}{_flnote}</div>')
+    else:
+        sim_html = '<div class=muted>아직 검사하지 않았어요. 아래에서 대본을 골라 검사하세요.</div>'
+    if scripts:
+        _opts = "".join(
+            f'<option value="{s["version_id"]}">{_esc(s["topic"] or "대본")} v{s["version_no"]}'
+            f'{" · 현재본" if s["is_current"] else ""}</option>' for s in scripts)
+        simform = (f'<form method=post action="{base}/similarity-version" class=row style="margin-top:10px">'
+                   f'<input type=hidden name=_csrf value="{_csrf}">'
+                   f'<select name=version_id style="flex:1;padding:8px;border-radius:9px;border:1px solid var(--border)">{_opts}</select>'
+                   f'<label class=muted style="font-size:12px"><input type=checkbox name=use_llm value=1> 심층검사</label>'
+                   f'<button class="btn pri" type=submit>이 대본으로 검사</button></form>')
+    else:
+        simform = '<div class=muted style="margin-top:10px">아직 생성된 대본이 없어요 — 대본을 만든 뒤 여기서 자동 검사할 수 있어요.</div>'
+
     body = f"""
     <div class=row style="margin-bottom:8px"><a class="btn ghost" href="/h/{_esc(h)}/benchmark">← 프로젝트 목록</a></div>
     <div class=hero><h1>{_esc(proj["title"])} {_bm_badge(proj["status"])}</h1></div>
@@ -1700,11 +1738,14 @@ def bm_project(h, pid):
         <button class="btn pri" type=submit>기획안 생성</button></form>
       <div style="margin-top:10px">{plan_rows}</div></div>
     <div class=card><h2>④ 원본 유사도 검사(표절 방지)</h2>
-      <form method=post action="{base}/similarity"><input type=hidden name=_csrf value="{_csrf}">
-        <textarea name=script rows=5 placeholder="완성한 대본을 붙여넣으면 원본 자막과의 축자·의미 유사도를 검사합니다" style="width:100%"></textarea>
-        <div class=row style="margin-top:8px">
-          <label class=muted style="font-size:12px"><input type=checkbox name=use_llm value=1> 의미/구조까지 LLM 심층검사</label>
-          <button class="btn" type=submit>유사도 검사</button></div></form></div>"""
+      {sim_html}
+      {simform}
+      <details style="margin-top:10px"><summary class=muted style="cursor:pointer;font-size:13px">또는 대본을 직접 붙여넣어 검사</summary>
+        <form method=post action="{base}/similarity" style="margin-top:8px"><input type=hidden name=_csrf value="{_csrf}">
+          <textarea name=script rows=5 placeholder="완성한 대본을 붙여넣으면 원본 자막과의 축자·의미 유사도를 검사합니다" style="width:100%"></textarea>
+          <div class=row style="margin-top:8px">
+            <label class=muted style="font-size:12px"><input type=checkbox name=use_llm value=1> 의미/구조까지 LLM 심층검사</label>
+            <button class="btn" type=submit>유사도 검사</button></div></form></details></div>"""
     return page(f"벤치마킹 · {proj['title']}", body)
 
 @app.post("/h/<h>/benchmark/<pid>/add-video")
@@ -1836,6 +1877,16 @@ def bm_similarity(h, pid):
         gen = _g
     return _bm_run(h, lambda: bm.check_similarity(make_engine(), _dash_ctx(h), pid, script, generator=gen),
                    lambda r: "sim", f"/h/{h}/benchmark/{pid}")
+
+@app.post("/h/<h>/benchmark/<pid>/similarity-version")
+def bm_similarity_version(h, pid):
+    from services import benchmark as bm
+    from store.db import make_engine
+    vid = request.form.get("version_id", ""); use_llm = bool(request.form.get("use_llm"))
+    if not vid:
+        return redirect(f"/h/{h}/benchmark/{pid}?m=e400")
+    return _bm_run(h, lambda: bm.check_similarity_version(make_engine(), _dash_ctx(h), pid, vid, use_llm),
+                   "sim", f"/h/{h}/benchmark/{pid}")
 
 
 if __name__ == "__main__":

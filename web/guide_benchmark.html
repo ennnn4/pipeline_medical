@@ -1,0 +1,159 @@
+<!doctype html><html lang="ko"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>유튜브 벤치마킹 사용 가이드</title>
+<style>
+  :root{
+    --bg:#eef2f8; --panel:#ffffff; --ink:#0f1826; --ink2:#39465a; --muted:#6a7688;
+    --surface:#f5f8fc; --border:#e2e8f2; --line:#eef2f7;
+    --accent:#2f6bf6; --accent-ink:#1e4fd0; --accent-soft:#e7f0ff;
+    --good:#15914b; --good-soft:#e5f6ec; --warn:#c47a08; --warn-soft:#fbf1dd; --danger:#d6412f; --danger-soft:#fbe9e6;
+    --shadow:0 1px 2px rgba(16,24,38,.04),0 8px 30px rgba(16,24,38,.06);
+    --radius:16px;
+    --sans:"Pretendard",-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic","맑은 고딕",system-ui,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){:root{
+    --bg:#0c1017; --panel:#141a24; --ink:#eef2f8; --ink2:#c1ccdb; --muted:#8a97a8;
+    --surface:#1a212d; --border:#26303e; --line:#20293480; --accent:#6ea0ff; --accent-ink:#a9c6ff; --accent-soft:#18233a;
+    --good:#4cc47e; --good-soft:#12281c; --warn:#e0a94a; --warn-soft:#2c2313; --danger:#f0766a; --danger-soft:#2c1815;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 34px rgba(0,0,0,.35);}}
+  html{background:var(--bg)}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.68;
+    -webkit-font-smoothing:antialiased;letter-spacing:-.01em}
+  .wrap{max-width:760px;margin:0 auto;padding:38px 20px 80px}
+
+  .hero{background:linear-gradient(135deg,var(--accent) 0%,var(--accent-ink) 100%);color:#fff;
+    border-radius:22px;padding:36px 30px;box-shadow:var(--shadow)}
+  .hero .kick{font-size:12.5px;font-weight:700;letter-spacing:.06em;opacity:.85;text-transform:uppercase}
+  .hero h1{margin:9px 0 9px;font-size:29px;font-weight:800;letter-spacing:-.03em;line-height:1.28}
+  .hero p{margin:0;font-size:15px;opacity:.96;max-width:54ch}
+
+  .sechead{font-size:13px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin:34px 2px 2px}
+  .lead{font-size:14.5px;color:var(--ink2);margin:2px 2px 4px}
+
+  .cards{display:grid;grid-template-columns:1fr 1fr;gap:13px;margin-top:14px}
+  @media (max-width:580px){.cards{grid-template-columns:1fr}}
+  .b{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:18px 19px;box-shadow:var(--shadow)}
+  .b .ic{font-size:23px}
+  .b h3{margin:9px 0 5px;font-size:16px;font-weight:800;letter-spacing:-.02em}
+  .b p{margin:0;font-size:13.5px;color:var(--ink2);line-height:1.62}
+
+  .step{margin:16px 0;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+  .step-hd{display:flex;gap:14px;align-items:flex-start;padding:20px 22px 4px}
+  .badge{flex:none;width:36px;height:36px;border-radius:11px;background:var(--accent-soft);color:var(--accent-ink);font-size:16px;font-weight:800;display:grid;place-items:center}
+  .step-hd h3{margin:2px 0 2px;font-size:18px;font-weight:800;letter-spacing:-.02em}
+  .step-hd .sub{margin:0;font-size:13px;color:var(--muted)}
+  .step-bd{padding:4px 22px 22px}
+
+  ol.actions{list-style:none;counter-reset:a;margin:12px 0 0;padding:0}
+  ol.actions>li{counter-increment:a;position:relative;padding:11px 0 11px 34px;border-top:1px solid var(--line);font-size:14px}
+  ol.actions>li:first-child{border-top:0}
+  ol.actions>li::before{content:counter(a);position:absolute;left:0;top:11px;width:22px;height:22px;border-radius:50%;
+    background:var(--surface);border:1px solid var(--border);color:var(--ink2);font-size:12px;font-weight:800;display:grid;place-items:center}
+
+  .btnchip{display:inline-flex;align-items:center;gap:5px;background:var(--accent);color:#fff;border-radius:8px;
+    padding:2px 9px;font-size:12.5px;font-weight:700;white-space:nowrap;vertical-align:middle}
+  .btnchip.ghost{background:var(--surface);color:var(--ink2);border:1px solid var(--border)}
+  .field{display:inline-block;background:var(--surface);border:1px dashed var(--border);border-radius:7px;padding:1px 8px;font-size:12.5px;color:var(--ink2);font-weight:600}
+  .pill{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:2px 9px;font-size:11.5px;font-weight:800}
+  .pill.good{background:var(--good-soft);color:var(--good)} .pill.warn{background:var(--warn-soft);color:var(--warn)} .pill.bad{background:var(--danger-soft);color:var(--danger)}
+
+  .call{margin:14px 0 0;border-radius:12px;padding:12px 15px;font-size:13.3px;border:1px solid var(--border);background:var(--surface)}
+  .call.tip{background:var(--good-soft);border-color:transparent} .call.warn{background:var(--warn-soft);border-color:transparent}
+  .call .ct{font-weight:800;margin-right:4px} .call.tip .ct{color:var(--good)} .call.warn .ct{color:var(--warn)}
+
+  .trust{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:8px 22px;margin-top:14px}
+  .trust .t{display:flex;gap:13px;align-items:flex-start;padding:15px 0;border-top:1px solid var(--line)}
+  .trust .t:first-child{border-top:0}
+  .trust .chk{flex:none;width:25px;height:25px;border-radius:7px;background:var(--good-soft);color:var(--good);font-weight:900;display:grid;place-items:center;font-size:14px}
+  .trust h4{margin:1px 0 3px;font-size:14.5px;font-weight:800}
+  .trust p{margin:0;font-size:13.3px;color:var(--ink2)}
+
+  .close{margin-top:24px;background:linear-gradient(135deg,var(--surface),var(--panel));border:1px solid var(--border);border-radius:var(--radius);padding:22px 24px;text-align:center;box-shadow:var(--shadow)}
+  .close h3{margin:0 0 6px;font-size:18px;font-weight:800;letter-spacing:-.02em}
+  .close p{margin:0;font-size:13.5px;color:var(--ink2)}
+  .foot{margin-top:26px;text-align:center;font-size:12.5px;color:var(--muted)}
+  b{font-weight:700}
+</style></head><body>
+<div class="wrap">
+
+  <div class="hero">
+    <div class="kick">본큐어한의원 유튜브 · 아워마케팅</div>
+    <h1>유튜브 벤치마킹 사용 가이드</h1>
+    <p>잘나가는 채널의 <b>구성·화법</b>은 배우되, 내용은 <b>원장님의 논문·임상 경험</b>으로 채웁니다. 아래 순서대로 직접 만들어 보실 수 있어요.</p>
+  </div>
+
+  <p class="sechead">무엇을 하는 기능인가요</p>
+  <div class="cards">
+    <div class="b"><div class="ic">📊</div><h3>잘되는 영상 분석</h3><p>같은 주제 인기 영상들이 <b>왜 끝까지 보게 되는지</b>(도입·구성·화법)를 뽑아냅니다.</p></div>
+    <div class="b"><div class="ic">🎯</div><h3>우리만의 차별화</h3><p>원장님 <b>논문·임상 경험</b>으로 경쟁 채널이 못 가진 각도를 잡습니다.</p></div>
+    <div class="b"><div class="ic">🛡️</div><h3>표절 걱정 없이</h3><p>완성 대본이 원본과 <b>너무 닮지 않았는지 자동 검사</b>합니다.</p></div>
+    <div class="b"><div class="ic">📄</div><h3>의학적으로 안전</h3><p>유튜브 주장은 사실로 쓰지 않고, <b>논문 근거</b>만 대본에 담습니다.</p></div>
+  </div>
+
+  <p class="sechead">직접 만드는 법 — 버튼 순서대로</p>
+  <p class="lead">파란 칸은 화면에서 누르는 버튼이에요. 순서대로 따라가면 됩니다.</p>
+
+  <div class="step">
+    <div class="step-hd"><div class="badge">▶</div><div><h3>시작하기</h3><p class="sub">벤치마킹 화면 열고 프로젝트 만들기</p></div></div>
+    <div class="step-bd"><ol class="actions">
+      <li>병원 대시보드에서 <b>🔍 유튜브 벤치마킹</b> 칸의 <span class="btnchip">벤치마킹 열기 →</span> 클릭.</li>
+      <li><span class="btnchip">+ 새 벤치마킹 프로젝트</span> 에 제목 입력 <span class="field">예: 이명 벤치마킹 3편</span> → <span class="btnchip">만들기</span>.</li>
+      <li>만든 프로젝트를 클릭해 상세 화면으로 들어갑니다. ①~④ 단계가 순서대로 보여요.</li>
+    </ol></div>
+  </div>
+
+  <div class="step">
+    <div class="step-hd"><div class="badge">1</div><div><h3>영상 등록 · 자막 · 분석</h3><p class="sub">벤치마킹할 영상 넣고, 자막 확보, 분석</p></div></div>
+    <div class="step-bd"><ol class="actions">
+      <li><b>주제로 자동 찾기 (추천)</b> — 주제 입력 후 <span class="btnchip">🔎 인기 영상 자동 찾기</span>. 조회수 높은 관련 영상을 1~5개 골라 <b>자동 등록 + 조회수까지</b> 채워줍니다. <span class="field">예: "이명 치료"</span></li>
+      <li><b>또는 URL 직접</b> — 원하는 영상이 있으면 유튜브 주소를 붙여넣고 <span class="btnchip ghost">영상 추가</span>.</li>
+      <li><b>자막 넣기</b> — 각 영상에서 자막을 <span class="field">붙여넣기</span> 하거나 <span class="field">자막 파일(.srt/.vtt/.txt) 업로드</span> 후 <span class="btnchip ghost">자막 저장</span>. 되면 <span class="pill good">available</span> 로 바뀌어요.</li>
+      <li><b>영상 분석</b> — 자막이 있는 영상에서 <span class="btnchip">이 영상 분석</span> 클릭 → <b>✅분석완료</b>. 영상마다 한 번씩.</li>
+    </ol>
+    <div class="call warn"><span class="ct">⚠️ 자막 팁</span> 유튜브 자동 자막수집은 자주 실패해요. 안 되면 <b>다글로 같은 데서 자막을 뽑아 파일로 올리거나 붙여넣으세요.</b></div></div>
+  </div>
+
+  <div class="step">
+    <div class="step-hd"><div class="badge">2</div><div><h3>교차 종합 · 주장 정리</h3><p class="sub">흥행 공식과 '우리만의 빈틈' 찾기</p></div></div>
+    <div class="step-bd"><ol class="actions">
+      <li><span class="btnchip">교차 종합 실행</span> — 분석한 영상들을 비교해 <b>공통 흥행 공식 · 차별화 기회 · 복제 금지 표현</b>을 정리해 보여줍니다.</li>
+      <li><span class="btnchip ghost">검증 대상 주장 정리</span> — 영상들이 말한 의학 주장을 모읍니다. 전부 <span class="pill warn">검증 전</span> 상태(아직 사실 아님)로만 들어가요.</li>
+    </ol></div>
+  </div>
+
+  <div class="step">
+    <div class="step-hd"><div class="badge">3</div><div><h3>기획안 만들기 · 승인</h3><p class="sub">경쟁 형식 + 우리 자료를 합쳐 설계</p></div></div>
+    <div class="step-bd">
+      <div class="call tip"><span class="ct">📎 우리 자료 반영</span> 기획안은 경쟁 영상만 보는 게 아니라, <b>업로드한 원장님 프로필·논문·기존 대본을 함께 읽고</b> 만들어요. 그래서 우리만의 근거로 차별화됩니다.</div>
+      <ol class="actions">
+      <li><span class="btnchip">기획안 생성</span> — 종합 결과 + 우리 자료로 주제·차별화 각도·훅·구성 초안을 만듭니다.</li>
+      <li>내용을 열어보고 괜찮으면 <span class="btnchip">승인</span>, 아니면 <span class="btnchip ghost">반려</span>. <b>승인해야</b> 다음으로 넘어가요.</li>
+      <li>승인되면 <b>생성 브리핑 보기</b>가 생깁니다 — 대본 만들 때 참고할 요약이에요.</li>
+    </ol></div>
+  </div>
+
+  <div class="step">
+    <div class="step-hd"><div class="badge">4</div><div><h3>대본 제작 · 표절 검사</h3><p class="sub">대본 만들고 원본과 안 겹치는지 확인</p></div></div>
+    <div class="step-bd"><ol class="actions">
+      <li>브리핑을 참고해 기존 <span class="btnchip ghost">대본 만들기</span> 버튼으로 대본을 제작합니다.</li>
+      <li>완성 대본을 <b>④ 원본 유사도 검사</b> 칸에 붙여넣고 <span class="btnchip">유사도 검사</span>.</li>
+      <li>결과가 <span class="pill good">낮음</span> 이면 안전, <span class="pill bad">높음</span> 이면 원본과 너무 겹치니 <b>고쳐 쓰세요.</b></li>
+    </ol></div>
+  </div>
+
+  <p class="sechead">안심하셔도 되는 이유</p>
+  <div class="trust">
+    <div class="t"><div class="chk">✓</div><div><h4>유튜브 주장을 사실로 쓰지 않습니다</h4><p>배우는 건 '형식'뿐. 의학 사실은 원장님 논문 등 검증된 근거만 사용합니다.</p></div></div>
+    <div class="t"><div class="chk">✓</div><div><h4>승인 없이는 진행되지 않습니다</h4><p>기획안을 원장님이 확인·승인하셔야 대본 단계로 넘어갑니다.</p></div></div>
+    <div class="t"><div class="chk">✓</div><div><h4>표절은 자동으로 걸러냅니다</h4><p>완성 대본과 원본 영상의 유사도를 검사해 너무 닮은 부분을 미리 고칩니다.</p></div></div>
+    <div class="t"><div class="chk">✓</div><div><h4>콘텐츠의 중심은 원장님입니다</h4><p>원장님의 연구·임상 경험이 차별화의 핵심입니다. 남을 베끼는 게 아닙니다.</p></div></div>
+  </div>
+
+  <div class="close">
+    <h3>남의 채널을 따라 하는 게 아니라, 원장님을 가장 원장님답게.</h3>
+    <p>궁금하신 점은 담당 매니저에게 편하게 말씀해 주세요.</p>
+  </div>
+  <p class="foot">본큐어한의원 유튜브 콘텐츠 · 아워마케팅</p>
+</div>
+</body></html>

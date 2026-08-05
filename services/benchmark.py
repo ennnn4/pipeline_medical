@@ -667,3 +667,54 @@ def check_similarity(engine, ctx, project_id, script_text, script_version_id=Non
              "v": _uuid(script_version_id) if script_version_id else None,
              "r": json.dumps(report, ensure_ascii=False), "rk": risk}).scalar()
     return {"report_id": str(rid), "risk": risk, "report": report}
+
+
+def list_recent_scripts(engine, ctx, limit=15):
+    """이 병원의 최근 대본 버전 목록(유사도 검사 대상 선택용)."""
+    permissions.require(ctx, BENCHMARK_ROLES)
+    with _conn(engine, ctx) as cn:
+        rows = cn.execute(text(
+            "select v.id, s.topic, v.version_no, v.created_at, (s.current_version_id=v.id) as is_current "
+            "from script_versions v join scripts s "
+            "  on s.id=v.script_id and s.hospital_id=v.hospital_id "
+            "where v.hospital_id=:h order by v.created_at desc limit :l"),
+            {"h": ctx.hospital_id, "l": limit}).all()
+    return [{"version_id": str(r.id), "topic": r.topic, "version_no": r.version_no,
+             "is_current": bool(r.is_current), "created_at": r.created_at.isoformat()} for r in rows]
+
+
+def _version_text(engine, ctx, version_id):
+    with _conn(engine, ctx) as cn:
+        rows = cn.execute(text(
+            "select text from script_blocks where hospital_id=:h and version_id=:v order by order_index"),
+            {"h": ctx.hospital_id, "v": _uuid(version_id)}).all()
+    return "\n".join((r.text or "") for r in rows).strip()
+
+
+def check_similarity_version(engine, ctx, project_id, version_id, use_llm=False):
+    """생성된 대본 버전을 DB에서 바로 가져와 유사도 검사(붙여넣기 불필요)."""
+    permissions.require(ctx, BENCHMARK_ROLES)
+    txt = _version_text(engine, ctx, version_id)
+    if not txt:
+        raise ServiceError("그 대본에서 텍스트를 찾지 못했어요(빈 버전일 수 있어요)")
+    gen = None
+    if use_llm:
+        from llm import runner
+        gen = runner.generate
+    return check_similarity(engine, ctx, project_id, txt, script_version_id=version_id, generator=gen)
+
+
+def latest_similarity_report(engine, ctx, project_id):
+    """이 프로젝트의 가장 최근 유사도 결과(화면 표시용). 없으면 None."""
+    permissions.require(ctx, BENCHMARK_ROLES)
+    pid = _uuid(project_id)
+    with _conn(engine, ctx) as cn:
+        r = cn.execute(text(
+            "select report, risk, script_version_id, created_at from similarity_reports "
+            "where project_id=:p and hospital_id=:h order by created_at desc limit 1"),
+            {"p": pid, "h": ctx.hospital_id}).first()
+    if not r:
+        return None
+    return {"risk": r.risk, "report": r.report,
+            "script_version_id": str(r.script_version_id) if r.script_version_id else None,
+            "created_at": r.created_at.isoformat()}
