@@ -65,6 +65,51 @@ RETURNS integer LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
 $$;
 """
 
+# 관리자(platform_operator) 전용 전역 집계/문의 — app.user_id GUC로 운영자 확인(아니면 42501).
+_OP_ASSERT = ("IF NOT EXISTS (SELECT 1 FROM platform_access_grants pag "
+              "WHERE pag.user_id = NULLIF(current_setting('app.user_id', true),'')::uuid "
+              "AND pag.status='active') "
+              "THEN RAISE EXCEPTION 'not a platform operator' USING ERRCODE='42501'; END IF;")
+
+_FN_SUMMARY = f"""
+CREATE OR REPLACE FUNCTION public.fn_transcript_usage_summary(p_month text)
+RETURNS TABLE(total_requests bigint, credits bigint, success bigint, failed bigint, manual bigint, quota bigint)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  {_OP_ASSERT}
+  RETURN QUERY SELECT count(*)::bigint,
+    COALESCE(sum(credits_used),0)::bigint,
+    count(*) FILTER (WHERE status='available')::bigint,
+    count(*) FILTER (WHERE status IN ('provider_failed','config_error','rate_limited'))::bigint,
+    count(*) FILTER (WHERE status='manual_required')::bigint,
+    count(*) FILTER (WHERE status='quota_exhausted')::bigint
+  FROM transcript_provider_usage WHERE billing_month = p_month;
+END $$;
+"""
+
+_FN_LIST_REQ = f"""
+CREATE OR REPLACE FUNCTION public.fn_admin_requests(p_status text)
+RETURNS TABLE(id uuid, hospital_id uuid, hospital_name text, request_type text, billing_month text,
+              credits_used int, status text, created_at timestamptz)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  {_OP_ASSERT}
+  RETURN QUERY SELECT a.id, a.hospital_id, h.name, a.request_type, a.billing_month,
+    a.credits_used, a.status, a.created_at
+  FROM admin_requests a JOIN hospitals h ON h.id = a.hospital_id
+  WHERE (p_status IS NULL OR a.status = p_status) ORDER BY a.created_at DESC LIMIT 200;
+END $$;
+"""
+
+_FN_RESOLVE = f"""
+CREATE OR REPLACE FUNCTION public.fn_resolve_admin_request(p_id uuid)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  {_OP_ASSERT}
+  UPDATE admin_requests SET status='resolved', resolved_at=now() WHERE id = p_id AND status='open';
+END $$;
+"""
+
 
 def _policies(tbl, prefix):
     return [
@@ -90,12 +135,15 @@ def ensure_transcript_usage(owner_engine):
             cn.execute(text(s))
         cn.execute(text("CREATE INDEX IF NOT EXISTS ix_tpu_month ON transcript_provider_usage(billing_month);"))
         cn.execute(text("CREATE INDEX IF NOT EXISTS ix_ar_open ON admin_requests(hospital_id, status);"))
-        cn.execute(text(_FN_CREDITS))
-        try:
-            cn.execute(text("ALTER FUNCTION public.fn_transcript_credits_month(text) OWNER TO app_owner;"))
-        except Exception:
-            pass   # 로컬 시뮬 등 app_owner 없으면 무시(전역합계는 소유자권한에서만 정확)
-        cn.execute(text("GRANT EXECUTE ON FUNCTION public.fn_transcript_credits_month(text) TO app_rw;"))
+        for fn in (_FN_CREDITS, _FN_SUMMARY, _FN_LIST_REQ, _FN_RESOLVE):
+            cn.execute(text(fn))
+        for sig in ("fn_transcript_credits_month(text)", "fn_transcript_usage_summary(text)",
+                    "fn_admin_requests(text)", "fn_resolve_admin_request(uuid)"):
+            try:
+                cn.execute(text(f"ALTER FUNCTION public.{sig} OWNER TO app_owner;"))
+            except Exception:
+                pass   # 로컬 시뮬 등 app_owner 없으면 무시
+            cn.execute(text(f"GRANT EXECUTE ON FUNCTION public.{sig} TO app_rw;"))
 
 
 # ── 사용량 기록/집계 ──
@@ -154,3 +202,39 @@ def create_admin_request(engine, hospital_id, *, requester_membership_id=None,
             {"h": hospital_id, "m": requester_membership_id, "t": request_type, "p": provider,
              "bm": month, "cu": credits_used}).scalar()
     return {"id": str(rid), "created": True}
+
+
+# ── 관리자(platform_operator) 전역 조회/처리 — app.user_id GUC로 운영자 확인 ──
+def _op(engine, user_id):
+    """app.user_id GUC만 설정한 트랜잭션(definer 함수가 운영자 확인)."""
+    cn = engine.connect()
+    tx = cn.begin()
+    cn.execute(text("select set_config('app.user_id', :u, true)"), {"u": str(user_id)})
+    return cn, tx
+
+def usage_summary_global(engine, user_id, month=None):
+    cn, tx = _op(engine, user_id)
+    try:
+        r = cn.execute(text("select * from public.fn_transcript_usage_summary(:m)"),
+                       {"m": month or billing_month()}).first()
+        return {"total": r.total_requests, "credits": r.credits, "success": r.success,
+                "failed": r.failed, "manual": r.manual, "quota": r.quota} if r else {}
+    finally:
+        tx.commit(); cn.close()
+
+def list_admin_requests_global(engine, user_id, status="open"):
+    cn, tx = _op(engine, user_id)
+    try:
+        rows = cn.execute(text("select * from public.fn_admin_requests(:s)"), {"s": status}).all()
+        return [{"id": str(r.id), "hospital_id": str(r.hospital_id), "hospital_name": r.hospital_name,
+                 "billing_month": r.billing_month, "credits_used": r.credits_used, "status": r.status,
+                 "created_at": r.created_at.isoformat()} for r in rows]
+    finally:
+        tx.commit(); cn.close()
+
+def resolve_admin_request(engine, user_id, request_id):
+    cn, tx = _op(engine, user_id)
+    try:
+        cn.execute(text("select public.fn_resolve_admin_request(:i)"), {"i": request_id})
+    finally:
+        tx.commit(); cn.close()

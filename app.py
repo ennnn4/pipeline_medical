@@ -280,7 +280,8 @@ def home():
         emsg = '<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 이미 사용 중인 병원 이름이에요(다른 사용자 소유). 다른 이름을 써 주세요.</div>'
     elif _e == "badslug":
         emsg = '<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 영문 주소 ID는 영문·숫자·하이픈만 쓸 수 있어요.</div>'
-    _oplink = ('<div style="text-align:right;margin-bottom:8px"><a class="btn g" href="/admin/members">👥 팀·권한 관리</a></div>'
+    _oplink = ('<div style="text-align:right;margin-bottom:8px"><a class="btn g" href="/admin/members">👥 팀·권한 관리</a> '
+               '<a class="btn g" href="/admin/transcripts">🎬 자동 자막 현황</a></div>'
                if _is_platform_operator(session.get("user_id")) else "")
     body = f"""
     {_oplink}
@@ -1685,6 +1686,7 @@ _BM_MSG = {
     "tr_config": "자동 자막 서비스 설정 오류예요. 관리자에게 문의해 주세요.",
     "tr_failed": "자동으로 자막을 가져오지 못했어요. 자막을 직접 붙여넣거나 파일을 업로드해 주세요.",
     "admin_req": "관리자에게 자동 자막 한도 상향 문의를 접수했어요.",
+    "admin_req_done": "문의를 처리 완료로 표시했어요.",
     "analyzed": "영상 분석을 마쳤어요.", "synth": "교차 종합을 마쳤어요.",
     "claims": "검증 대상 주장을 정리했어요(전부 '검증 전' 상태).", "plan": "기획안 초안을 만들었어요.",
     "approved": "기획안을 승인했어요.", "rejected": "기획안을 반려했어요.",
@@ -1727,6 +1729,73 @@ except Exception:
 def bm_guide():
     """유튜브 벤치마킹 사용 가이드(광고주·운영자 겸용). 로그인 없이 새 창으로 열림."""
     return Response(_BM_GUIDE_HTML, mimetype="text/html; charset=utf-8")
+
+@app.get("/admin/transcripts")
+def admin_transcripts():
+    """Supadata 자동 자막 운영 현황(전역 크레딧·사용량·문의) — platform_operator 전용."""
+    uid = session.get("user_id")
+    if not _is_platform_operator(uid):
+        return page("접근 불가", '<div class=card><h1>권한 없음</h1><p class=muted>운영자만 볼 수 있어요.</p><a class=btn href="/">← 홈</a></div>')
+    from store.db import make_engine
+    from store.transcript_usage import quota_status, usage_summary_global, list_admin_requests_global, billing_month
+    from services.supadata import enabled as sup_enabled, SupadataConfig
+    eng = make_engine(); _csrf = session.get("_csrf", "")
+    try:
+        qs = quota_status(eng); summ = usage_summary_global(eng, uid); reqs = list_admin_requests_global(eng, uid, "open")
+    except Exception as e:
+        qs = {"used": 0, "limit": SupadataConfig.monthly_credit_limit(), "remaining": 0, "pct": 0, "warning": False, "exhausted": False}
+        summ = {}; reqs = []
+    m = request.args.get("m"); note = f'<div class=note>{_esc(_BM_MSG.get(m, ""))}</div>' if m in _BM_MSG else ""
+    on = sup_enabled()
+    barclr = "var(--danger)" if qs["exhausted"] else ("var(--warn,#d97706)" if qs["warning"] else "var(--good,#16a34a)")
+    reqrows = "".join(
+        f'<tr><td>{_esc(r["hospital_name"])}</td><td>{_esc(r["billing_month"])}</td>'
+        f'<td>{r["credits_used"] if r["credits_used"] is not None else "-"}</td>'
+        f'<td>{_esc(r["created_at"][:16])}</td>'
+        f'<td><form method=post action="/admin/transcripts/resolve" style="display:inline">'
+        f'<input type=hidden name=_csrf value="{_csrf}"><input type=hidden name=id value="{r["id"]}">'
+        f'<button class="btn ghost" type=submit>처리 완료</button></form></td></tr>'
+        for r in reqs) or '<tr><td colspan=5 class=muted>열린 문의 없음</td></tr>'
+    body = f"""
+    <div class=row style="margin-bottom:8px"><a class="btn ghost" href="/">← 홈</a></div>
+    <div class=hero><h1>자동 자막(Supadata) 운영 현황</h1>
+      <p>무료 계정은 전체 서비스 공유 — 아래는 <b>전역 월간 크레딧</b> 기준입니다.</p></div>
+    {note}
+    <div class=card>
+      <div class=row style="justify-content:space-between"><h2 style="margin:0">이번 달 크레딧</h2>
+        <span>{'<span style=color:var(--good,#16a34a);font-weight:800>● 활성</span>' if on else '<span style=color:var(--muted);font-weight:800>○ 비활성(키·플래그 확인)</span>'}</span></div>
+      <div style="font-size:30px;font-weight:800;margin:10px 0 4px">{qs["used"]} <span class=muted style="font-size:16px">/ {qs["limit"]} credits</span></div>
+      <div style="height:10px;border-radius:6px;background:var(--surface,#eee);overflow:hidden;margin:6px 0">
+        <div style="height:100%;width:{min(100,qs['pct'])}%;background:{barclr}"></div></div>
+      <div class=muted style="font-size:13px">남은 크레딧 {qs["remaining"]} · 사용률 {qs["pct"]}%
+        {' · ⚠️ 경고 임계 초과' if qs["warning"] and not qs["exhausted"] else ''}{' · 🚫 한도 소진' if qs["exhausted"] else ''}</div>
+      <div class=muted style="font-size:12px;margin-top:6px">모드: {_esc(SupadataConfig.transcript_mode())} · 한도 상향은 Supadata에서 업그레이드 후 <code>SUPADATA_MONTHLY_CREDIT_LIMIT</code> 값만 변경</div>
+    </div>
+    <div class=card><h2 style="margin-top:0">이번 달 요청 집계</h2>
+      <div class=row style="gap:18px;flex-wrap:wrap">
+        <div><div class=muted style="font-size:12px">총 요청</div><div style="font-size:22px;font-weight:800">{summ.get("total","-")}</div></div>
+        <div><div class=muted style="font-size:12px">성공</div><div style="font-size:22px;font-weight:800;color:var(--good,#16a34a)">{summ.get("success","-")}</div></div>
+        <div><div class=muted style="font-size:12px">실패</div><div style="font-size:22px;font-weight:800;color:var(--danger)">{summ.get("failed","-")}</div></div>
+        <div><div class=muted style="font-size:12px">수동 필요</div><div style="font-size:22px;font-weight:800">{summ.get("manual","-")}</div></div>
+        <div><div class=muted style="font-size:12px">소진 응답</div><div style="font-size:22px;font-weight:800">{summ.get("quota","-")}</div></div>
+      </div></div>
+    <div class=card><h2 style="margin-top:0">한도 상향 문의 (열림)</h2>
+      <table style="width:100%;font-size:13px"><tr style="color:var(--muted)"><th align=left>병원</th><th align=left>월</th><th>사용</th><th align=left>접수</th><th></th></tr>{reqrows}</table></div>"""
+    return page("자동 자막 운영 현황", body)
+
+@app.post("/admin/transcripts/resolve")
+def admin_transcripts_resolve():
+    uid = session.get("user_id")
+    if not _is_platform_operator(uid):
+        abort(403)
+    from store.db import make_engine
+    from store.transcript_usage import resolve_admin_request
+    rid = request.form.get("id", "")
+    try:
+        resolve_admin_request(make_engine(), uid, rid)
+    except Exception:
+        pass
+    return redirect("/admin/transcripts?m=admin_req_done")
 
 @app.get("/h/<h>/benchmark")
 def bm_home(h):
