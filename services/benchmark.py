@@ -11,13 +11,14 @@ import hashlib
 from sqlalchemy import text
 from store.repositories import tenant_conn
 from services import permissions
-from services.exceptions import NotFound, ServiceError
+from services.exceptions import NotFound, ServiceError, InvalidStateTransition
 from services import transcripts as tx
 from services import youtube_meta
 
 BENCHMARK_ROLES = {"editor", "approver", "admin", "platform_operator"}
 ANALYZE_PROMPT_VERSION = "ba-1"
 SYNTH_PROMPT_VERSION = "cs-1"
+PLAN_PROMPT_VERSION = "cp-1"
 
 
 def _uuid(v):
@@ -322,4 +323,100 @@ def list_claim_candidates(engine, ctx, project_id):
              "population": r.population, "condition": r.condition, "intervention": r.intervention,
              "comparator": r.comparator, "outcome": r.outcome, "numeric_value": r.numeric_value,
              "status": r.status, "linked_claim_card_id": str(r.linked_claim_card_id) if r.linked_claim_card_id else None,
+             "created_at": r.created_at.isoformat()} for r in rows]
+
+
+# ── 기획안 artifact + 승인(C7) ──
+def generate_plan(engine, ctx, project_id, model=None, generator=None):
+    """최신 종합 + 후보주장 + gaps → 기획안(형식 설계) 생성. status=draft로 저장(승인 대기).
+    의학 사실은 여기서 확정 안 함(unverified_claims로 분리). generator 주입형."""
+    permissions.require(ctx, BENCHMARK_ROLES)
+    pid = _uuid(project_id)
+    syn = get_latest_synthesis(engine, ctx, project_id)
+    if not syn:
+        raise ServiceError("기획안 전에 교차 종합이 필요합니다")
+    candidates = list_claim_candidates(engine, ctx, project_id)
+
+    from llm import runner
+    gen = generator or runner.generate
+    mdl = model or runner.MODEL_KB
+    system = runner.load_prompt("benchmark_plan.md")
+    ctx_payload = {"synthesis": syn.get("synthesis"),
+                   "claim_candidates": [{"claim_text": c["claim_text"], "claim_type": c["claim_type"],
+                                         "status": c["status"]} for c in candidates]}
+    user = "[교차 종합 + 검증대상 주장(JSON)]\n" + json.dumps(ctx_payload, ensure_ascii=False)
+    plan = gen(system, user, parse_json=True, model=mdl, label="기획안", max_tokens=8000, cache=True)
+    if not isinstance(plan, dict):
+        raise ServiceError("기획안 결과가 올바른 JSON이 아닙니다")
+    chash = hashlib.sha256(user.encode("utf-8")).hexdigest()
+    with _conn(engine, ctx) as cn:
+        plan_id = cn.execute(text(
+            "insert into content_plans(hospital_id,project_id,plan,status,model,prompt_version,"
+            "content_hash,created_by_membership_id) "
+            "values(:h,:p,cast(:pl as jsonb),'draft',:m,:pv,:ch,:mb) returning id"),
+            {"h": ctx.hospital_id, "p": pid, "pl": json.dumps(plan, ensure_ascii=False),
+             "m": mdl, "pv": PLAN_PROMPT_VERSION, "ch": chash, "mb": ctx.membership_id}).scalar()
+        cn.execute(text("update benchmark_projects set status='planned', updated_at=now() "
+                        "where id=:p and hospital_id=:h and status in ('draft','analyzing')"),
+                   {"p": pid, "h": ctx.hospital_id})
+    return {"plan_id": str(plan_id), "status": "draft", "plan": plan}
+
+
+def approve_plan(engine, ctx, plan_id):
+    """기획안 승인(기존 script 승인과 분리된 게이트). approver/admin만. draft만 승인 가능."""
+    permissions.require(ctx, permissions.REVIEW_ROLES)
+    return _decide_plan(engine, ctx, plan_id, "approved")
+
+
+def reject_plan(engine, ctx, plan_id):
+    """기획안 반려. approver/admin만. draft만 반려 가능."""
+    permissions.require(ctx, permissions.REVIEW_ROLES)
+    return _decide_plan(engine, ctx, plan_id, "rejected")
+
+
+def _decide_plan(engine, ctx, plan_id, new_status):
+    pid = _uuid(plan_id)
+    approved = new_status == "approved"
+    with _conn(engine, ctx) as cn:
+        cur = cn.execute(text(
+            "select status from content_plans where id=:i and hospital_id=:h"),
+            {"i": pid, "h": ctx.hospital_id}).first()
+        if not cur:
+            raise NotFound("기획안을 찾을 수 없습니다")
+        if cur.status != "draft":
+            raise InvalidStateTransition(f"draft 상태만 처리 가능합니다(현재: {cur.status})")
+        cn.execute(text(
+            "update content_plans set status=:s, updated_at=now(), "
+            "approved_by_membership_id=:mb, approved_at=(case when :ap then now() else null end) "
+            "where id=:i and hospital_id=:h"),
+            {"s": new_status, "mb": ctx.membership_id, "ap": approved, "i": pid, "h": ctx.hospital_id})
+    return {"plan_id": str(pid), "status": new_status}
+
+
+def get_plan(engine, ctx, plan_id):
+    permissions.require(ctx, BENCHMARK_ROLES)
+    pid = _uuid(plan_id)
+    with _conn(engine, ctx) as cn:
+        r = cn.execute(text(
+            "select id, project_id, plan, status, script_version_id, model, created_at, updated_at "
+            "from content_plans where id=:i and hospital_id=:h"),
+            {"i": pid, "h": ctx.hospital_id}).first()
+    if not r:
+        raise NotFound("기획안을 찾을 수 없습니다")
+    return {"plan_id": str(r.id), "project_id": str(r.project_id), "status": r.status,
+            "script_version_id": str(r.script_version_id) if r.script_version_id else None,
+            "model": r.model, "created_at": r.created_at.isoformat(),
+            "updated_at": r.updated_at.isoformat(), "plan": r.plan}
+
+
+def list_plans(engine, ctx, project_id):
+    permissions.require(ctx, BENCHMARK_ROLES)
+    pid = _uuid(project_id)
+    with _conn(engine, ctx) as cn:
+        rows = cn.execute(text(
+            "select id, status, script_version_id, created_at from content_plans "
+            "where project_id=:p and hospital_id=:h order by created_at desc"),
+            {"p": pid, "h": ctx.hospital_id}).all()
+    return [{"plan_id": str(r.id), "status": r.status,
+             "script_version_id": str(r.script_version_id) if r.script_version_id else None,
              "created_at": r.created_at.isoformat()} for r in rows]
