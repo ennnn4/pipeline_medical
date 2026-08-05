@@ -201,6 +201,9 @@ def _ed_img(key, edit):
 
 def render(pkg, meta=None, evidence=None, images=None, edit=None):
     meta = meta or {}
+    hname = meta.get("name") or "우리 병원"
+    host = meta.get("host", "원장")
+    hlabel = f"{hname} {host}"   # 스토리보드 하단 라벨(병원명·화자) — 하드코딩 대신 주입
     script = pkg.get("script", [])
     say_chars = sum(len((b.get("say") or "").replace(" ","")) for b in script)
     mins = round(say_chars/450, 1)
@@ -241,7 +244,7 @@ def render(pkg, meta=None, evidence=None, images=None, edit=None):
         sidecol = f'<div class="sidecol">{ai_cell}{refwrap}</div>' if (thumbs or ai_cell) else ""
         beats += f"""<div class="beat{crit}"><div class="tc">{tc_html}</div><div class="body">
           <div class="bt">{esc(b.get('block',''))} {tags}</div>
-          <div class="stage">{frame_html(b, esc(tc.split('–')[0].split(' - ')[0].strip()))}{sidecol}</div>
+          <div class="stage">{frame_html(b, esc(tc.split('–')[0].split(' - ')[0].strip()), hosp=hlabel)}{sidecol}</div>
           <div class="scene"><span class="lab">🎬 화면</span><span class="desc">{esc(b.get('scene',''))}</span></div>
           <div class="scene talk"><span class="lab">🎙 대사</span>{say_html}</div>
         </div></div>"""
@@ -332,8 +335,7 @@ def render(pkg, meta=None, evidence=None, images=None, edit=None):
         <p class="lead" style="font-size:13px;color:var(--muted)">※ 논문 추출본은 참고용 — 영상 사용엔 학회지·환자 동의 확인 필요.</p>
         {zipline}</section>"""
 
-    title = pkg.get("episode_title","본큐어 유튜브 패키지")
-    host = meta.get("host","송정현")
+    title = pkg.get("episode_title", f"{hname} 유튜브 패키지")
     files_n = meta.get("files_n","—")
     kb_n = meta.get("kb_n","—")
 
@@ -393,7 +395,7 @@ def render(pkg, meta=None, evidence=None, images=None, edit=None):
         plan_js = r"""<script>document.querySelectorAll('.pb-copy').forEach(function(btn){btn.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();var d=btn.closest('.pb-d');var p=d&&d.querySelector('.pb-p');if(!p)return;function ok(){var o=btn.textContent;btn.textContent='복사됨';setTimeout(function(){btn.textContent='복사';},1200);}if(navigator.clipboard){navigator.clipboard.writeText(p.textContent).then(ok,function(){});}else{var ta=document.createElement('textarea');ta.value=p.textContent;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');ok();}catch(err){}document.body.removeChild(ta);}});});</script>"""
 
     return f"""<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{esc(title)} · 본큐어 유튜브</title><style>{CSS}{_ED_CSS if edit else ''}</style></head><body>
+<title>{esc(title)} · {esc(hname)} 유튜브</title><style>{CSS}{_ED_CSS if edit else ''}</style></head><body>
 <nav class="nav"><div class="nav-in"><a class="brand" href="{esc(meta.get('home','/'))}" style="text-decoration:none;cursor:pointer" title="병원 페이지로">{('<img src="'+LOGO_URI+'" alt="Medical Pipeline" style="height:40px">') if LOGO_URI else '<span class="dot">OM</span>아워마케팅'}</a>
 <div class="nav-links"><a href="#hook">기획</a><a href="#script">대본</a><a href="#deliverables">산출물</a>{'<a href="#evidence-check">근거 검수</a>' if evidence else ''}<a href="#review">원장 검수</a></div>
 <button class="toggle" id="tg" aria-label="테마 전환">◐</button></div></nav>
@@ -416,7 +418,7 @@ def render(pkg, meta=None, evidence=None, images=None, edit=None):
 {img_sec}
 {review_sec}
 <div class="disc"><b>⚠️ 이 대본은 자동 컴플라이언스 검사를 거쳤지만, 검사 통과가 발행을 보장하지 않습니다. 최종 발행은 반드시 원장 의학 검수와 의료광고 심의 확인을 마친 뒤에만 진행하세요.</b><br>대본 속 의학 정보는 교육·정보 제공 목적이며, 효과는 개인마다 다르고 부작용 가능성이 있습니다. 논문 증례는 단일 증례일 수 있으며 모든 환자에게 동일 결과를 보장하지 않습니다.</div>
-<footer>본큐어 유튜브 · 화자 {esc(host)}</footer>
+<footer>{esc(hname)} 유튜브 · 화자 {esc(host)}</footer>
 <script>(function(){{var r=document.documentElement,b=document.getElementById('tg');function c(){{return r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light')}}b.addEventListener('click',function(){{r.setAttribute('data-theme',c()==='dark'?'light':'dark')}})}})();</script>
 {lb_html}
 {lb_js}
@@ -428,12 +430,13 @@ def render(pkg, meta=None, evidence=None, images=None, edit=None):
 def _meta(hospital="boncure"):
     """병원별 corpus/kb 개수 + config(호칭·tagline)를 모아 스탯/부제에 넣는다."""
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    m = {"host":"원장", "home": f"/h/{hospital}"}   # 로고 클릭 → 이 병원 페이지로
+    m = {"host":"원장", "name": hospital, "home": f"/h/{hospital}"}   # 로고 클릭 → 이 병원 페이지로
     try:
         import yaml
         cfg = yaml.safe_load(open(os.path.join(root,"config",f"{hospital}.yaml"),encoding="utf-8"))
         h = cfg.get("hospital",{})
         m["host"] = h.get("host", m["host"])
+        m["name"] = h.get("name", hospital)
         if h.get("tagline"): m["tagline"] = h["tagline"]
     except Exception:
         pass
