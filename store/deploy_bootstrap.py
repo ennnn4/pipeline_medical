@@ -153,6 +153,8 @@ with eng.begin() as _cn:           # 생성 원가 계측(투명 원가 — 이�
     _cn.execute(text("ALTER TABLE generation_jobs ADD COLUMN IF NOT EXISTS total_cost_usd numeric"))
 from store.object_assets import ensure_object_assets
 ensure_object_assets(eng)          # R2 오브젝트 자산 메타 인덱스(R2 키 없으면 미사용 — 스켈레톤)
+from store.benchmark import ensure_benchmark_schema
+ensure_benchmark_schema(eng)       # 유튜브 벤치마킹→기획→대본 데이터모델(Phase1, additive·RLS)
 print("[schema] 생성job·자료버전·승인함수·provisioning·이미지·결과물 적용(reseed 안전)")
 
 # ── 3.6) platform operator(대행사 전 병원 접근) 계정 시딩 — 안전(GPT) ──
