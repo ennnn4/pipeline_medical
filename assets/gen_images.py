@@ -18,12 +18,23 @@ STYLE = ("clean modern medical infographic illustration, soft teal and cyan colo
          "wide 16:9 composition")
 
 def build_prompts(scenes):
-    sys_p = "당신은 의료 교육 유튜브 영상용 이미지 프롬프트 디렉터입니다. 한국어 연출지시를 영어 이미지 생성 프롬프트로 정확히 변환합니다."
-    user = ("각 장면을, 그 개념을 시각화하는 영어 이미지 프롬프트로 변환하세요. 규칙: "
-            "실존 인물/특정 얼굴 금지(필요하면 익명 실루엣이나 손·개념도로), 글자/숫자/자막 금지, "
-            "자극적·혐오·유혈 이미지 금지, 해부 개념은 깔끔한 교육용 일러스트로. 각 1~2문장.\n\n")
+    """scenes: 문자열 또는 {block,scene,say} dict 리스트. 화면 연출 + 대사(핵심 논지)를 함께 읽고
+    그 장면이 '실제로 말하는 내용'을 담은 영어 이미지 프롬프트로 변환(화면에 들어갈 사진이므로 논지 반영)."""
+    sys_p = ("당신은 의료 교육 유튜브 영상용 이미지 프롬프트 디렉터입니다. 각 장면의 '화면 연출'과 '대사(핵심 논지)'를 "
+             "함께 읽고, 그 장면이 실제로 전달하는 내용을 시각적으로 담는 영어 이미지 생성 프롬프트로 변환합니다.")
+    user = ("각 장면을, 그 개념·논지를 시각화하는 영어 이미지 프롬프트로 변환하세요.\n"
+            "논지 구조를 구도로 반영: 통념 vs 반례=좌우 분할 대비, 전·후=before/after 2분할, Top3·리스트=3분할 카드, "
+            "경고·주의=강조된 아이콘/붉은 톤, 해부·기전=깔끔한 교육 일러스트, 비교=나란히 배치, 시술·장비=도구 클로즈업.\n"
+            "규칙: 실존 인물/특정 얼굴 금지(익명 실루엣·손·개념도), 글자/숫자/자막 금지, 자극·유혈·혐오 금지, "
+            "각 1~2문장, 대사의 요지가 이미지에서 드러나게.\n\n")
     for i, s in enumerate(scenes):
-        user += f"[{i+1}] {s}\n"
+        if isinstance(s, dict):
+            line = f'화면: {s.get("scene","")} / 유형: {s.get("block","")}'
+            if s.get("say"):
+                line += f' / 대사 요지: {s.get("say","")}'
+            user += f"[{i+1}] {line}\n"
+        else:
+            user += f"[{i+1}] {s}\n"
     user += '\n출력 JSON: {"prompts":[...]} — 장면 수와 정확히 동일 길이.'
     r = claude(sys_p, user, parse_json=True, max_tokens=4000)
     return r["prompts"]
@@ -79,7 +90,8 @@ def run(topic="이명", hospital="boncure", only=None):
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     pkg = json.load(io.open(os.path.join(root, "data", hospital, "out", f"{topic}_package.json"), encoding="utf-8"))
     script = pkg["script"]
-    scenes = [f'{b.get("block","")} — {b.get("scene","")}' for b in script]
+    scenes = [{"block": b.get("block", ""), "scene": b.get("scene", ""),
+               "say": (b.get("say", "") or "").replace("\n", " ")[:160]} for b in script]
     outdir = os.path.join(root, "data", hospital, "out", "images")
     os.makedirs(outdir, exist_ok=True)
     pj = os.path.join(outdir, f"{topic}_prompts.json")

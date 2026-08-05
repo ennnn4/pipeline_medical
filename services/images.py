@@ -81,7 +81,22 @@ def regenerate_scene(engine, ctx, block_key, feedback="", version_id=None, topic
         row = conn.execute(text("select prompt from scene_images where hospital_id=:h and topic=:t and block_key=:k limit 1"),
                            {"h": ctx.hospital_id, "t": topic, "k": block_key}).first()
         sh = _block_scene_hash(conn, ctx.hospital_id, vid, block_key) if vid else None
-    base = (row.prompt if row else None) or f"clean medical educational illustration for scene {block_key}"
+        brow = None
+        if not (row and row.prompt) and vid:   # 기존 프롬프트 없음(첫 생성) → 대사·화면 기반으로 만듦
+            brow = conn.execute(text("select block_type, scene, text from script_blocks "
+                                     "where hospital_id=:h and version_id=:v and stable_block_key=:k limit 1"),
+                                {"h": ctx.hospital_id, "v": vid, "k": block_key}).first()
+    if row and row.prompt:
+        base = row.prompt
+    elif brow:
+        try:   # 화면 연출 + 대사(논지)를 반영한 영어 프롬프트로 변환(화면에 들어갈 사진이므로)
+            from assets.gen_images import build_prompts
+            base = build_prompts([{"block": brow.block_type, "scene": brow.scene,
+                                   "say": (brow.text or "").replace("\n", " ")[:160]}])[0]
+        except Exception:
+            base = f"clean medical educational illustration for scene {block_key}"
+    else:
+        base = f"clean medical educational illustration for scene {block_key}"
     prompt = base + (f" Reviewer adjustment: {feedback}." if feedback else " Provide a fresh alternative composition.")
     ph = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
     jpg = generator(prompt)                                   # 외부 호출은 트랜잭션 밖
