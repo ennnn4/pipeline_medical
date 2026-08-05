@@ -1509,6 +1509,7 @@ def edit_story(h, topic):
     from render.render import render as _render, _meta
     from services.context import ActorContext
     from services.exceptions import ServiceError
+    _ensure_cfg(h)   # config(임시디스크) 소실됐어도 PG 이름으로 복구 → 스토리보드에 slug 대신 병원명
     from store.db import make_engine
     from store.repositories import tenant_conn
     from sqlalchemy import text as _t

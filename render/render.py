@@ -440,6 +440,16 @@ def _meta(hospital="boncure"):
         if h.get("tagline"): m["tagline"] = h["tagline"]
     except Exception:
         pass
+    if m.get("name") in (None, "", hospital):   # config에 이름 없음/ slug뿐 → PG 병원명으로 폴백
+        try:
+            from store.db import make_engine
+            from sqlalchemy import text as _t
+            with make_engine().connect() as _cn:
+                nm = _cn.execute(_t("select name from hospitals where slug=:s"), {"s": hospital}).scalar()
+            if nm:
+                m["name"] = nm
+        except Exception:
+            pass
     man = os.path.join(root,"data",hospital,"corpus","_MANIFEST.tsv")
     if os.path.exists(man):
         m["files_n"] = max(0, len(open(man,encoding="utf-8").read().splitlines())-1)
