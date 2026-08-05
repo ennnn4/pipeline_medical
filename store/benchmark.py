@@ -142,6 +142,18 @@ _DDL = [
 # 기존 테이블에 나중에 추가된 컬럼(멱등·비파괴). C1 이후 add.
 _ALTERS = [
     "ALTER TABLE youtube_videos ADD COLUMN IF NOT EXISTS duration text;",
+    # Supadata 자동 자막 수집 — 컬럼 추가 + provider/status CHECK 확장(비파괴, superset)
+    "ALTER TABLE youtube_transcripts ADD COLUMN IF NOT EXISTS provider_job_id text;",
+    "ALTER TABLE youtube_transcripts ADD COLUMN IF NOT EXISTS credits_used int;",
+    "ALTER TABLE youtube_transcripts ADD COLUMN IF NOT EXISTS transcript_hash text;",
+    "ALTER TABLE youtube_transcripts ADD COLUMN IF NOT EXISTS available_languages jsonb NOT NULL DEFAULT '[]'::jsonb;",
+    "ALTER TABLE youtube_transcripts DROP CONSTRAINT IF EXISTS ck_yt_provider;",
+    "ALTER TABLE youtube_transcripts ADD CONSTRAINT ck_yt_provider "
+    "CHECK (provider IN ('external','manual','upload','stt','supadata'));",
+    "ALTER TABLE youtube_transcripts DROP CONSTRAINT IF EXISTS ck_yt_status;",
+    "ALTER TABLE youtube_transcripts ADD CONSTRAINT ck_yt_status "
+    "CHECK (status IN ('pending','fetching','transcribing','available','provider_failed',"
+    "'manual_required','quota_exhausted','rate_limited','config_error','completed'));",
 ]
 
 _INDEXES = [
