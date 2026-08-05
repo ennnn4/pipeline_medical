@@ -1736,7 +1736,7 @@ def bm_project(h, pid):
     <div class=card><h2>③ 기획안 · 승인</h2>
       <form method=post action="{base}/plan"><input type=hidden name=_csrf value="{_csrf}">
         <label style="font-size:13px;font-weight:600">기획 방향 <span class=muted style="font-weight:400">(선택 — 원하는 주제·톤·각도를 적으면 최우선 반영해요)</span></label>
-        <textarea name=direction rows=2 placeholder="예: 60대 이상 겨냥, 무서운 얘기보다 '치료되는 병'이라는 희망적 톤. 원장님 이명 논문 사례를 앞세워서." style="width:100%;margin:6px 0 10px"></textarea>
+        <textarea name=direction rows=2 placeholder="예: 대표 시술 소개 / 대표 치료사례 / '가장 많이 신경쓰는 Top3 고민' / 원장 소개 / 계절·트렌드 이슈 / 60대 겨냥 희망적인 톤 — 편하게 적으면 돼요" style="width:100%;margin:6px 0 10px"></textarea>
         <button class="btn pri" type=submit>기획안 생성</button></form>
       <div style="margin-top:10px">{plan_rows}</div></div>
     <div class=card><h2>④ 원본 유사도 검사(표절 방지)</h2>
