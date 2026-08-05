@@ -1544,18 +1544,22 @@ _BM_MSG = {
     "e400": "입력을 확인해 주세요.", "err": "처리 중 문제가 발생했어요.",
 }
 
-def _bm_run(h, call, ok_key, redirect_path):
-    """service 호출 공통 래퍼: 성공→ok_key, ServiceError→상태별 메시지로 redirect."""
+def _bm_run(h, call, ok_key, redirect_path, frag=""):
+    """service 호출 공통 래퍼: 성공→ok_key, ServiceError→상태별 메시지로 redirect.
+    frag가 있으면 그 앵커(#frag)로 복귀 — 긴 페이지에서 작업한 위치 유지(맨 위로 안 튐)."""
     from services.exceptions import ServiceError
+    anchor = f"#{frag}" if frag else ""
     try:
         res = call()
         key = ok_key(res) if callable(ok_key) else ok_key
-        return redirect(f"{redirect_path}?m={key}")
+        return redirect(f"{redirect_path}?m={key}{anchor}")
     except ServiceError as e:
         if e.http_status == 401:
             return redirect("/login")
+        from urllib.parse import quote
         m = {403: "e403", 409: "e409", 404: "e400", 400: "e400", 422: "e400"}.get(e.http_status, "err")
-        return redirect(f"{redirect_path}?m={m}")
+        em = quote((str(e) or "")[:180])   # 실제 실패 사유를 그대로 화면·팝업에 전달
+        return redirect(f"{redirect_path}?m={m}&em={em}{anchor}")
 
 def _bm_badge(status):
     c = {"draft": "#94a3b8", "analyzing": "#f59e0b", "planned": "#6366f1",
@@ -1634,7 +1638,13 @@ def bm_project(h, pid):
         return redirect("/login") if e.http_status == 401 else abort(e.http_status)
     _csrf = session.get("_csrf", "")
     base = f"/h/{_esc(h)}/benchmark/{_esc(pid)}"
-    m = request.args.get("m"); note = f'<div class=note>{_esc(_BM_MSG.get(m, ""))}</div>' if m in _BM_MSG else ""
+    m = request.args.get("m"); em = (request.args.get("em") or "").strip()
+    _iserr = m in {"e403", "e409", "e400", "err"}
+    _notetext = em if (em and _iserr) else _BM_MSG.get(m, "")
+    _noteclr = "border-left:4px solid var(--danger);color:var(--danger)" if _iserr else ""
+    note = f'<div class=note style="{_noteclr}">{_esc(_notetext)}</div>' if _notetext else ""
+    # 실패/안내는 팝업으로도(무반응 오인 방지). 성공은 note만.
+    _alert = (em if (em and _iserr) else "") or (_BM_MSG.get(m, "") if m in {"no_api", "notfound", "manual_required"} else "")
     analyzed_refs = {a["video_ref"] for a in analyses}
 
     # 1) 영상들
@@ -1643,7 +1653,7 @@ def bm_project(h, pid):
         ts = v["transcript_status"]; done = v["video_ref"] in analyzed_refs
         tstat = _bm_badge(ts) if ts else '<span class=muted>자막 없음</span>'
         meta = (f'조회수 {v["view_count"]:,}' if v["view_count"] else "메타 미수집")
-        vrows += f"""<div class=card style="padding:14px">
+        vrows += f"""<div class=card id="v_{v["video_ref"]}" style="padding:14px">
           <div class=row><b>{_esc(v["title"] or v["url"])}</b> {tstat} {"✅분석완료" if done else ""}</div>
           <div class=muted style="margin:4px 0 8px">{_esc(v["url"])} · {_esc(meta)} · {_esc(v["caption_status"] or "")}</div>
           <form method=post action="{base}/video/{v["video_ref"]}/transcript" enctype=multipart/form-data style="margin-bottom:6px">
@@ -1736,16 +1746,19 @@ def bm_project(h, pid):
       <div style="margin-top:12px">{vrows}</div></div>
     <div class=card><h2>② 교차 종합 <span class=muted>(분석 {len(analyses)}개)</span></h2>
       <form method=post action="{base}/synthesize"><input type=hidden name=_csrf value="{_csrf}">
-        <button class="btn pri" type=submit>교차 종합 실행</button></form>
+        <button class="btn pri" type=submit {"disabled" if not analyses else ""}>교차 종합 실행</button>
+        {"<span class=muted style='font-size:12px;margin-left:8px'>← 영상 1개 이상 분석 후 눌러요</span>" if not analyses else ""}</form>
       <div style="margin-top:10px">{syn_html}</div>
       <form method=post action="{base}/claims" style="margin-top:8px"><input type=hidden name=_csrf value="{_csrf}">
-        <button class="btn ghost" type=submit>검증 대상 주장 정리</button></form>
+        <button class="btn ghost" type=submit {"disabled" if not syn else ""}>검증 대상 주장 정리</button>
+        {"" if syn else "<span class=muted style='font-size:12px;margin-left:8px'>교차 종합 먼저</span>"}</form>
       <table style="margin-top:8px;width:100%;font-size:13px"><tr><th align=left>주장(검증 전)</th><th>유형</th><th>상태</th></tr>{claim_rows}</table></div>
     <div class=card><h2>③ 기획안 · 승인</h2>
       <form method=post action="{base}/plan"><input type=hidden name=_csrf value="{_csrf}">
         <label style="font-size:13px;font-weight:600">기획 방향 <span class=muted style="font-weight:400">(선택 — 원하는 주제·톤·각도를 적으면 최우선 반영해요)</span></label>
         <textarea name=direction rows=2 placeholder="예: 대표 시술 소개 / 대표 치료사례 / '가장 많이 신경쓰는 Top3 고민' / 원장 소개 / 계절·트렌드 이슈 / 60대 겨냥 희망적인 톤 — 편하게 적으면 돼요" style="width:100%;margin:6px 0 10px"></textarea>
-        <button class="btn pri" type=submit>기획안 생성</button></form>
+        <button class="btn pri" type=submit {"disabled" if not syn else ""}>기획안 생성</button>
+        {"" if syn else "<span class=muted style='font-size:12px;margin-left:8px'>교차 종합 먼저</span>"}</form>
       <div style="margin-top:10px">{plan_rows}</div></div>
     <div class=card><h2>④ 원본 유사도 검사(표절 방지)</h2>
       {sim_html}
@@ -1756,7 +1769,15 @@ def bm_project(h, pid):
           <div class=row style="margin-top:8px">
             <label class=muted style="font-size:12px"><input type=checkbox name=use_llm value=1> 의미/구조까지 LLM 심층검사</label>
             <button class="btn" type=submit>유사도 검사</button></div></form></details></div>"""
-    return page(f"벤치마킹 · {proj['title']}", body)
+    import json as _json
+    bm_script = ("<script>(function(){"
+                 "document.addEventListener('submit',function(e){"
+                 "var b=e.target.querySelector('button[type=submit]:not([disabled])');"
+                 "if(b){b.disabled=true;b.dataset._o=b.innerHTML;b.innerHTML='\\u23f3 처리 중\\u2026 (최대 1\\u007e2분)';}"
+                 "},true);"
+                 "var m=%ALERT%;if(m){setTimeout(function(){alert(m);},80);}"
+                 "})();</script>").replace("%ALERT%", _json.dumps(_alert, ensure_ascii=False))
+    return page(f"벤치마킹 · {proj['title']}", body, bm_script)
 
 @app.post("/h/<h>/benchmark/<pid>/add-video")
 def bm_add_video(h, pid):
@@ -1798,7 +1819,7 @@ def bm_transcript(h, pid, vref):
     return _bm_run(h, lambda: bm.fetch_transcript(make_engine(), _dash_ctx(h), vref,
                    pasted_text=pasted, file_bytes=fb, filename=fn, try_external=try_external),
                    lambda r: "transcript" if r["status"] == "available" else "manual_required",
-                   f"/h/{h}/benchmark/{pid}")
+                   f"/h/{h}/benchmark/{pid}", frag=f"v_{vref}")
 
 @app.post("/h/<h>/benchmark/<pid>/video/<vref>/delete")
 def bm_delete_video(h, pid, vref):
@@ -1812,7 +1833,7 @@ def bm_analyze(h, pid, vref):
     from services import benchmark as bm
     from store.db import make_engine
     return _bm_run(h, lambda: bm.analyze_video(make_engine(), _dash_ctx(h), vref),
-                   "analyzed", f"/h/{h}/benchmark/{pid}")
+                   "analyzed", f"/h/{h}/benchmark/{pid}", frag=f"v_{vref}")
 
 @app.post("/h/<h>/benchmark/<pid>/synthesize")
 def bm_synthesize(h, pid):
