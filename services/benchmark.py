@@ -5,6 +5,7 @@
  - 메타/자막 수집은 provider(youtube_meta·transcripts) 주입 → 테스트에서 mock 가능.
  - 원본 자막 ≠ 분석결과: 여기선 수집/저장까지(분석은 C4~).
 """
+import os
 import json
 import uuid
 import hashlib
@@ -27,6 +28,96 @@ def _uuid(v):
 
 def _conn(engine, ctx):
     return tenant_conn(engine, ctx.hospital_id, membership_id=ctx.membership_id, request_id=ctx.request_id)
+
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # 레포 루트
+
+def _kb_read(slug, name, limit):
+    p = os.path.join(_ROOT, "data", slug, "kb", name)
+    if os.path.exists(p):
+        try:
+            return open(p, encoding="utf-8", errors="ignore").read()[:limit]
+        except Exception:
+            return ""
+    return ""
+
+
+def hospital_knowledge_digest(engine, ctx, max_chars=12000):
+    """이 병원이 '실제로 보유한' 지식 요약 — 기획안이 우리 근거·원장 전문성을 반영하도록.
+    우선순위: KB(원장프로필+논문근거) → corpus(업로드 자료 추출텍스트) → 자료 파일명(PG, 영속).
+    아무것도 없으면 ''(형식만 참고)."""
+    with _conn(engine, ctx) as cn:
+        slug = cn.execute(text("select slug from hospitals where id=:h"),
+                          {"h": ctx.hospital_id}).scalar()
+        names = [r[0] for r in cn.execute(text(
+            "select filename from materials where hospital_id=:h order by filename"),
+            {"h": ctx.hospital_id})]
+    parts = []
+    prof = _kb_read(slug, "profile.json", 4000) if slug else ""
+    evid = _kb_read(slug, "evidence.json", 6000) if slug else ""
+    if prof:
+        parts.append("[원장 프로필·화법]\n" + prof)
+    if evid:
+        parts.append("[우리 논문 근거]\n" + evid)
+    if not parts and slug:                      # KB 없으면 업로드 자료 추출텍스트(disk corpus)
+        try:
+            from llm.runner import corpus_text
+            corp = corpus_text(slug, max_chars=8000)
+            if corp:
+                parts.append("[업로드 자료(발췌)]\n" + corp)
+        except Exception:
+            pass
+    if not parts and names:                      # 그래도 없으면 PG 원본에서 직접 추출(Render 영속 보장)
+        extracted = _extract_materials_text(engine, ctx, names, budget=8000)
+        if extracted:
+            parts.append("[업로드 자료(원본 추출)]\n" + extracted)
+    if names:                                    # 최소한: 어떤 자료를 갖고 있는지(항상 영속)
+        parts.append("[보유 자료 목록]\n" + ", ".join(names[:40]))
+    digest = "\n\n".join(parts)
+    return digest[:max_chars]
+
+
+# 논문·설문·인터뷰·대본류를 우선 추출(기획에 더 유용)
+_MAT_PRIORITY = ("논문", "paper", "근거", "evidence", "설문", "인터뷰", "대본", "강의", "profile")
+_MAT_EXT = (".pdf", ".docx", ".txt", ".md", ".hwp", ".pptx", ".csv")
+
+def _extract_materials_text(engine, ctx, names, budget=8000, max_files=6):
+    """PG 원본 자료에서 텍스트 추출(pdftotext 등). KB/corpus 없는 Render에서도 실제 내용 반영.
+    우선순위 파일명 먼저, 소수·글자예산 내로만(요청 지연·비용 방지)."""
+    import tempfile
+    from store.materials import get_material
+    from ingest.extract import extract_one
+    def _rank(n):
+        low = n.lower()
+        return (0 if any(k in low for k in _MAT_PRIORITY) else 1, n)
+    cand = [n for n in names if n.lower().endswith(_MAT_EXT)]
+    cand.sort(key=_rank)
+    out, used = [], 0
+    for n in cand[:max_files]:
+        try:
+            mime, data = get_material(engine, ctx.hospital_id, n)
+            if not data or len(data) > 25 * 1024 * 1024:      # 너무 큰 파일 skip
+                continue
+            ext = "." + n.lower().rsplit(".", 1)[-1]
+            with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tf:
+                tf.write(data); tmp = tf.name
+            try:
+                txt = extract_one(tmp) or ""
+            finally:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+            txt = txt.strip()
+            if txt and not txt.startswith("["):               # 파싱실패 마커 제외
+                chunk = f"— {n} —\n{txt}"
+                out.append(chunk[:budget - used])
+                used += min(len(chunk), budget - used)
+            if used >= budget:
+                break
+        except Exception:
+            continue
+    return "\n\n".join(out)
 
 
 # ── 프로젝트 ──
@@ -344,7 +435,10 @@ def generate_plan(engine, ctx, project_id, model=None, generator=None):
     ctx_payload = {"synthesis": syn.get("synthesis"),
                    "claim_candidates": [{"claim_text": c["claim_text"], "claim_type": c["claim_type"],
                                          "status": c["status"]} for c in candidates]}
-    user = "[교차 종합 + 검증대상 주장(JSON)]\n" + json.dumps(ctx_payload, ensure_ascii=False)
+    digest = hospital_knowledge_digest(engine, ctx)     # 우리 병원 실제 보유 자료(원장·논문·업로드)
+    our = ("\n\n[우리 병원 보유 자료 — 이걸로 차별화·검증가능 여부 판단]\n" + digest) if digest \
+        else "\n\n[우리 병원 보유 자료]\n(없음 — 경쟁 영상의 '형식'만 참고하고, 의학 내용은 추후 근거검증)"
+    user = "[교차 종합 + 검증대상 주장(JSON)]\n" + json.dumps(ctx_payload, ensure_ascii=False) + our
     plan = gen(system, user, parse_json=True, model=mdl, label="기획안", max_tokens=8000, cache=True)
     if not isinstance(plan, dict):
         raise ServiceError("기획안 결과가 올바른 JSON이 아닙니다")
