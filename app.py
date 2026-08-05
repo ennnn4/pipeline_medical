@@ -1735,6 +1735,8 @@ def bm_project(h, pid):
       <table style="margin-top:8px;width:100%;font-size:13px"><tr><th align=left>주장(검증 전)</th><th>유형</th><th>상태</th></tr>{claim_rows}</table></div>
     <div class=card><h2>③ 기획안 · 승인</h2>
       <form method=post action="{base}/plan"><input type=hidden name=_csrf value="{_csrf}">
+        <label style="font-size:13px;font-weight:600">기획 방향 <span class=muted style="font-weight:400">(선택 — 원하는 주제·톤·각도를 적으면 최우선 반영해요)</span></label>
+        <textarea name=direction rows=2 placeholder="예: 60대 이상 겨냥, 무서운 얘기보다 '치료되는 병'이라는 희망적 톤. 원장님 이명 논문 사례를 앞세워서." style="width:100%;margin:6px 0 10px"></textarea>
         <button class="btn pri" type=submit>기획안 생성</button></form>
       <div style="margin-top:10px">{plan_rows}</div></div>
     <div class=card><h2>④ 원본 유사도 검사(표절 방지)</h2>
@@ -1815,7 +1817,8 @@ def bm_claims(h, pid):
 def bm_plan(h, pid):
     from services import benchmark as bm
     from store.db import make_engine
-    return _bm_run(h, lambda: bm.generate_plan(make_engine(), _dash_ctx(h), pid),
+    direction = request.form.get("direction", "")
+    return _bm_run(h, lambda: bm.generate_plan(make_engine(), _dash_ctx(h), pid, direction=direction),
                    "plan", f"/h/{h}/benchmark/{pid}")
 
 @app.post("/h/<h>/benchmark/<pid>/plan/<plan_id>/approve")

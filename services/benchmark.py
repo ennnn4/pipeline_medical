@@ -443,9 +443,9 @@ def list_claim_candidates(engine, ctx, project_id):
 
 
 # ── 기획안 artifact + 승인(C7) ──
-def generate_plan(engine, ctx, project_id, model=None, generator=None):
-    """최신 종합 + 후보주장 + gaps → 기획안(형식 설계) 생성. status=draft로 저장(승인 대기).
-    의학 사실은 여기서 확정 안 함(unverified_claims로 분리). generator 주입형."""
+def generate_plan(engine, ctx, project_id, direction=None, model=None, generator=None):
+    """최신 종합 + 후보주장 + gaps (+ 운영자 방향) → 기획안(형식 설계) 생성. status=draft로 저장(승인 대기).
+    의학 사실은 여기서 확정 안 함(unverified_claims로 분리). direction=운영자가 원하는 주제·방향(선택)."""
     permissions.require(ctx, BENCHMARK_ROLES)
     pid = _uuid(project_id)
     syn = get_latest_synthesis(engine, ctx, project_id)
@@ -463,7 +463,9 @@ def generate_plan(engine, ctx, project_id, model=None, generator=None):
     digest = hospital_knowledge_digest(engine, ctx)     # 우리 병원 실제 보유 자료(원장·논문·업로드)
     our = ("\n\n[우리 병원 보유 자료 — 이걸로 차별화·검증가능 여부 판단]\n" + digest) if digest \
         else "\n\n[우리 병원 보유 자료]\n(없음 — 경쟁 영상의 '형식'만 참고하고, 의학 내용은 추후 근거검증)"
-    user = "[교차 종합 + 검증대상 주장(JSON)]\n" + json.dumps(ctx_payload, ensure_ascii=False) + our
+    direction = (direction or "").strip()
+    steer = (f"\n\n[운영자 요청 방향 — 최우선 반영]\n{direction}") if direction else ""
+    user = "[교차 종합 + 검증대상 주장(JSON)]\n" + json.dumps(ctx_payload, ensure_ascii=False) + our + steer
     plan = gen(system, user, parse_json=True, model=mdl, label="기획안", max_tokens=8000, cache=True)
     if not isinstance(plan, dict):
         raise ServiceError("기획안 결과가 올바른 JSON이 아닙니다")

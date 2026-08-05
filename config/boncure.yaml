@@ -15,8 +15,8 @@ input_checklist:
   - key: 원장설문지      # 우선순위 2
     required: true
     match: [설문, survey, 브랜딩]
-  - key: 원장인터뷰      # 우선순위 3 (말투·개인사 공백 메우기)
-    required: true
+  - key: 원장인터뷰      # 우선순위 3 (말투·개인사 공백 메우기) — 벤치마킹 도입으로 선택 전환
+    required: false
     match: [인터뷰, interview, 녹취]
   - key: 원장강의자료    # 우선순위 4
     required: false
