@@ -82,7 +82,15 @@ def cmd_episode(a):
         p=os.path.join(kb,n); return open(p,encoding="utf-8").read() if os.path.exists(p) else "{}"
     kb_blob = ("[원장프로파일]\n"+rd("profile.json")+"\n[논문근거]\n"+rd("evidence.json")
                +"\n[경쟁분석]\n"+rd("competitor.json")+f"\n[질환KB]\n"+rd(f"disease_{a.topic}.json"))
-    pkg = generate(load_prompt("director.md"), f"주제: {a.topic}\nKB:\n"+kb_blob, parse_json=True,
+    user = f"주제: {a.topic}\nKB:\n"+kb_blob
+    # 벤치마킹 기획 브리핑(선택): 있으면 '구성·각도' 참고로만 덧붙임. 없으면 기존과 100% 동일.
+    bf = getattr(a, "brief_file", None)
+    if bf and os.path.exists(bf):
+        brief = open(bf, encoding="utf-8").read().strip()
+        if brief:
+            user += ("\n\n[벤치마킹 기획 브리핑 — 구성·화법·각도 참고용. 의학 내용·표현은 위 KB/논문 근거를 "
+                     "따르고, 아래는 형식 가이드다. 미검증 주장은 사실로 쓰지 말 것]\n" + brief)
+    pkg = generate(load_prompt("director.md"), user, parse_json=True,
                    max_tokens=55000, effort="high", label="대본 director")   # 대본은 최고품질 MODEL(opus) 유지
     out = os.path.join(_outdir(a.hospital), f"{a.topic}_package.json")
     json.dump(pkg, open(out,"w",encoding="utf-8"), ensure_ascii=False, indent=1)
@@ -195,12 +203,14 @@ def main():
     kbp = sub.add_parser("kb"); kbp.add_argument("--hospital", default="boncure")
     kbp.add_argument("--force", action="store_true", help="이미 있는 KB도 다시 생성")
     e = sub.add_parser("episode"); e.add_argument("--hospital", default="boncure"); e.add_argument("--topic", required=True)
+    e.add_argument("--brief-file", default=None, help="벤치마킹 기획 브리핑 텍스트 파일(선택)")
     cp = sub.add_parser("compliance"); cp.add_argument("--file", required=True); cp.add_argument("--edition", default=None)
     ev = sub.add_parser("evidence"); ev.add_argument("--hospital", default="boncure"); ev.add_argument("--file", required=True)
     asp = sub.add_parser("assets"); asp.add_argument("--hospital", default="boncure"); asp.add_argument("--file", required=True)
     r = sub.add_parser("render"); r.add_argument("--file", required=True); r.add_argument("--hospital", default="boncure")
     al = sub.add_parser("all"); al.add_argument("--hospital", default="boncure"); al.add_argument("--topic", required=True)
     al.add_argument("--evidence", action="store_true", help="논문 근거 대조 1차 검수 + 시각자료 추출")
+    al.add_argument("--brief-file", default=None, help="벤치마킹 기획 브리핑 텍스트 파일(선택)")
     a = ap.parse_args()
     rc = {"init":cmd_init,"ingest":cmd_ingest,"classify":cmd_classify,"kb":cmd_kb,"episode":cmd_episode,
           "compliance":cmd_compliance,"evidence":cmd_evidence,"assets":cmd_assets,"render":cmd_render,"all":cmd_all}[a.cmd](a)

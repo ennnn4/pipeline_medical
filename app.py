@@ -210,8 +210,9 @@ PAGE = """<!doctype html><html lang=ko><head><meta charset=utf-8><meta name=view
 def page(title, body, script=""):
     u = session.get("user")
     userhtml = f'<div class=navr><span>{u}</span><a class="btn ghost" href="/logout">로그아웃</a></div>' if u else ""
-    brand = (f'<img src="{LOGO_URI}" style="height:30px" alt="Medical Pipeline">' if LOGO_URI
-             else '<span class=dot>본</span>병원 유튜브 대본 생성기')
+    _brand_inner = (f'<img src="{LOGO_URI}" style="height:30px" alt="Medical Pipeline">' if LOGO_URI
+                    else '<span class=dot>본</span>병원 유튜브 대본 생성기')
+    brand = f'<a href="/" style="display:inline-flex;align-items:center;gap:8px;text-decoration:none;color:inherit" title="홈으로">{_brand_inner}</a>'
     return render_template_string(PAGE, title=title, css=CSS, body=body, script=script, userhtml=userhtml, brand=brand)
 
 @app.route("/")
@@ -1190,7 +1191,7 @@ def d_export(h, script_id, version_id):
     except ServiceError as e:
         return jsonify(error=e.code, detail=str(e)), e.http_status
 
-def _run_pipeline(h, topic, evidence=True, request_key=None, membership_id=None):
+def _run_pipeline(h, topic, evidence=True, request_key=None, membership_id=None, brief=None):
     """GPT P0 반영: run.py '전에' PG generation_job(pending) 생성 → generating → generated →
     ingesting → completed. 각 상태는 별도 트랜잭션이라 실패해도 job에 흔적이 남음.
     membership_id=생성 요청자(작성자) — ai version의 created_by로 결착(provenance)."""
@@ -1239,6 +1240,14 @@ def _run_pipeline(h, topic, evidence=True, request_key=None, membership_id=None)
     try:
         cmd = [PY, "run.py", "all", "--hospital", h, "--topic", topic]
         if evidence: cmd.append("--evidence")   # 논문 근거 대조 + 시각자료 추출
+        if brief:                               # 벤치마킹 기획 브리핑(선택) → 파일로 넘김(생성기는 참고만)
+            try:
+                _bp = os.path.join(data_dir(h, "out"), "_benchmark_brief.txt")
+                os.makedirs(os.path.dirname(_bp), exist_ok=True)
+                open(_bp, "w", encoding="utf-8").write(brief)
+                cmd += ["--brief-file", _bp]
+            except Exception as _be:
+                log += f"\n[브리핑 파일 경고] {_be}"
         # PYTHONUNBUFFERED: run.py의 print가 버퍼에 갇히지 않고 즉시 흘러나옴(진행 로그·heartbeat 실시간)
         proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 env={**os.environ, "PYTHONUTF8": "1", "PYTHONUNBUFFERED": "1"})
@@ -1746,7 +1755,7 @@ def bm_project(h, pid):
       <form method=post action="{base}/metadata" style="margin-top:8px"><input type=hidden name=_csrf value="{_csrf}">
         <button class="btn ghost" type=submit>📊 메타데이터 다시 가져오기</button></form>
       <div style="margin-top:12px">{vrows}</div></div>
-    <div class=card><h2>② 교차 종합 <span class=muted>(분석 {len(analyses)}개)</span></h2>
+    <div class=card id=sec2><h2>② 교차 종합 <span class=muted>(분석 {len(analyses)}개)</span></h2>
       <form method=post action="{base}/synthesize"><input type=hidden name=_csrf value="{_csrf}">
         <button class="btn pri" type=submit {"disabled" if not analyses else ""}>교차 종합 실행</button>
         {"<span class=muted style='font-size:12px;margin-left:8px'>← 영상 1개 이상 분석 후 눌러요</span>" if not analyses else ""}</form>
@@ -1755,7 +1764,7 @@ def bm_project(h, pid):
         <button class="btn ghost" type=submit {"disabled" if not syn else ""}>검증 대상 주장 정리</button>
         {"" if syn else "<span class=muted style='font-size:12px;margin-left:8px'>교차 종합 먼저</span>"}</form>
       <table style="margin-top:8px;width:100%;font-size:13px"><tr><th align=left>주장(검증 전)</th><th>유형</th><th>상태</th></tr>{claim_rows}</table></div>
-    <div class=card><h2>③ 기획안 · 승인</h2>
+    <div class=card id=sec3><h2>③ 기획안 · 승인</h2>
       <form method=post action="{base}/plan"><input type=hidden name=_csrf value="{_csrf}">
         <label style="font-size:13px;font-weight:600">기획 방향 <span class=muted style="font-weight:400">(선택 — 원하는 주제·톤·각도를 적으면 최우선 반영해요)</span></label>
         <textarea name=direction rows=2 placeholder="예: 대표 시술 소개 / 대표 치료사례 / '가장 많이 신경쓰는 Top3 고민' / 원장 소개 / 계절·트렌드 이슈 / 60대 겨냥 희망적인 톤 — 편하게 적으면 돼요" style="width:100%;margin:6px 0 10px"></textarea>
@@ -1777,8 +1786,15 @@ def bm_project(h, pid):
                  "var b=e.target.querySelector('button[type=submit]:not([disabled])');"
                  "if(b){b.disabled=true;b.dataset._o=b.innerHTML;b.innerHTML='\\u23f3 처리 중\\u2026 (최대 1\\u007e2분)';}"
                  "},true);"
+                 # 입력값(주제·기획 방향) 새로고침에도 유지 — 프로젝트별 localStorage
+                 "var PID=%PID%;"
+                 "function _keep(sel,key){var el=document.querySelector(sel);if(!el)return;"
+                 "try{var v=localStorage.getItem(key);if(v&&!el.value)el.value=v;}catch(e){}"
+                 "el.addEventListener('input',function(){try{localStorage.setItem(key,el.value);}catch(e){}});}"
+                 "_keep('[name=topic]','bm_topic_'+PID);_keep('[name=direction]','bm_dir_'+PID);"
                  "var m=%ALERT%;if(m){setTimeout(function(){alert(m);},80);}"
-                 "})();</script>").replace("%ALERT%", _json.dumps(_alert, ensure_ascii=False))
+                 "})();</script>").replace("%ALERT%", _json.dumps(_alert, ensure_ascii=False)) \
+                 .replace("%PID%", _json.dumps(str(pid)))
     return page(f"벤치마킹 · {proj['title']}", body, bm_script)
 
 @app.post("/h/<h>/benchmark/<pid>/add-video")
@@ -1842,14 +1858,14 @@ def bm_synthesize(h, pid):
     from services import benchmark as bm
     from store.db import make_engine
     return _bm_run(h, lambda: bm.synthesize_project(make_engine(), _dash_ctx(h), pid),
-                   "synth", f"/h/{h}/benchmark/{pid}")
+                   "synth", f"/h/{h}/benchmark/{pid}", frag="sec2")
 
 @app.post("/h/<h>/benchmark/<pid>/claims")
 def bm_claims(h, pid):
     from services import benchmark as bm
     from store.db import make_engine
     return _bm_run(h, lambda: bm.extract_claim_candidates(make_engine(), _dash_ctx(h), pid),
-                   "claims", f"/h/{h}/benchmark/{pid}")
+                   "claims", f"/h/{h}/benchmark/{pid}", frag="sec2")
 
 @app.post("/h/<h>/benchmark/<pid>/plan")
 def bm_plan(h, pid):
@@ -1857,7 +1873,7 @@ def bm_plan(h, pid):
     from store.db import make_engine
     direction = request.form.get("direction", "")
     return _bm_run(h, lambda: bm.generate_plan(make_engine(), _dash_ctx(h), pid, direction=direction),
-                   "plan", f"/h/{h}/benchmark/{pid}")
+                   "plan", f"/h/{h}/benchmark/{pid}", frag="sec3")
 
 @app.post("/h/<h>/benchmark/<pid>/plan/<plan_id>/approve")
 def bm_plan_approve(h, pid, plan_id):
@@ -1873,21 +1889,113 @@ def bm_plan_reject(h, pid, plan_id):
     return _bm_run(h, lambda: bm.reject_plan(make_engine(), _dash_ctx(h), plan_id),
                    "rejected", f"/h/{h}/benchmark/{pid}")
 
+def _render_plan(pl):
+    """기획안 jsonb를 대시보드 카드형으로 렌더(사람이 검토·승인 가능하게)."""
+    pl = pl or {}
+    def _row(label, val):
+        return f'<div style="margin:6px 0"><b>{label}</b> {_esc(val)}</div>' if val else ""
+    def _list(label, items, badge=False):
+        items = items or []
+        if not items:
+            return ""
+        lis = "".join(f"<li>{_esc(x)}</li>" for x in items)
+        return f'<div style="margin:10px 0"><b>{label}</b><ul style="margin:4px 0 0;padding-left:18px;line-height:1.7">{lis}</ul></div>'
+    out = pl.get("outline") or []
+    out_rows = "".join(
+        f'<tr><td style="padding:6px 8px;border-top:1px solid var(--border)"><b>{_esc(o.get("section",""))}</b></td>'
+        f'<td style="padding:6px 8px;border-top:1px solid var(--border)">{_esc(o.get("beat",""))}</td>'
+        f'<td style="padding:6px 8px;border-top:1px solid var(--border);white-space:nowrap;color:var(--muted)">{_esc(o.get("est_ratio",""))}</td></tr>'
+        for o in out)
+    outline_html = (f'<div style="margin:10px 0"><b>구성</b><table style="width:100%;font-size:13.5px;border-collapse:collapse;margin-top:4px">'
+                    f'<tr style="color:var(--muted);font-size:12px"><th align=left style="padding:0 8px">구간</th><th align=left style="padding:0 8px">내용</th><th style="padding:0 8px">비중</th></tr>'
+                    f'{out_rows}</table></div>') if out else ""
+    uc = pl.get("unverified_claims") or []
+    uc_html = ""
+    if uc:
+        rows = "".join(
+            f'<li>{_esc(c.get("claim_text",""))} <span style="background:var(--warn-soft,#fbf1dd);color:var(--warn,#c47a08);'
+            f'font-size:11px;font-weight:700;padding:1px 7px;border-radius:999px">검증 전</span>'
+            f'{("<br><span class=muted style=font-size:12px>"+_esc(c.get("note",""))+"</span>") if c.get("note") else ""}</li>'
+            for c in uc)
+        uc_html = (f'<div style="margin:10px 0"><b>다룰 의학 포인트(검증 대상 — 대본엔 논문 검증 후 반영)</b>'
+                   f'<ul style="margin:4px 0 0;padding-left:18px;line-height:1.9">{rows}</ul></div>')
+    hook = pl.get("hook")
+    hook_html = f'<div class=note style="margin:10px 0"><b>훅</b> {_esc(hook)}</div>' if hook else ""
+    return (
+        (f'<div style="font-size:20px;font-weight:800;margin-bottom:6px">{_esc(pl.get("topic",""))}</div>' if pl.get("topic") else "")
+        + _row("차별화 각도:", pl.get("angle"))
+        + _row("기획 이유:", pl.get("why_now"))
+        + _row("타깃:", pl.get("target_audience"))
+        + hook_html
+        + outline_html
+        + _row("화법:", pl.get("narration_style"))
+        + _row("CTA:", pl.get("cta"))
+        + uc_html
+        + _row("원장 관점:", pl.get("director_perspective_hint"))
+        + _list("표절 회피", pl.get("similarity_guard"))
+        + _row("메모:", pl.get("notes")))
+
+
 @app.get("/h/<h>/benchmark/<pid>/plan/<plan_id>")
 def bm_plan_view(h, pid, plan_id):
     from services import benchmark as bm
     from services.exceptions import ServiceError
     from store.db import make_engine
-    import json as _json
     try:
         p = bm.get_plan(make_engine(), _dash_ctx(h), plan_id)
     except ServiceError as e:
         return redirect("/login") if e.http_status == 401 else abort(e.http_status)
-    pretty = _esc(_json.dumps(p["plan"], ensure_ascii=False, indent=2))
-    body = f"""<div class=row style="margin-bottom:8px"><a class="btn ghost" href="/h/{_esc(h)}/benchmark/{_esc(pid)}">← 프로젝트</a></div>
-    <div class=hero><h1>기획안 {_bm_badge(p["status"])}</h1></div>
-    <div class=card><pre style="white-space:pre-wrap;font-size:13px;line-height:1.6">{pretty}</pre></div>"""
+    _csrf = session.get("_csrf", "")
+    base = f"/h/{_esc(h)}/benchmark/{_esc(pid)}"
+    st = p["status"]
+    if st == "draft":
+        actions = (f'<form method=post action="{base}/plan/{_esc(plan_id)}/approve" style="display:inline">'
+                   f'<input type=hidden name=_csrf value="{_csrf}"><button class="btn pri" type=submit>승인</button></form> '
+                   f'<form method=post action="{base}/plan/{_esc(plan_id)}/reject" style="display:inline">'
+                   f'<input type=hidden name=_csrf value="{_csrf}"><button class="btn ghost" type=submit>반려</button></form>')
+    elif st == "approved":
+        actions = (f'<form method=post action="{base}/plan/{_esc(plan_id)}/generate" style="display:inline" '
+                   f'onsubmit="var b=this.querySelector(\'button\');b.disabled=true;b.textContent=\'⏳ 생성 시작 중…\';">'
+                   f'<input type=hidden name=_csrf value="{_csrf}">'
+                   f'<button class="btn pri" type=submit>🎬 이 기획으로 대본 생성(사진·스토리보드까지)</button></form> '
+                   f'<a class="btn ghost" href="{base}/plan/{_esc(plan_id)}/brief">생성 브리핑 텍스트</a>')
+    else:
+        actions = ""
+    body = f"""<div class=row style="margin-bottom:8px"><a class="btn ghost" href="{base}">← 프로젝트</a></div>
+    <div class=hero><h1>기획안 {_bm_badge(st)}</h1></div>
+    <div class=card>{_render_plan(p["plan"])}</div>
+    <div class=card><div class=row style="gap:8px">{actions}</div>
+      <div class=muted style="font-size:12px;margin-top:8px">승인하면 이 기획으로 대본을 생성할 수 있어요. 대본·사진·스토리보드는 대시보드 결과물과 동일하게 만들어집니다(의학 내용은 논문 근거검증을 따름).</div></div>"""
     return page("기획안", body)
+
+@app.post("/h/<h>/benchmark/<pid>/plan/<plan_id>/generate")
+def bm_generate_script(h, pid, plan_id):
+    """승인된 기획안 → 브리핑 만들어 기존 대본 생성 파이프라인 실행(사진·스토리보드 포함).
+    생성기 자체는 무손상, 브리핑은 참고 컨텍스트로만 주입. 대시보드로 이동해 진행상황 표시."""
+    from services import benchmark as bm
+    from services.exceptions import ServiceError
+    from store.db import make_engine
+    from urllib.parse import quote
+    import uuid as _uuid
+    try:
+        brief = bm.build_generation_brief(make_engine(), _dash_ctx(h), plan_id)   # 승인 안 됐으면 409
+    except ServiceError as e:
+        if e.http_status == 401:
+            return redirect("/login")
+        return redirect(f"/h/{h}/benchmark/{pid}?m=e409&em=" + quote("승인된 기획안만 대본 생성이 가능합니다"))
+    topic = (brief.get("topic") or "주제").strip()[:60] or "주제"
+    hid = _pg_hospital_id(h)
+    if hid:
+        try:
+            from store.ingest import reap_stale
+            reap_stale(make_engine(), hid)
+        except Exception:
+            pass
+    req_mid = _pg_membership_id(hid)
+    if not job_get(h).get("running"):
+        threading.Thread(target=_run_pipeline, args=(h, topic, True, str(_uuid.uuid4()), req_mid),
+                         kwargs={"brief": brief["brief_text"]}, daemon=True).start()
+    return redirect(f"/h/{h}")   # 생성 진행 모달·폴링이 있는 대시보드로
 
 @app.get("/h/<h>/benchmark/<pid>/plan/<plan_id>/brief")
 def bm_plan_brief(h, pid, plan_id):
