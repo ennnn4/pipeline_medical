@@ -156,20 +156,36 @@ def _ensure_cfg(slug):
     반환: 복구 후 config 존재 여부."""
     if os.path.exists(cfg_path(slug)):
         return True
+    name = None; st = None
     try:
         from store.db import make_engine
         from sqlalchemy import text as _t
-        with make_engine().connect() as cn:
-            name = cn.execute(_t("select name from hospitals where slug=:s"), {"s": slug}).scalar()
+        from store.hospital_settings import get_settings
+        eng = make_engine()
+        with eng.connect() as cn:
+            row = cn.execute(_t("select id, name from hospitals where slug=:s"), {"s": slug}).first()
+        if row:
+            name = row.name
+            try:
+                st = get_settings(eng, row.id)   # 원장·슬로건·질환(있으면)
+            except Exception:
+                st = None
     except Exception:
         name = None
     if not name:
         return False
+    st = st or {}
     tpl = os.path.join(ROOT, "config", "_template.yaml")
     src = (open(tpl, encoding="utf-8").read() if os.path.exists(tpl)
            else "hospital:\n  id: __HOSPITAL_ID__\n  name: \"\"\n  host: \"원장\"\n  tagline: \"\"\ndiseases: []\n")
     src = src.replace("__HOSPITAL_ID__", slug)
     src = re.sub(r'(\n\s*name:\s*).*', rf'\g<1>"{name}"', src, count=1)
+    if st.get("host"):
+        src = re.sub(r'(\n\s*host:\s*).*', rf'\g<1>"{st["host"]}"', src, count=1)
+    if st.get("tagline"):
+        src = re.sub(r'(\n\s*tagline:\s*).*', rf'\g<1>"{st["tagline"]}"', src, count=1)
+    if st.get("diseases"):
+        src = re.sub(r'\ndiseases:.*', "\ndiseases: [" + ", ".join(st["diseases"]) + "]", src, count=1)
     try:
         open(cfg_path(slug), "w", encoding="utf-8").write(src)
         for s in ("raw", "corpus", "kb", "out"): data_dir(slug, s)
@@ -420,10 +436,22 @@ def new():
     src = setline(src, "name", name)
     src = setline(src, "host", request.form.get("host","원장"))
     src = setline(src, "tagline", request.form.get("tagline","건강한 하루를 함께"))
+    host = request.form.get("host", "원장"); tagline = request.form.get("tagline", "건강한 하루를 함께")
     diseases = [d.strip() for d in request.form.get("diseases","").split(",") if d.strip()]
     src = re.sub(r'\ndiseases:.*', "\ndiseases: [" + ", ".join(diseases) + "]", src, count=1)
     open(cfg_path(hid), "w", encoding="utf-8").write(src)
     for s in ("raw","corpus","kb","out"): data_dir(hid, s)
+    # 원장·슬로건·질환도 PG에 저장 → 재배포로 config 소실돼도 복구됨(영속)
+    try:
+        from store.db import make_engine
+        from sqlalchemy import text as _t
+        from store.hospital_settings import save_settings
+        with make_engine().connect() as _cn:
+            _hid = _cn.execute(_t("select id from hospitals where slug=:s"), {"s": hid}).scalar()
+        if _hid:
+            save_settings(make_engine(), _hid, host=host, tagline=tagline, diseases=diseases)
+    except Exception:
+        pass
     return redirect(f"/h/{hid}")
 
 class _ProvConflict(Exception):
@@ -563,10 +591,22 @@ def hospital(h):
     running = job.get("running")
     # 생성 눌러도 주제가 리셋된 것처럼 보이지 않게 — 직전/현재 job의 주제를 입력칸에 유지
     topic_val = (job.get("topic") or "").replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;")
+    _hosp = cfg.get("hospital", {})
+    host_val = _esc(_hosp.get("host", "")); tagline_val = _esc(_hosp.get("tagline", "")); dz_val = _esc(", ".join(diseases))
     body = f"""
     <div class=row style="justify-content:space-between">
       <div><h1>{name}</h1><p class=sub>{h}</p></div><a href="/" class=btn>← 병원 목록</a>
     </div>
+
+    <details class=card style="padding:14px 16px">
+      <summary style="cursor:pointer;font-weight:700">⚙️ 병원 정보 수정 <span class=muted style="font-weight:400;font-size:12px">(원장 이름·슬로건·주력 질환 — 저장하면 영구 보존)</span></summary>
+      <form method=post action="/h/{h}/settings" style="margin-top:12px"><input type=hidden name=_csrf value="{_csrf}">
+        <label>원장 이름(기본 화자)</label><input type=text name=host value="{host_val}" placeholder="예: 김철수">
+        <label>채널 슬로건</label><input type=text name=tagline value="{tagline_val}" placeholder="예: 무릎이 편해야 인생이 걷습니다">
+        <label>주력 질환(쉼표로 구분)</label><input type=text name=diseases value="{dz_val}" placeholder="예: 여드름, 기미, 주름">
+        <div class=row style="margin-top:12px"><button class="btn pri" type=submit>저장</button></div>
+      </form>
+    </details>
 
     <div class=card>
       <h2 style="margin-top:0">① 자료 업로드</h2>
@@ -1398,6 +1438,36 @@ def run_ep(h):
     if not job_get(h).get("running"):
         threading.Thread(target=_run_pipeline, args=(h, topic, evidence, reqkey, req_mid), daemon=True).start()
     return redirect(f"/h/{h}")
+
+@app.route("/h/<h>/settings", methods=["POST"])
+def hospital_settings_save(h):
+    """병원 정보(원장·슬로건·질환) 저장 → PG 영속 + config 갱신(재배포에도 유지)."""
+    if not _ensure_cfg(h):
+        abort(404)
+    host = request.form.get("host", "").strip() or "원장"
+    tagline = request.form.get("tagline", "").strip()
+    diseases = [d.strip() for d in request.form.get("diseases", "").split(",") if d.strip()]
+    # 1) config 갱신(디스크)
+    try:
+        src = open(cfg_path(h), encoding="utf-8").read()
+        src = re.sub(r'(\n\s*host:\s*).*', rf'\g<1>"{host}"', src, count=1)
+        src = re.sub(r'(\n\s*tagline:\s*).*', rf'\g<1>"{tagline}"', src, count=1)
+        src = re.sub(r'\ndiseases:.*', "\ndiseases: [" + ", ".join(diseases) + "]", src, count=1)
+        open(cfg_path(h), "w", encoding="utf-8").write(src)
+    except Exception:
+        pass
+    # 2) PG 영속(단일 진실원본 — config 소실돼도 복구)
+    try:
+        from store.db import make_engine
+        from sqlalchemy import text as _t
+        from store.hospital_settings import save_settings
+        with make_engine().connect() as cn:
+            hid = cn.execute(_t("select id from hospitals where slug=:s"), {"s": h}).scalar()
+        if hid:
+            save_settings(make_engine(), hid, host=host, tagline=tagline, diseases=diseases)
+    except Exception:
+        pass
+    return redirect(f"/h/{h}?ok=saved")
 
 @app.route("/h/<h>/status")
 def status(h):
