@@ -1864,6 +1864,18 @@ def bm_project(h, pid):
     note = f'<div class=note style="{_noteclr}">{_esc(_notetext)}</div>' if _notetext else ""
     # 실패/안내는 팝업으로도(무반응 오인 방지). 성공은 note만.
     _alert = (em if (em and _iserr) else "") or (_BM_MSG.get(m, "") if m in {"no_api", "notfound", "manual_required"} else "")
+    # 자동 자막 크레딧 잔량(버튼 있는 자리에 바로 표시) — Supadata 켜진 경우만
+    _cred = ""
+    try:
+        from services.supadata import enabled as _supon
+        if _supon():
+            from store.transcript_usage import quota_status as _qstat
+            _q = _qstat(eng)
+            _cc = ("var(--danger)" if _q["exhausted"] else ("var(--warn,#d97706)" if _q["warning"] else "var(--muted)"))
+            _cred = (f'<span style="font-size:12px;font-weight:700;color:{_cc};margin-left:8px">'
+                     f'🎬 자동 자막 크레딧 {_q["remaining"]}/{_q["limit"]} 남음</span>')
+    except Exception:
+        pass
     analyzed_refs = {a["video_ref"] for a in analyses}
 
     # 1) 영상들
@@ -1897,7 +1909,7 @@ def bm_project(h, pid):
           <div class=muted style="margin:4px 0 8px">{_esc(v["url"])} · {_esc(meta)}</div>
           <div class=row style="margin:6px 0">{auto_btn}{admin_btn}</div>
           <details {"open" if need_manual else ""} style="margin:6px 0">
-            <summary class=muted style="cursor:pointer;font-size:12.5px">✍️ 자막 직접 입력 / 파일 업로드 (다글로 등)</summary>
+            <summary class=muted style="cursor:pointer;font-size:12.5px">✍️ 자막 직접 입력 / 파일 업로드</summary>
             <form method=post action="{base}/video/{vref}/transcript" enctype=multipart/form-data style="margin-top:8px">
               <input type=hidden name=_csrf value="{_csrf}">
               <textarea name=pasted rows=2 placeholder="자막 붙여넣기" style="width:100%;font-size:13px"></textarea>
@@ -1974,7 +1986,7 @@ def bm_project(h, pid):
     <div class=hero><h1>{_esc(proj["title"])} {_bm_badge(proj["status"])}</h1></div>
     <div class=note style="border-left:4px solid var(--accent)">📎 <b>이 기획은 병원에 업로드된 자료(원장 프로필·논문·기존 대본)를 자동으로 참고합니다.</b> 경쟁 영상의 '형식'에 우리 근거·원장 강점을 더해 차별화해요. (자료가 많을수록 좋아요)</div>
     {note}
-    <div class=card><h2>① 영상 등록 · 자막 · 분석</h2>
+    <div class=card><h2>① 영상 등록 · 자막 · 분석 {_cred}</h2>
       <form method=post action="{base}/search-videos" class=row style="margin-bottom:10px"><input type=hidden name=_csrf value="{_csrf}">
         <input type=text name=topic placeholder="주제로 인기 영상 자동 찾기 (예: 이명 치료, 자율신경실조증)" style="flex:1" required>
         <select name=count style="padding:8px;border-radius:9px;border:1px solid var(--border)">
