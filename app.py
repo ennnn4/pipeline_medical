@@ -563,6 +563,12 @@ def hospital(h):
       {outlist}
     </div>
 
+    <div class=card>
+      <h2 style="margin-top:0">🔍 유튜브 벤치마킹 <span class=muted style="font-size:13px;font-weight:500">(신규)</span></h2>
+      <div class=note>잘나가는 채널을 분석해 '흥행 공식'을 뽑고 우리 기획안으로 이어가요. 자료가 부족한 신규 광고주에 특히 유용해요.</div>
+      <div class=row style="margin-top:12px"><a class="btn pri" href="/h/{h}/benchmark">벤치마킹 열기 →</a></div>
+    </div>
+
     <div id=genmodal style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(12,17,28,.6);backdrop-filter:blur(4px);align-items:center;justify-content:center">
       <div style="background:var(--card,#fff);border-radius:20px;max-width:460px;width:90%;padding:32px 30px;box-shadow:0 24px 70px rgba(0,0,0,.35);text-align:center">
         <div style="font-size:44px;margin-bottom:2px">✍️</div>
@@ -1518,6 +1524,300 @@ if "pytest" not in _sys.modules:                  # 테스트 중엔 미실행(�
         print("[reaper] 죽은 생성 job 자동 정리 스레드 시작(부팅 즉시+주기)")
     except Exception as _e:
         print(f"[reaper] 시작 실패(무시): {_e!r}")
+
+# ═══════════════════════════════════════════════════════════════════
+# 유튜브 벤치마킹 UI (C10) — 모든 라우트는 services.benchmark 만 호출(직접 SQL·상태전이 금지).
+# 단계: 프로젝트 → 영상등록 → (메타) → 자막 → 분석 → 교차종합 → 주장후보 → 기획승인 → 브리핑 → 유사도.
+# ═══════════════════════════════════════════════════════════════════
+_BM_MSG = {
+    "created": "프로젝트를 만들었어요.", "video_added": "영상을 추가했어요.",
+    "meta": "메타데이터를 가져왔어요.", "no_api": "YouTube API 키가 없어 메타는 건너뛰었어요(URL만 등록됨).",
+    "transcript": "자막을 저장했어요.", "manual_required": "외부 자막을 못 가져왔어요 — 자막을 직접 붙여넣어 주세요.",
+    "analyzed": "영상 분석을 마쳤어요.", "synth": "교차 종합을 마쳤어요.",
+    "claims": "검증 대상 주장을 정리했어요(전부 '검증 전' 상태).", "plan": "기획안 초안을 만들었어요.",
+    "approved": "기획안을 승인했어요.", "rejected": "기획안을 반려했어요.",
+    "sim": "유사도 검사를 마쳤어요.",
+    "e403": "권한이 없어요(승인은 승인자/관리자만).", "e409": "지금 상태에서는 처리할 수 없어요.",
+    "e400": "입력을 확인해 주세요.", "err": "처리 중 문제가 발생했어요.",
+}
+
+def _bm_run(h, call, ok_key, redirect_path):
+    """service 호출 공통 래퍼: 성공→ok_key, ServiceError→상태별 메시지로 redirect."""
+    from services.exceptions import ServiceError
+    try:
+        res = call()
+        key = ok_key(res) if callable(ok_key) else ok_key
+        return redirect(f"{redirect_path}?m={key}")
+    except ServiceError as e:
+        if e.http_status == 401:
+            return redirect("/login")
+        m = {403: "e403", 409: "e409", 404: "e400", 400: "e400", 422: "e400"}.get(e.http_status, "err")
+        return redirect(f"{redirect_path}?m={m}")
+
+def _bm_badge(status):
+    c = {"draft": "#94a3b8", "analyzing": "#f59e0b", "planned": "#6366f1",
+         "scripted": "#16a34a", "approved": "#16a34a", "rejected": "#dc2626",
+         "pending_verification": "#f59e0b", "available": "#16a34a",
+         "manual_required": "#dc2626", "low": "#16a34a", "medium": "#f59e0b", "high": "#dc2626"}.get(status, "#94a3b8")
+    return f'<span style="background:{c};color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px">{_esc(status)}</span>'
+
+@app.get("/h/<h>/benchmark")
+def bm_home(h):
+    from services import benchmark as bm
+    from services.exceptions import ServiceError
+    from store.db import make_engine
+    try:
+        ctx = _dash_ctx(h)
+        projects = bm.list_projects(make_engine(), ctx)
+    except ServiceError as e:
+        return redirect("/login") if e.http_status == 401 else abort(e.http_status)
+    _csrf = session.get("_csrf", "")
+    m = request.args.get("m"); note = f'<div class=note>{_esc(_BM_MSG.get(m, ""))}</div>' if m in _BM_MSG else ""
+    rows = "".join(
+        f'<a class=hcard href="/h/{_esc(h)}/benchmark/{p["project_id"]}">'
+        f'<div class=n>{_esc(p["title"])} {_bm_badge(p["status"])}</div>'
+        f'<div class=i>영상 {p["videos"]}개 · {_esc(p["created_at"][:10])}</div></a>'
+        for p in projects) or '<div class=muted>아직 벤치마킹 프로젝트가 없어요.</div>'
+    body = f"""
+    <div class=row style="margin-bottom:8px"><a class="btn ghost" href="/h/{_esc(h)}">← 대시보드</a></div>
+    <div class=hero><h1>유튜브 벤치마킹</h1>
+      <p>잘나가는 채널 영상을 등록·분석해 '흥행 공식'을 뽑고, 우리 기획안으로 이어가요.
+      의학 주장은 여기서 사실로 확정하지 않고 '검증 대상'으로만 모읍니다.</p></div>
+    {note}
+    <div class=card><h2>+ 새 벤치마킹 프로젝트</h2>
+      <form method=post action="/h/{_esc(h)}/benchmark/new"><input type=hidden name=_csrf value="{_csrf}">
+        <label>프로젝트 제목</label><input type=text name=title placeholder="예: 이명 벤치마킹 3편" required>
+        <div class=row style="margin-top:14px"><button class="btn pri" type=submit>만들기</button></div>
+      </form></div>
+    <div class=hlist style="margin-top:16px">{rows}</div>"""
+    return page("유튜브 벤치마킹", body)
+
+@app.post("/h/<h>/benchmark/new")
+def bm_new(h):
+    from services import benchmark as bm
+    from store.db import make_engine
+    title = request.form.get("title", "")
+    return _bm_run(h, lambda: bm.create_project(make_engine(), _dash_ctx(h), title),
+                   lambda r: "created", f"/h/{h}/benchmark") \
+        if title.strip() else redirect(f"/h/{h}/benchmark?m=e400")
+
+@app.get("/h/<h>/benchmark/<pid>")
+def bm_project(h, pid):
+    from services import benchmark as bm
+    from services.exceptions import ServiceError
+    from store.db import make_engine
+    try:
+        ctx = _dash_ctx(h); eng = make_engine()
+        proj = bm.get_project(eng, ctx, pid)
+        analyses = bm.list_analyses(eng, ctx, pid)
+        syn = bm.get_latest_synthesis(eng, ctx, pid)
+        claims = bm.list_claim_candidates(eng, ctx, pid)
+        plans = bm.list_plans(eng, ctx, pid)
+    except ServiceError as e:
+        return redirect("/login") if e.http_status == 401 else abort(e.http_status)
+    _csrf = session.get("_csrf", "")
+    base = f"/h/{_esc(h)}/benchmark/{_esc(pid)}"
+    m = request.args.get("m"); note = f'<div class=note>{_esc(_BM_MSG.get(m, ""))}</div>' if m in _BM_MSG else ""
+    analyzed_refs = {a["video_ref"] for a in analyses}
+
+    # 1) 영상들
+    vrows = ""
+    for v in proj["videos"]:
+        ts = v["transcript_status"]; done = v["video_ref"] in analyzed_refs
+        tstat = _bm_badge(ts) if ts else '<span class=muted>자막 없음</span>'
+        meta = (f'조회수 {v["view_count"]:,}' if v["view_count"] else "메타 미수집")
+        vrows += f"""<div class=card style="padding:14px">
+          <div class=row><b>{_esc(v["title"] or v["url"])}</b> {tstat} {"✅분석완료" if done else ""}</div>
+          <div class=muted style="margin:4px 0 8px">{_esc(v["url"])} · {_esc(meta)} · {_esc(v["caption_status"] or "")}</div>
+          <form method=post action="{base}/video/{v["video_ref"]}/transcript" enctype=multipart/form-data style="margin-bottom:6px">
+            <input type=hidden name=_csrf value="{_csrf}">
+            <textarea name=pasted rows=2 placeholder="자막 붙여넣기(외부 수집 실패 시)" style="width:100%;font-size:13px"></textarea>
+            <div class=row style="margin-top:6px">
+              <input type=file name=file accept=".srt,.vtt,.txt" style="font-size:12px">
+              <label class=muted style="font-size:12px"><input type=checkbox name=try_external value=1> 외부 자동수집 시도</label>
+              <button class="btn ghost" type=submit>자막 저장</button></div>
+          </form>
+          <form method=post action="{base}/video/{v["video_ref"]}/analyze" style="display:inline">
+            <input type=hidden name=_csrf value="{_csrf}">
+            <button class="btn" type=submit {"disabled" if not ts=="available" else ""}>이 영상 분석{"(자막 필요)" if ts!="available" else ""}</button>
+          </form></div>"""
+
+    # 2) 종합 결과
+    syn_html = '<div class=muted>아직 없음 — 영상 1개 이상 분석 후 종합하세요.</div>'
+    if syn:
+        s = syn["synthesis"] or {}
+        def _lst(x): return "".join(f"<li>{_esc(i)}</li>" for i in (x or [])[:8])
+        vf = s.get("virality_formula") or {}
+        syn_html = f"""<div class=note>
+          <b>흥행 공식</b><br>훅: {_esc(vf.get('hook',''))} · 구성: {_esc(vf.get('structure',''))} · 화법: {_esc(vf.get('narration',''))}
+          <br><b>공통 패턴</b><ul>{_lst(s.get('common_patterns'))}</ul>
+          <b>차별화 기회(gaps)</b><ul>{_lst(s.get('content_gaps'))}</ul>
+          <b>복제 금지 표현</b><ul>{_lst(s.get('forbidden_expressions'))}</ul></div>"""
+
+    # 3) 주장 후보
+    claim_rows = "".join(
+        f"<tr><td>{_esc(c['claim_text'])}</td><td>{_esc(c['claim_type'] or '')}</td><td>{_bm_badge(c['status'])}</td></tr>"
+        for c in claims) or '<tr><td colspan=3 class=muted>없음</td></tr>'
+
+    # 4) 기획안들
+    plan_rows = ""
+    for pl in plans:
+        approve = f"""<form method=post action="{base}/plan/{pl['plan_id']}/approve" style="display:inline">
+            <input type=hidden name=_csrf value="{_csrf}"><button class="btn" type=submit>승인</button></form>
+          <form method=post action="{base}/plan/{pl['plan_id']}/reject" style="display:inline">
+            <input type=hidden name=_csrf value="{_csrf}"><button class="btn ghost" type=submit>반려</button></form>""" if pl["status"] == "draft" else ""
+        brief = f' · <a href="{base}/plan/{pl["plan_id"]}/brief">생성 브리핑 보기</a>' if pl["status"] == "approved" else ""
+        plan_rows += f'<div class=row style="margin:4px 0"><a href="{base}/plan/{pl["plan_id"]}">기획안</a> {_bm_badge(pl["status"])} {approve}{brief}</div>'
+    plan_rows = plan_rows or '<div class=muted>아직 없음</div>'
+
+    body = f"""
+    <div class=row style="margin-bottom:8px"><a class="btn ghost" href="/h/{_esc(h)}/benchmark">← 프로젝트 목록</a></div>
+    <div class=hero><h1>{_esc(proj["title"])} {_bm_badge(proj["status"])}</h1></div>
+    {note}
+    <div class=card><h2>① 영상 등록 · 자막 · 분석</h2>
+      <form method=post action="{base}/add-video" class=row><input type=hidden name=_csrf value="{_csrf}">
+        <input type=text name=url placeholder="유튜브 URL" style="flex:1" required>
+        <button class="btn pri" type=submit>영상 추가</button></form>
+      <form method=post action="{base}/metadata" style="margin-top:8px"><input type=hidden name=_csrf value="{_csrf}">
+        <button class="btn ghost" type=submit>📊 메타데이터 가져오기(API 키 필요)</button></form>
+      <div style="margin-top:12px">{vrows}</div></div>
+    <div class=card><h2>② 교차 종합 <span class=muted>(분석 {len(analyses)}개)</span></h2>
+      <form method=post action="{base}/synthesize"><input type=hidden name=_csrf value="{_csrf}">
+        <button class="btn pri" type=submit>교차 종합 실행</button></form>
+      <div style="margin-top:10px">{syn_html}</div>
+      <form method=post action="{base}/claims" style="margin-top:8px"><input type=hidden name=_csrf value="{_csrf}">
+        <button class="btn ghost" type=submit>검증 대상 주장 정리</button></form>
+      <table style="margin-top:8px;width:100%;font-size:13px"><tr><th align=left>주장(검증 전)</th><th>유형</th><th>상태</th></tr>{claim_rows}</table></div>
+    <div class=card><h2>③ 기획안 · 승인</h2>
+      <form method=post action="{base}/plan"><input type=hidden name=_csrf value="{_csrf}">
+        <button class="btn pri" type=submit>기획안 생성</button></form>
+      <div style="margin-top:10px">{plan_rows}</div></div>
+    <div class=card><h2>④ 원본 유사도 검사(표절 방지)</h2>
+      <form method=post action="{base}/similarity"><input type=hidden name=_csrf value="{_csrf}">
+        <textarea name=script rows=5 placeholder="완성한 대본을 붙여넣으면 원본 자막과의 축자·의미 유사도를 검사합니다" style="width:100%"></textarea>
+        <div class=row style="margin-top:8px">
+          <label class=muted style="font-size:12px"><input type=checkbox name=use_llm value=1> 의미/구조까지 LLM 심층검사</label>
+          <button class="btn" type=submit>유사도 검사</button></div></form></div>"""
+    return page(f"벤치마킹 · {proj['title']}", body)
+
+@app.post("/h/<h>/benchmark/<pid>/add-video")
+def bm_add_video(h, pid):
+    from services import benchmark as bm
+    from store.db import make_engine
+    url = request.form.get("url", "")
+    return _bm_run(h, lambda: bm.add_video(make_engine(), _dash_ctx(h), pid, url),
+                   "video_added", f"/h/{h}/benchmark/{pid}")
+
+@app.post("/h/<h>/benchmark/<pid>/metadata")
+def bm_metadata(h, pid):
+    from services import benchmark as bm
+    from store.db import make_engine
+    return _bm_run(h, lambda: bm.fetch_metadata(make_engine(), _dash_ctx(h), pid),
+                   lambda r: "no_api" if r.get("no_api") else "meta", f"/h/{h}/benchmark/{pid}")
+
+@app.post("/h/<h>/benchmark/<pid>/video/<vref>/transcript")
+def bm_transcript(h, pid, vref):
+    from services import benchmark as bm
+    from store.db import make_engine
+    pasted = request.form.get("pasted") or None
+    try_external = bool(request.form.get("try_external"))
+    fb = None; fn = None
+    f = request.files.get("file")
+    if f and f.filename:
+        fb = f.read(); fn = f.filename
+    return _bm_run(h, lambda: bm.fetch_transcript(make_engine(), _dash_ctx(h), vref,
+                   pasted_text=pasted, file_bytes=fb, filename=fn, try_external=try_external),
+                   lambda r: "transcript" if r["status"] == "available" else "manual_required",
+                   f"/h/{h}/benchmark/{pid}")
+
+@app.post("/h/<h>/benchmark/<pid>/video/<vref>/analyze")
+def bm_analyze(h, pid, vref):
+    from services import benchmark as bm
+    from store.db import make_engine
+    return _bm_run(h, lambda: bm.analyze_video(make_engine(), _dash_ctx(h), vref),
+                   "analyzed", f"/h/{h}/benchmark/{pid}")
+
+@app.post("/h/<h>/benchmark/<pid>/synthesize")
+def bm_synthesize(h, pid):
+    from services import benchmark as bm
+    from store.db import make_engine
+    return _bm_run(h, lambda: bm.synthesize_project(make_engine(), _dash_ctx(h), pid),
+                   "synth", f"/h/{h}/benchmark/{pid}")
+
+@app.post("/h/<h>/benchmark/<pid>/claims")
+def bm_claims(h, pid):
+    from services import benchmark as bm
+    from store.db import make_engine
+    return _bm_run(h, lambda: bm.extract_claim_candidates(make_engine(), _dash_ctx(h), pid),
+                   "claims", f"/h/{h}/benchmark/{pid}")
+
+@app.post("/h/<h>/benchmark/<pid>/plan")
+def bm_plan(h, pid):
+    from services import benchmark as bm
+    from store.db import make_engine
+    return _bm_run(h, lambda: bm.generate_plan(make_engine(), _dash_ctx(h), pid),
+                   "plan", f"/h/{h}/benchmark/{pid}")
+
+@app.post("/h/<h>/benchmark/<pid>/plan/<plan_id>/approve")
+def bm_plan_approve(h, pid, plan_id):
+    from services import benchmark as bm
+    from store.db import make_engine
+    return _bm_run(h, lambda: bm.approve_plan(make_engine(), _dash_ctx(h), plan_id),
+                   "approved", f"/h/{h}/benchmark/{pid}")
+
+@app.post("/h/<h>/benchmark/<pid>/plan/<plan_id>/reject")
+def bm_plan_reject(h, pid, plan_id):
+    from services import benchmark as bm
+    from store.db import make_engine
+    return _bm_run(h, lambda: bm.reject_plan(make_engine(), _dash_ctx(h), plan_id),
+                   "rejected", f"/h/{h}/benchmark/{pid}")
+
+@app.get("/h/<h>/benchmark/<pid>/plan/<plan_id>")
+def bm_plan_view(h, pid, plan_id):
+    from services import benchmark as bm
+    from services.exceptions import ServiceError
+    from store.db import make_engine
+    import json as _json
+    try:
+        p = bm.get_plan(make_engine(), _dash_ctx(h), plan_id)
+    except ServiceError as e:
+        return redirect("/login") if e.http_status == 401 else abort(e.http_status)
+    pretty = _esc(_json.dumps(p["plan"], ensure_ascii=False, indent=2))
+    body = f"""<div class=row style="margin-bottom:8px"><a class="btn ghost" href="/h/{_esc(h)}/benchmark/{_esc(pid)}">← 프로젝트</a></div>
+    <div class=hero><h1>기획안 {_bm_badge(p["status"])}</h1></div>
+    <div class=card><pre style="white-space:pre-wrap;font-size:13px;line-height:1.6">{pretty}</pre></div>"""
+    return page("기획안", body)
+
+@app.get("/h/<h>/benchmark/<pid>/plan/<plan_id>/brief")
+def bm_plan_brief(h, pid, plan_id):
+    from services import benchmark as bm
+    from services.exceptions import ServiceError
+    from store.db import make_engine
+    try:
+        b = bm.build_generation_brief(make_engine(), _dash_ctx(h), plan_id)
+    except ServiceError as e:
+        if e.http_status == 401:
+            return redirect("/login")
+        return redirect(f"/h/{h}/benchmark/{pid}?m=e409")
+    body = f"""<div class=row style="margin-bottom:8px"><a class="btn ghost" href="/h/{_esc(h)}/benchmark/{_esc(pid)}">← 프로젝트</a></div>
+    <div class=hero><h1>생성 브리핑</h1><p>이 브리핑을 참고해 기존 대본 생성기로 제작하세요(의학 내용은 근거검증을 따릅니다).</p></div>
+    <div class=card><div class=muted>주제: {_esc(b["topic"])}</div>
+      <pre style="white-space:pre-wrap;font-size:13px;line-height:1.7;margin-top:8px">{_esc(b["brief_text"])}</pre></div>"""
+    return page("생성 브리핑", body)
+
+@app.post("/h/<h>/benchmark/<pid>/similarity")
+def bm_similarity(h, pid):
+    from services import benchmark as bm
+    from store.db import make_engine
+    script = request.form.get("script", "")
+    use_llm = bool(request.form.get("use_llm"))
+    gen = None
+    if use_llm:
+        from llm.runner import generate as _g
+        gen = _g
+    return _bm_run(h, lambda: bm.check_similarity(make_engine(), _dash_ctx(h), pid, script, generator=gen),
+                   lambda r: "sim", f"/h/{h}/benchmark/{pid}")
+
 
 if __name__ == "__main__":
     load_users()  # 기본 계정 보장 + 콘솔 안내
