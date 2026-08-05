@@ -1534,6 +1534,7 @@ _BM_MSG = {
     "created": "프로젝트를 만들었어요.", "video_added": "영상을 추가했어요.",
     "meta": "메타데이터를 가져왔어요.", "no_api": "YouTube API 키가 없어 자동 검색/메타를 건너뛰었어요. URL을 직접 넣어 주세요.",
     "found": "주제로 인기 영상을 찾아 등록했어요.", "notfound": "관련 영상을 못 찾았어요. 다른 주제어로 시도해 보세요.",
+    "removed": "영상을 삭제했어요.",
     "transcript": "자막을 저장했어요.", "manual_required": "외부 자막을 못 가져왔어요 — 자막을 직접 붙여넣어 주세요.",
     "analyzed": "영상 분석을 마쳤어요.", "synth": "교차 종합을 마쳤어요.",
     "claims": "검증 대상 주장을 정리했어요(전부 '검증 전' 상태).", "plan": "기획안 초안을 만들었어요.",
@@ -1655,6 +1656,11 @@ def bm_project(h, pid):
           <form method=post action="{base}/video/{v["video_ref"]}/analyze" style="display:inline">
             <input type=hidden name=_csrf value="{_csrf}">
             <button class="btn" type=submit {"disabled" if not ts=="available" else ""}>이 영상 분석{"(자막 필요)" if ts!="available" else ""}</button>
+          </form>
+          <form method=post action="{base}/video/{v["video_ref"]}/delete" style="display:inline"
+                onsubmit="return confirm('이 영상을 삭제할까요? 자막·분석도 함께 지워져요.');">
+            <input type=hidden name=_csrf value="{_csrf}">
+            <button class="btn ghost" type=submit style="color:var(--danger)">🗑 삭제</button>
           </form></div>"""
 
     # 2) 종합 결과
@@ -1791,6 +1797,13 @@ def bm_transcript(h, pid, vref):
                    pasted_text=pasted, file_bytes=fb, filename=fn, try_external=try_external),
                    lambda r: "transcript" if r["status"] == "available" else "manual_required",
                    f"/h/{h}/benchmark/{pid}")
+
+@app.post("/h/<h>/benchmark/<pid>/video/<vref>/delete")
+def bm_delete_video(h, pid, vref):
+    from services import benchmark as bm
+    from store.db import make_engine
+    return _bm_run(h, lambda: bm.remove_video(make_engine(), _dash_ctx(h), pid, vref),
+                   "removed", f"/h/{h}/benchmark/{pid}")
 
 @app.post("/h/<h>/benchmark/<pid>/video/<vref>/analyze")
 def bm_analyze(h, pid, vref):

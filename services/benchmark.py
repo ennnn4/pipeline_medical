@@ -222,6 +222,19 @@ def add_videos_by_topic(engine, ctx, project_id, topic, count=3, searcher=None, 
             "titles": [r.get("title") for r in results]}
 
 
+def remove_video(engine, ctx, project_id, video_ref):
+    """프로젝트에서 영상 삭제(자막·분석도 CASCADE 삭제). 반환: {removed}."""
+    permissions.require(ctx, BENCHMARK_ROLES)
+    pid, ref = _uuid(project_id), _uuid(video_ref)
+    with _conn(engine, ctx) as cn:
+        n = cn.execute(text(
+            "delete from youtube_videos where id=:r and project_id=:p and hospital_id=:h"),
+            {"r": ref, "p": pid, "h": ctx.hospital_id}).rowcount
+    if not n:
+        raise NotFound("영상을 찾을 수 없습니다")
+    return {"removed": n}
+
+
 def fetch_metadata(engine, ctx, project_id, fetcher=None):
     """프로젝트 영상들의 YouTube 메타 조회 후 저장. fetcher 미지정 시 youtube_meta.fetch(키 필요).
     키 없으면 skipped 반환(무영향). 반환: {updated, skipped, no_api}."""
