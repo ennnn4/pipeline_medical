@@ -17,6 +17,7 @@ from services import youtube_meta
 
 BENCHMARK_ROLES = {"editor", "approver", "admin", "platform_operator"}
 ANALYZE_PROMPT_VERSION = "ba-1"
+SYNTH_PROMPT_VERSION = "cs-1"
 
 
 def _uuid(v):
@@ -226,3 +227,99 @@ def list_analyses(engine, ctx, project_id):
     return [{"analysis_id": str(r.id), "video_ref": str(r.video_ref), "title": r.title,
              "url": r.url, "model": r.model, "created_at": r.created_at.isoformat(),
              "analysis": r.analysis} for r in rows]
+
+
+# ── 교차 종합(C5) ──
+def synthesize_project(engine, ctx, project_id, model=None, generator=None):
+    """프로젝트의 영상별 분석들을 교차 비교 → 흥행공식/차별화기회/검증대상 주장 종합(jsonb) 저장.
+    분석이 최소 1건 필요. generator 주입형(테스트 LLM 비용 0)."""
+    permissions.require(ctx, BENCHMARK_ROLES)
+    pid = _uuid(project_id)
+    analyses = list_analyses(engine, ctx, project_id)
+    if not analyses:
+        raise ServiceError("교차 종합하려면 먼저 영상 분석(1건 이상)이 필요합니다")
+
+    from llm import runner
+    gen = generator or runner.generate
+    mdl = model or runner.MODEL_KB
+    system = runner.load_prompt("benchmark_synthesize.md")
+    payload = [{"title": a["title"], "url": a["url"], "analysis": a["analysis"]} for a in analyses]
+    user = f"[영상 {len(payload)}편 분석 결과(JSON)]\n" + json.dumps(payload, ensure_ascii=False)
+    synthesis = gen(system, user, parse_json=True, model=mdl, label="교차종합", max_tokens=8000, cache=True)
+    if not isinstance(synthesis, dict):
+        raise ServiceError("종합 결과가 올바른 JSON이 아닙니다")
+    chash = hashlib.sha256(user.encode("utf-8")).hexdigest()
+    with _conn(engine, ctx) as cn:
+        sid = cn.execute(text(
+            "insert into cross_syntheses(hospital_id,project_id,synthesis,model,prompt_version,content_hash) "
+            "values(:h,:p,cast(:s as jsonb),:m,:pv,:ch) returning id"),
+            {"h": ctx.hospital_id, "p": pid, "s": json.dumps(synthesis, ensure_ascii=False),
+             "m": mdl, "pv": SYNTH_PROMPT_VERSION, "ch": chash}).scalar()
+        cn.execute(text("update benchmark_projects set status='analyzing', updated_at=now() "
+                        "where id=:p and hospital_id=:h and status='draft'"),
+                   {"p": pid, "h": ctx.hospital_id})
+    return {"synthesis_id": str(sid), "video_count": len(payload), "synthesis": synthesis}
+
+
+def get_latest_synthesis(engine, ctx, project_id):
+    """프로젝트 최신 교차 종합. 없으면 None."""
+    permissions.require(ctx, BENCHMARK_ROLES)
+    pid = _uuid(project_id)
+    with _conn(engine, ctx) as cn:
+        r = cn.execute(text(
+            "select id, synthesis, model, created_at from cross_syntheses "
+            "where project_id=:p and hospital_id=:h order by created_at desc limit 1"),
+            {"p": pid, "h": ctx.hospital_id}).first()
+    if not r:
+        return None
+    return {"synthesis_id": str(r.id), "model": r.model,
+            "created_at": r.created_at.isoformat(), "synthesis": r.synthesis}
+
+
+# ── 유튜브 의학주장 후보(C6) ──
+def extract_claim_candidates(engine, ctx, project_id):
+    """최신 교차 종합의 claims_to_verify → yt_claim_candidates(status=pending_verification) 적재.
+    evidence 자동승격 금지: 상태는 무조건 검증 전, linked_claim_card_id는 null(Phase 2에서 연결).
+    claim_text 기준 dedup(재실행 안전). 반환: {inserted,skipped,total}."""
+    permissions.require(ctx, BENCHMARK_ROLES)
+    pid = _uuid(project_id)
+    syn = get_latest_synthesis(engine, ctx, project_id)
+    if not syn:
+        raise ServiceError("주장 후보를 뽑으려면 먼저 교차 종합이 필요합니다")
+    claims = (syn.get("synthesis") or {}).get("claims_to_verify") or []
+    inserted = skipped = 0
+    with _conn(engine, ctx) as cn:
+        existing = {r[0] for r in cn.execute(text(
+            "select claim_text from yt_claim_candidates where project_id=:p and hospital_id=:h"),
+            {"p": pid, "h": ctx.hospital_id})}
+        for c in claims:
+            ct = (c.get("claim_text") or "").strip()
+            if not ct or ct in existing:
+                skipped += 1
+                continue
+            cn.execute(text(
+                "insert into yt_claim_candidates(hospital_id,project_id,claim_text,claim_type,"
+                "population,condition,intervention,comparator,outcome,numeric_value) "
+                "values(:h,:p,:ct,:cty,:po,:co,:iv,:cm,:ou,:nv)"),
+                {"h": ctx.hospital_id, "p": pid, "ct": ct, "cty": c.get("claim_type"),
+                 "po": c.get("population"), "co": c.get("condition"), "iv": c.get("intervention"),
+                 "cm": c.get("comparator"), "ou": c.get("outcome"), "nv": c.get("numeric_value")})
+            existing.add(ct)
+            inserted += 1
+    return {"inserted": inserted, "skipped": skipped, "total": len(claims)}
+
+
+def list_claim_candidates(engine, ctx, project_id):
+    permissions.require(ctx, BENCHMARK_ROLES)
+    pid = _uuid(project_id)
+    with _conn(engine, ctx) as cn:
+        rows = cn.execute(text(
+            "select id, claim_text, claim_type, population, condition, intervention, comparator, "
+            "  outcome, numeric_value, status, linked_claim_card_id, created_at "
+            "from yt_claim_candidates where project_id=:p and hospital_id=:h order by created_at"),
+            {"p": pid, "h": ctx.hospital_id}).all()
+    return [{"id": str(r.id), "claim_text": r.claim_text, "claim_type": r.claim_type,
+             "population": r.population, "condition": r.condition, "intervention": r.intervention,
+             "comparator": r.comparator, "outcome": r.outcome, "numeric_value": r.numeric_value,
+             "status": r.status, "linked_claim_card_id": str(r.linked_claim_card_id) if r.linked_claim_card_id else None,
+             "created_at": r.created_at.isoformat()} for r in rows]
