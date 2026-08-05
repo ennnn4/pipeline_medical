@@ -11,10 +11,11 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 COSTS = os.path.join(_ROOT, "data", "costs.jsonl")
 
 # 요금(1M 토큰당 USD) — 실제 요금제에 맞게 조정. 모델명으로 티어 선택(모르면 opus급으로 보수적 가정).
+# 2026-08 기준(GPT 검토 정정). 정확 청구는 Anthropic 콘솔 Usage로 확인 — 요금 바뀌면 여기만 수정.
 RATES = {
-    "claude":        {"in": 15.0, "out": 75.0},   # 기본/opus급(모델 매칭 실패 시)
-    "opus":          {"in": 15.0, "out": 75.0},
-    "sonnet":        {"in": 3.0,  "out": 15.0},
+    "claude":        {"in": 5.0,  "out": 25.0},    # 기본/opus급(모델 매칭 실패 시)
+    "opus":          {"in": 5.0,  "out": 25.0},    # Claude Opus 5
+    "sonnet":        {"in": 3.0,  "out": 15.0},    # Sonnet 5(9/1~ 정가; ~8/31 프로모 $2/$10)
     "haiku":         {"in": 1.0,  "out": 5.0},
     "gpt-image-1":   {"in": 5.0,  "img": 40.0},    # 텍스트 입력 / 이미지 출력 토큰
 }

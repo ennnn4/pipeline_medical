@@ -80,16 +80,23 @@ def generate(system, user, parse_json=False, max_tokens=32000, effort="high",
                 print(f"  … {tag}생성 중 {chars:,}자 · {int(now - t0)}s", flush=True)
                 last = now
         msg = stream.get_final_message()
-    dt = int(time.monotonic() - t0)
+    dt = round(time.monotonic() - t0, 1)
     text = "".join(parts) or "".join(b.text for b in msg.content if getattr(b, "type", None) == "text")
+    u = getattr(msg, "usage", None)
+    itok = getattr(u, "input_tokens", 0) or 0
+    otok = getattr(u, "output_tokens", 0) or 0
+    cread = getattr(u, "cache_read_input_tokens", 0) or 0     # 프롬프트 캐시 재사용 토큰(있으면 훨씬 쌈)
+    usd = 0.0
     try:
-        from llm.cost import record
-        u = msg.usage
-        record("claude", mdl, in_tok=getattr(u, "input_tokens", 0), out_tok=getattr(u, "output_tokens", 0),
-               note=(label or system or "")[:40])
+        from llm.cost import record, _claude_rate
+        r = _claude_rate(mdl)
+        usd = itok / 1e6 * r["in"] + otok / 1e6 * r["out"]
+        record("claude", mdl, in_tok=itok, out_tok=otok, note=(label or system or "")[:40])
     except Exception:
         pass
-    print(f"  ✓ {tag}완료 {chars:,}자 · {dt}s", flush=True)
+    # 단계별 원가 계측(파싱용) — app이 이 라인들을 합산해 이번 생성 총비용을 기록/표시
+    print(f"  [COST] stage={label or 'gen'} model={mdl} in={itok} out={otok} cache={cread} usd={usd:.4f} lat={dt}s", flush=True)
+    print(f"  ✓ {tag}완료 {chars:,}자 · {int(dt)}s", flush=True)
     return _extract_json(text) if parse_json else text
 
 def load_prompt(name):

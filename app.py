@@ -1258,6 +1258,20 @@ def _run_pipeline(h, topic, evidence=True, request_key=None, membership_id=None)
         proc.wait()
         ok = (proc.returncode == 0)   # run.py all 이 검수 실패/오류 시 non-zero 반환
         _hb_stop.set()
+        try:      # 이번 생성 API 원가 합산([COST] 라인) → 로그 + generation_jobs.total_cost_usd(투명 원가·계측)
+            _usds = re.findall(r"\[COST\][^\n]*?usd=([0-9.]+)", log)
+            if _usds:
+                _total = round(sum(float(x) for x in _usds), 4)
+                log += f"\n💰 이번 생성 API 비용: ${_total:.2f} (약 ₩{int(_total*1380):,}) · LLM {len(_usds)}콜"
+                job_set(h, log=log)
+                if hid and job_id:
+                    from store.repositories import tenant_conn
+                    from sqlalchemy import text as _txt
+                    with tenant_conn(make_engine(), hid) as _cn:
+                        _cn.execute(_txt("update generation_jobs set total_cost_usd=:c where id=:j and hospital_id=:h"),
+                                    {"c": _total, "j": job_id, "h": hid})
+        except Exception:
+            pass
     except Exception as e:
         _hb_stop.set()
         log += f"\n[오류] {e}"
