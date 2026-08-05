@@ -278,6 +278,8 @@ def home():
         emsg = '<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 같은 ID의 병원이 이미 있어요. 다른 이름을 써 주세요.</div>'
     elif _e == "taken":
         emsg = '<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 이미 사용 중인 병원 이름이에요(다른 사용자 소유). 다른 이름을 써 주세요.</div>'
+    elif _e == "badslug":
+        emsg = '<div class=note style="border-color:var(--danger);color:var(--danger)">⚠️ 영문 주소 ID는 영문·숫자·하이픈만 쓸 수 있어요.</div>'
     _oplink = ('<div style="text-align:right;margin-bottom:8px"><a class="btn g" href="/admin/members">👥 팀·권한 관리</a></div>'
                if _is_platform_operator(session.get("user_id")) else "")
     body = f"""
@@ -290,6 +292,8 @@ def home():
       <h2>+ 새 병원 만들기</h2>
       <form method=post action="/new"><input type=hidden name=_csrf value="{session.get('_csrf','')}">
         <label>병원명</label><input type=text name=name placeholder="예: 서울정형외과" required>
+        <label>영문 주소 ID <span class=muted style="font-weight:400;font-size:12px">(선택 — 비우면 자동. 예: roon → 주소가 /h/roon)</span></label>
+        <input type=text name=slug placeholder="영문·숫자·하이픈만 (예: roon)" pattern="[A-Za-z0-9_-]+">
         <label>원장 이름 (기본 화자)</label><input type=text name=host placeholder="예: 김철수">
         <label>채널 슬로건 (대시보드 부제)</label><input type=text name=tagline placeholder="예: 무릎이 편해야 인생이 걷습니다">
         <label>주력 질환 (쉼표로 구분)</label><input type=text name=diseases placeholder="예: 오십견, 무릎관절염, 허리디스크">
@@ -403,7 +407,7 @@ def admin_members_set():
 @app.route("/new", methods=["POST"])
 def new():
     name = request.form.get("name","").strip()
-    hid = safe_id(name if re.match(r"^[a-zA-Z0-9_-]+$", name or "") else None)
+    slug_in = request.form.get("slug","").strip()
     # 이미 쓰는 slug(디스크 config ∪ PG 병원) — config가 임시디스크라 소실돼도 PG 기준으로 충돌 방지
     def _taken(slug):
         if os.path.exists(cfg_path(slug)):
@@ -415,13 +419,23 @@ def new():
                 return cn.execute(_t("select 1 from hospitals where slug=:s"), {"s": slug}).first() is not None
         except Exception:
             return False
-    # 한글 병원명이면 id는 자동 생성(hosp-N) — 디스크·PG 둘 다 안 쓰는 번호로
-    if not re.match(r"^[a-zA-Z0-9_-]+$", name or ""):
+    if slug_in:
+        # 사용자가 영문 주소 ID를 직접 지정 — raw 입력을 그대로 형식 검증(한글 등은 거부)
+        if not re.match(r"^[A-Za-z0-9_-]+$", slug_in) or slug_in in ("users", "_template"):
+            return redirect("/?err=badslug")
+        hid = slug_in
+        if _taken(hid):
+            return redirect("/?err=exists")
+    elif re.match(r"^[a-zA-Z0-9_-]+$", name or ""):
+        # 병원명이 영문이면 그대로 slug
+        hid = safe_id(name)
+        if _taken(hid):
+            return redirect("/?err=exists")
+    else:
+        # 한글 병원명 + slug 미지정 → hosp-N 자동(디스크·PG 둘 다 안 쓰는 번호)
         n = 1
         while _taken(f"hosp-{n}"): n += 1
         hid = f"hosp-{n}"
-    elif _taken(hid):
-        return redirect(f"/?err=exists")   # 기존 병원 ID 덮어쓰기 금지(데이터 손실·탈취 방지)
     # PG 먼저 provisioning → 충돌(다른 사람 소유 slug)이면 로컬 config 만들기 전에 차단
     try:
         _provision_pg(hid, name)
@@ -761,7 +775,10 @@ def hospital(h):
       submitAt=Date.now();sawRunning=false;
       modal.style.display='flex';document.getElementById('gmstage').textContent='생성을 시작하고 있어요…';
       setTimeout(poll,1200);});
-    if(%RUNNING%)poll();
+    // 탭 백그라운드→복귀 시 즉시 재폴링(스로틀로 '생성 중' 멈춤 방지)
+    document.addEventListener('visibilitychange',function(){if(!document.hidden && sawRunning)poll();});
+    // 리다이렉트(벤치마킹→대본생성)로 와도 진행 모달이 바로 뜨게 + 폴링 시작
+    if(%RUNNING%){showModal({log:''});poll();}
     </script>""".replace("%HID%", '"'+h+'"').replace("%RUNNING%", "true" if running else "false")
     return page(name, body, script)
 
@@ -2110,6 +2127,7 @@ def bm_generate_script(h, pid, plan_id):
             pass
     req_mid = _pg_membership_id(hid)
     if not job_get(h).get("running"):
+        job_set(h, topic=topic, status="running", ok=None, log="")   # 리다이렉트 전에 running 세팅(page가 즉시 폴링·모달)
         threading.Thread(target=_run_pipeline, args=(h, topic, True, str(_uuid.uuid4()), req_mid),
                          kwargs={"brief": brief["brief_text"]}, daemon=True).start()
     return redirect(f"/h/{h}")   # 생성 진행 모달·폴링이 있는 대시보드로
