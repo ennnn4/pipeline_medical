@@ -527,9 +527,9 @@ def hospital(h):
       {misswarn}
       <form id=upf method=post action="/h/{h}/upload" enctype=multipart/form-data
             onsubmit="return showUp();"><input type=hidden name=_csrf value="{_csrf}">
-        <div class=drop id=drop><span id=drophint>파일을 여기로 끌어다 놓거나 클릭 (pdf·docx·txt·zip)</span>
+        <label class=drop id=drop style="display:block"><span id=drophint>파일을 여기로 끌어다 놓거나 클릭 (pdf·docx·txt·zip)</span>
           <input id=fin type=file name=files multiple style="display:none">
-        </div>
+        </label>
         <div id=fsel class=muted style="margin-top:8px;font-size:13px;line-height:1.7"></div>
         <div class=row style="margin-top:12px"><button class="btn pri" id=upbtn type=submit>업로드</button>
         <span id=upmsg class=muted style="display:none;color:var(--accent);font-weight:700">⏳ 파일 올리는 중이에요 — 창을 닫지 마세요(용량 크면 시간이 걸려요).</span>
@@ -606,7 +606,7 @@ def hospital(h):
       document.getElementById('fsel').innerHTML=n?('선택된 파일 '+n+'개:<br>'+names+'<br><a href="#" id=fclr style="font-size:12px">전체 지우기</a>'):'';
       if(n){document.getElementById('fclr').onclick=function(e){e.preventDefault();BAG=new DataTransfer();fin.files=BAG.files;render();};}}
     function addFiles(list){for(var i=0;i<list.length;i++){BAG.items.add(list[i]);}fin.files=BAG.files;render();}
-    drop.onclick=function(){fin.click()};
+    // 클릭→파일열기는 <label>이 네이티브로 처리(숨은 input도 열림). JS onclick은 중복 방지 위해 제거.
     fin.onchange=function(){ // 이번에 새로 고른 것만 누적에 추가(중복 이름은 제외)
       var have={};for(var j=0;j<BAG.files.length;j++)have[BAG.files[j].name]=1;
       var add=[];for(var i=0;i<fin.files.length;i++){if(!have[fin.files[i].name])add.push(fin.files[i]);}
@@ -1597,6 +1597,7 @@ def bm_home(h):
     <div class=hero><h1>유튜브 벤치마킹</h1>
       <p>잘나가는 채널 영상을 등록·분석해 '흥행 공식'을 뽑고, 우리 기획안으로 이어가요.
       의학 주장은 여기서 사실로 확정하지 않고 '검증 대상'으로만 모읍니다.</p></div>
+    <div class=note style="border-left:4px solid var(--accent)">📎 <b>기획안은 병원에 업로드된 자료(원장 프로필·논문·기존 대본)를 자동으로 참고합니다</b> — 경쟁 형식 + 우리 근거·강점으로 차별화해요.</div>
     {note}
     <div class=card><h2>+ 새 벤치마킹 프로젝트</h2>
       <form method=post action="/h/{_esc(h)}/benchmark/new"><input type=hidden name=_csrf value="{_csrf}">
@@ -1718,6 +1719,7 @@ def bm_project(h, pid):
     body = f"""
     <div class=row style="margin-bottom:8px"><a class="btn ghost" href="/h/{_esc(h)}/benchmark">← 프로젝트 목록</a></div>
     <div class=hero><h1>{_esc(proj["title"])} {_bm_badge(proj["status"])}</h1></div>
+    <div class=note style="border-left:4px solid var(--accent)">📎 <b>이 기획은 병원에 업로드된 자료(원장 프로필·논문·기존 대본)를 자동으로 참고합니다.</b> 경쟁 영상의 '형식'에 우리 근거·원장 강점을 더해 차별화해요. (자료가 많을수록 좋아요)</div>
     {note}
     <div class=card><h2>① 영상 등록 · 자막 · 분석</h2>
       <form method=post action="{base}/search-videos" class=row style="margin-bottom:10px"><input type=hidden name=_csrf value="{_csrf}">
