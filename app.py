@@ -1597,7 +1597,8 @@ def bm_home(h):
         f'<div class=i>영상 {p["videos"]}개 · {_esc(p["created_at"][:10])}</div></a>'
         for p in projects) or '<div class=muted>아직 벤치마킹 프로젝트가 없어요.</div>'
     body = f"""
-    <div class=row style="margin-bottom:8px"><a class="btn ghost" href="/h/{_esc(h)}">← 대시보드</a></div>
+    <div class=row style="margin-bottom:8px"><a class="btn ghost" href="/h/{_esc(h)}">← 대시보드</a>
+      <a class="btn g" href="/guide/benchmark" target="_blank" rel="noopener">📖 사용 가이드</a></div>
     <div class=hero><h1>유튜브 벤치마킹</h1>
       <p>잘나가는 채널 영상을 등록·분석해 '흥행 공식'을 뽑고, 우리 기획안으로 이어가요.
       의학 주장은 여기서 사실로 확정하지 않고 '검증 대상'으로만 모읍니다.</p></div>
@@ -1727,7 +1728,8 @@ def bm_project(h, pid):
         simform = '<div class=muted style="margin-top:10px">아직 생성된 대본이 없어요 — 대본을 만든 뒤 여기서 자동 검사할 수 있어요.</div>'
 
     body = f"""
-    <div class=row style="margin-bottom:8px"><a class="btn ghost" href="/h/{_esc(h)}/benchmark">← 프로젝트 목록</a></div>
+    <div class=row style="margin-bottom:8px"><a class="btn ghost" href="/h/{_esc(h)}/benchmark">← 프로젝트 목록</a>
+      <a class="btn g" href="/guide/benchmark" target="_blank" rel="noopener">📖 사용 가이드</a></div>
     <div class=hero><h1>{_esc(proj["title"])} {_bm_badge(proj["status"])}</h1></div>
     <div class=note style="border-left:4px solid var(--accent)">📎 <b>이 기획은 병원에 업로드된 자료(원장 프로필·논문·기존 대본)를 자동으로 참고합니다.</b> 경쟁 영상의 '형식'에 우리 근거·원장 강점을 더해 차별화해요. (자료가 많을수록 좋아요)</div>
     {note}
