@@ -562,7 +562,11 @@ def _plan_brief_text(plan):
     형식(구성·각도·훅)만 지시하고, 의학 주장은 '검증 필요'로 명시(사실로 쓰지 말 것)."""
     plan = plan or {}
     L = []
-    L.append("[벤치마킹 기획 브리핑 — 형식 참고용]")
+    L.append("[벤치마킹 기획 브리핑 — 형식·톤 참고용]")
+    fmt = plan.get("format"); tone = plan.get("tone")
+    if fmt or tone:
+        L.append(f"★ 포맷: {fmt or '-'} / 톤: {tone or '-'} — 이 포맷·톤을 지켜라. "
+                 "가벼운 톤이면 가볍고 생활밀착하게, 논문 설명·전문 심화로 흐르지 말 것.")
     if plan.get("topic"): L.append(f"주제: {plan['topic']}")
     if plan.get("angle"): L.append(f"차별화 각도: {plan['angle']}")
     if plan.get("why_now"): L.append(f"기획 이유: {plan['why_now']}")

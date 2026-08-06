@@ -9,6 +9,9 @@
 ## 출력(JSON 하나만)
 ```json
 {
+  "winning_formats": ["이 진료과에서 잘 터지는 포맷 유형들(예: 셀프케어형·경고형·비교형·가격폭로형·리스트형·후기형). 조회수 높은 것 우선."],
+  "recommended_tone": "가벼움 | 중간 | 진지함 — 잘 되는 영상들의 실제 톤(대개 생활밀착·가벼움이 더 터짐)",
+  "mass_appeal_insight": "왜 이 영상들이 대중적으로 통했나(전문 깊이가 아니라 궁금증·공감·생활밀착 관점)",
   "common_patterns": ["여러 영상이 공통으로 쓴 훅/구성/화법(형식 차원)"],
   "differences": ["영상 간 접근·톤·타깃 차이"],
   "virality_formula": {"hook": "공통 훅 공식", "structure": "공통 전개 구조", "narration": "공통 화법", "engagement": "공통 이탈방지 요소"},
