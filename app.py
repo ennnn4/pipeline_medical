@@ -1955,8 +1955,12 @@ def bm_project(h, pid):
         s = syn["synthesis"] or {}
         def _lst(x): return "".join(f"<li>{_esc(i)}</li>" for i in (x or [])[:8])
         vf = s.get("virality_formula") or {}
+        _fmts = s.get("winning_formats") or []
+        _fmt_line = (f'<b>🔥 잘 터지는 포맷</b>: {_esc(" · ".join(_fmts[:6]))}<br>'
+                     f'<b>추천 톤</b>: {_esc(s.get("recommended_tone","-"))}'
+                     f'{" — " + _esc(s.get("mass_appeal_insight","")) if s.get("mass_appeal_insight") else ""}<br>' if _fmts else "")
         syn_html = f"""<div class=note>
-          <b>흥행 공식</b><br>훅: {_esc(vf.get('hook',''))} · 구성: {_esc(vf.get('structure',''))} · 화법: {_esc(vf.get('narration',''))}
+          {_fmt_line}<b>흥행 공식</b><br>훅: {_esc(vf.get('hook',''))} · 구성: {_esc(vf.get('structure',''))} · 화법: {_esc(vf.get('narration',''))}
           <br><b>공통 패턴</b><ul>{_lst(s.get('common_patterns'))}</ul>
           <b>차별화 기회(gaps)</b><ul>{_lst(s.get('content_gaps'))}</ul>
           <b>복제 금지 표현</b><ul>{_lst(s.get('forbidden_expressions'))}</ul></div>"""
@@ -2248,8 +2252,15 @@ def _render_plan(pl):
                    f'<ul style="margin:4px 0 0;padding-left:18px;line-height:1.9">{rows}</ul></div>')
     hook = pl.get("hook")
     hook_html = f'<div class=note style="margin:10px 0"><b>훅</b> {_esc(hook)}</div>' if hook else ""
+    fmt_html = ""
+    if pl.get("format") or pl.get("tone"):
+        fmt_html = (f'<div style="margin:6px 0"><span style="background:var(--accent-soft,#e7f0ff);color:var(--accent-ink,#1e4fd0);'
+                    f'font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px">📐 포맷: {_esc(pl.get("format","-"))}</span> '
+                    f'<span style="background:var(--surface);color:var(--ink2);font-size:12px;font-weight:700;'
+                    f'padding:3px 10px;border-radius:999px;border:1px solid var(--border)">🎚 톤: {_esc(pl.get("tone","-"))}</span></div>')
     return (
         (f'<div style="font-size:20px;font-weight:800;margin-bottom:6px">{_esc(pl.get("topic",""))}</div>' if pl.get("topic") else "")
+        + fmt_html
         + _row("차별화 각도:", pl.get("angle"))
         + _row("기획 이유:", pl.get("why_now"))
         + _row("타깃:", pl.get("target_audience"))
