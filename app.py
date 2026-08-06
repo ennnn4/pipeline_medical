@@ -2027,10 +2027,12 @@ def bm_project(h, pid):
             <button class="btn" type=submit>유사도 검사</button></div></form></details></div>"""
     import json as _json
     bm_script = ("<script>(function(){"
+                 # 제출 후 버튼 비활성(처리중 표시). setTimeout(0)로 '제출 확정 뒤' 비활성 → 제출 취소 버그 방지.
                  "document.addEventListener('submit',function(e){"
-                 "var b=e.target.querySelector('button[type=submit]:not([disabled])');"
-                 "if(b){b.disabled=true;b.dataset._o=b.innerHTML;b.innerHTML='\\u23f3 처리 중\\u2026 (최대 1\\u007e2분)';}"
-                 "},true);"
+                 "var f=e.target;setTimeout(function(){"
+                 "var b=f.querySelector('button[type=submit]');"
+                 "if(b){b.disabled=true;b.innerHTML='\\u23f3 처리 중\\u2026 (최대 1\\u007e2분)';}},0);"
+                 "});"
                  # 입력값(주제·기획 방향) 새로고침에도 유지 — 프로젝트별 localStorage
                  "var PID=%PID%;"
                  "function _keep(sel,key){var el=document.querySelector(sel);if(!el)return;"

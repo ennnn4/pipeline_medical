@@ -1,0 +1,50 @@
+# 새 병원 설정 템플릿 — python run.py init --hospital <id> 가 이걸 복사해서 만든다.
+# hosp-1 는 자동으로 채워짐. 나머지는 병원에 맞게 수정하세요.
+hospital:
+  id: hosp-1
+  name: "룬피부과"
+  specialty: "진료과/치료 특징"
+  host: "박형권 원장"
+  host_role: 대표원장
+  location: "지역"
+  tagline: "채널 슬로건 한 줄"
+
+# 시작 시 확인할 입력 자료 체크리스트 (진료과 따라 조정)
+input_checklist:
+  - key: 원장설문지
+    required: true
+    match: [설문, survey, 브랜딩]
+  - key: 원장인터뷰      # 벤치마킹 도입으로 선택 전환(설문지만 필수)
+    required: false
+    match: [인터뷰, interview, 녹취]
+  - key: 원장강의자료
+    required: false
+    match: [강의, 강좌, lecture, ppt]
+  - key: 논문            # 선택 — 있으면 근거 강화(인용·수치대조·그림추출), 없어도 대본 생성
+    required: false
+    match: [논문, 증례, 학회지, paper, pubmed]
+  - key: 기존유튜브대본
+    required: false
+    match: [대본, script]
+  - key: 병원자료
+    required: false
+    match: [홈페이지, 블로그, faq, 진료철학, 소개]
+  - key: 경쟁유튜브
+    required: false
+    match: [경쟁, 참고, competitor, 유튜브참고]
+  - key: 기타
+    required: false
+    match: []
+
+youtube:
+  own_channel: null
+  competitor_channels: []
+  competitor_videos: []
+
+episode:
+  target_minutes: [13, 20]
+  standard_skeleton: true
+  deliverables: 12
+
+# 이 병원의 주력 질환 (질환별 KB 생성 대상)
+diseases: []
