@@ -202,6 +202,7 @@ CREATE TRIGGER trg_seal_job_materials BEFORE INSERT OR UPDATE OR DELETE ON gener
 def ensure_materials_schema(owner_engine):
     with owner_engine.begin() as cn:
         cn.execute(text(_DDL))
+        cn.execute(text("ALTER TABLE materials ADD COLUMN IF NOT EXISTS category text;"))  # 업로드 시 지정 종류
         for s in _policies():
             cn.execute(text(s))
         cn.execute(text(_MV_DDL))
@@ -259,9 +260,9 @@ def snapshot_job_materials(engine, hospital_id, job_id):
             {"c": len(rows), "hh": _manifest_hash(rows), "j": job_id, "h": hospital_id})
         return r.rowcount
 
-def save_material(engine, hospital_id, filename, raw, mime=None, created_by=None):
+def save_material(engine, hospital_id, filename, raw, mime=None, created_by=None, category=None):
     """같은 파일명은 새 immutable 버전 추가 + current 포인터 갱신(기존 bytes는 보존).
-    상한 초과는 MaterialTooLarge(임시 disk fallback 금지). 반환: 새 version_id."""
+    category=업로드 시 지정한 자료 종류(파일명 대신 이걸로 인식). 반환: 새 version_id."""
     if not isinstance(raw, (bytes, bytearray, memoryview)):
         raise TypeError("raw는 bytes 계열이어야 함")
     raw = bytes(raw)
@@ -272,14 +273,15 @@ def save_material(engine, hospital_id, filename, raw, mime=None, created_by=None
     ck = hashlib.sha256(raw).hexdigest()
     vid = uuid.uuid4()
     with tenant_conn(engine, hospital_id) as cn:
-        # 1) 논리 자료항목 확보(신규/기존 모두 id 반환)
+        # 1) 논리 자료항목 확보(신규/기존 모두 id 반환). category 지정되면 갱신.
         mid = cn.execute(text(
-            "insert into materials(id,hospital_id,filename,mime,size_bytes,checksum,data) "
-            "values(:i,:h,:f,:m,:s,:c,:d) "
-            "on conflict (hospital_id,filename) do update set filename=excluded.filename "
+            "insert into materials(id,hospital_id,filename,mime,size_bytes,checksum,data,category) "
+            "values(:i,:h,:f,:m,:s,:c,:d,:cat) "
+            "on conflict (hospital_id,filename) do update set "
+            "category=coalesce(excluded.category, materials.category) "
             "returning id"),
             {"i": uuid.uuid4(), "h": hospital_id, "f": filename, "m": mime,
-             "s": len(raw), "c": ck, "d": raw}).scalar()
+             "s": len(raw), "c": ck, "d": raw, "cat": category}).scalar()
         # 2) 불변 버전 추가(원본 보존)
         cn.execute(text(
             "insert into material_versions(id,material_id,hospital_id,filename,mime,size_bytes,checksum,data,created_by) "
@@ -298,6 +300,13 @@ def list_materials(engine, hospital_id):
         return [dict(r._mapping) for r in cn.execute(text(
             "select filename, size_bytes, uploaded_at from materials "
             "where hospital_id=:h order by uploaded_at"), {"h": hospital_id})]
+
+def material_category_map(engine, hospital_id):
+    """{filename: category} — 업로드 시 지정한 자료 종류(없는 건 제외)."""
+    with tenant_conn(engine, hospital_id) as cn:
+        return {r.filename: r.category for r in cn.execute(text(
+            "select filename, category from materials where hospital_id=:h and category is not null"),
+            {"h": hospital_id})}
 
 def get_material(engine, hospital_id, filename):
     filename = _normalize_filename(filename)

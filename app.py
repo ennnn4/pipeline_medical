@@ -546,12 +546,20 @@ def hospital(h):
                     f'📎 업로드된 자료 {len(raw)}개 · 펼쳐 보기</summary><ul class=files style="margin-top:8px">{_files_li}</ul></details>')
     else:
         filelist = '<p class=muted style="margin-top:6px">아직 업로드된 자료가 없어요.</p>'
-    # 필요 자료 체크리스트 (config의 input_checklist 기준, 파일명 매칭)
+    # 필요 자료 체크리스트 — 업로드 시 지정한 종류(category) 우선, 없으면 파일명 매칭
     from ingest.extract import categorize
     checklist = cfg.get("input_checklist", [])
+    _catmap = {}
+    try:
+        if _pg_hospital_id(h):
+            from store.db import make_engine
+            from store.materials import material_category_map
+            _catmap = material_category_map(make_engine(), _pg_hospital_id(h))
+    except Exception:
+        _catmap = {}
     counts = {}
     for fn in raw:
-        k = categorize(fn, checklist); counts[k] = counts.get(k, 0) + 1
+        k = _catmap.get(fn) or categorize(fn, checklist); counts[k] = counts.get(k, 0) + 1
         if fn.lower().endswith(".zip"):      # zip 안 자료도 카테고리 인식(예: 유튜브참고자료.zip 안 원장인터뷰)
             for inner in _zip_inner_names(h, fn):
                 ik = categorize(inner, checklist)
@@ -630,6 +638,17 @@ def hospital(h):
       {misswarn}
       <form id=upf method=post action="/h/{h}/upload" enctype=multipart/form-data
             onsubmit="return showUp();"><input type=hidden name=_csrf value="{_csrf}">
+        <label style="font-size:13px;font-weight:600">자료 종류 <span class=muted style="font-weight:400;font-size:12px">(이 업로드에 적용 — 파일명 대신 이걸로 인식)</span></label>
+        <select name=category style="width:100%;padding:9px;border-radius:9px;border:1px solid var(--border);margin:6px 0 10px">
+          <option value="">자동 인식 (파일명 기반)</option>
+          <option value="원장설문지">원장 설문지</option>
+          <option value="원장인터뷰">원장 인터뷰</option>
+          <option value="논문">논문 · 증례</option>
+          <option value="원장강의자료">원장 강의자료</option>
+          <option value="기존유튜브대본">기존 유튜브 대본</option>
+          <option value="병원자료">병원 자료(홈페이지·블로그 등)</option>
+          <option value="기타">기타</option>
+        </select>
         <label class=drop id=drop style="display:block"><span id=drophint>파일을 여기로 끌어다 놓거나 클릭 (pdf·docx·txt·zip)</span>
           <input id=fin type=file name=files multiple style="display:none">
         </label>
@@ -815,6 +834,7 @@ def upload(h):
     _INNER_OK = ALLOWED_EXT - {".zip"}       # zip 안 leaf(문서·이미지). zip은 재귀로 따로 처리.
     saved = 0; toobig = []; report = []      # report: (표시명, 상태, 상세) — 사용자에게 투명 공개
     _uid = session.get("user_id")
+    _cat = (request.form.get("category") or "").strip() or None   # 업로드 시 지정한 자료 종류
 
     def _persist(nm, data, tag=""):
         """bytes 하나를 PG 영구저장. 상태를 report에 남김. 성공 시 True."""
@@ -825,7 +845,7 @@ def upload(h):
         if not eng:
             report.append((tag + nm, "fail", "DB 연결 없음")); return False
         try:
-            save_material(eng, hid, nm, data, created_by=_uid)
+            save_material(eng, hid, nm, data, created_by=_uid, category=_cat)
             saved += 1; report.append((tag + nm, "ok", f"영구저장 {max(1,len(data)//1024)}KB")); return True
         except Exception as e:
             report.append((tag + nm, "fail", f"PG 저장 실패: {type(e).__name__}: {e}")); return False
