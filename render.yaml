@@ -2,7 +2,7 @@
 # 대시보드: New → Blueprint → 이 레포 선택 → Apply.
 services:
   - type: web
-    name: medical-pipeline
+    name: medipipe
     runtime: docker           # Dockerfile 사용(pdftotext 포함)
     plan: free                # 무료 티어(15분 후 잠, 재시작 시 업로드/생성물 사라짐)
     envVars:
